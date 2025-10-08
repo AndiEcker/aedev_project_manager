@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.56
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.58
 """ setup of aedev namespace package portion project_manager: create and maintain Python projects locally and remotely. """
 # noinspection PyUnresolvedReferences
 import sys
@@ -17,11 +17,11 @@ setup_kwargs = {
     'description': 'aedev namespace package portion project_manager: create and maintain Python projects locally and remotely',
     'entry_points': {       'console_scripts': [       'pjm = aedev.project_manager.__main__:main',
                                    'project-manager = aedev.project_manager.__main__:main']},
-    'extras_require': {       'dev': [       'aedev_project_tpls', 'aedev_aedev', 'anybadge', 'coverage-badge', 'aedev_git_repo_manager',
+    'extras_require': {       'dev': [       'aedev_project_tpls', 'aedev_aedev', 'anybadge', 'coverage-badge', 'aedev_project_manager',
                        'flake8', 'mypy', 'pylint', 'pytest', 'pytest-cov', 'pytest-django', 'typing',
                        'types-setuptools'],
         'docs': [],
-        'tests': [       'anybadge', 'coverage-badge', 'aedev_git_repo_manager', 'flake8', 'mypy', 'pylint', 'pytest',
+        'tests': [       'anybadge', 'coverage-badge', 'aedev_project_manager', 'flake8', 'mypy', 'pylint', 'pytest',
                          'pytest-cov', 'pytest-django', 'typing', 'types-setuptools']},
     'install_requires': [       'anybadge', 'coverage', 'coverage-badge', 'flake8', 'mypy', 'packaging', 'Pillow', 'types-Pillow', 'PyGithub',
         'pylint', 'pytest', 'pytest-cov', 'python-gitlab', 'requests', 'requests-toolbelt', 'setuptools', 'ae_base',
@@ -61,7 +61,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.9',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.1',
+    'version': '0.3.2',
     'zip_safe': True,
 }
 

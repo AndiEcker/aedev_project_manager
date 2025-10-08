@@ -1,7 +1,7 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.56
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.58
 anybadge
 coverage-badge
-aedev_git_repo_manager  # including Pillow, ae_base, ae_files, ae_paths to test/check integrity and img/loc/snd resources ?!?!? change to aedev_project_manager (together with grm->pjm in de_otf_de_tpl_.gitlab.yml)
+aedev_project_manager  # including Pillow to test/check integrity and img/loc/snd resources
 flake8
 mypy
 pylint
