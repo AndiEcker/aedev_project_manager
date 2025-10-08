@@ -56,7 +56,7 @@ from PIL import Image
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
     UNSET, UnsetType,
-    camel_to_snake, duplicates, load_env_var_defaults, module_attr, norm_name, norm_path, now_str,
+    camel_to_snake, duplicates, load_env_var_defaults, module_attr, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     os_path_relpath, os_path_splitext,
     project_main_file, read_file, stack_var, url_failure, write_file,
@@ -78,7 +78,7 @@ from ae.shell import (                                                          
     git_add, git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    hint, in_prj_dir_venv, on_ci_host, owner_project_from_url, project_name_version,
+    hint, in_prj_dir_venv, owner_project_from_url, project_name_version,
     sh_exit_if_exec_err, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
 from ae.templates import (                                                                  # type: ignore
     LOCK_EXT, MOVE_TPL_TO_PKG_PATH_NAME_PREFIX, OUTSOURCED_MARKER, CACHED_TPL_PROJECTS,
@@ -729,7 +729,7 @@ def _get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str
 def _get_host_domain(pdv: ProjectDevVars, var_prefix: str = 'repo_') -> str:
     """ determine domain name of repository|web host from the repo_domain or web_domain option or config variable.
 
-    :param var_prefix:          config variable name prefix. pass 'web_' to get web server host config values.
+    :param var_prefix:          config variable name prefix. pass "web\\_" to get web server host config values.
     :return:                    domain name of repository|web host.
     """
     host_domain = _get_host_config_val(pdv, f'{var_prefix}domain')              # 'repo_domain' | 'web_domain'
@@ -758,7 +758,8 @@ def _get_host_user_name(pdv: ProjectDevVars, host_domain: str, var_prefix: str =
     """ determine username from --repo_user/--web_user options, PDV_repo_user or PDV_web_user config variable.
 
     :param host_domain:         domain to get user token for.
-    :param var_prefix:          config var name prefix. pass 'web_' to get web server username. 'repo_user' | 'web_user'
+    :param var_prefix:          config var name prefix.
+                                pass 'web\\_' to get web server username. 'repo_user' | 'web_user'
     :return:                    username or if not found the user group name.
     """
     var_name = f'{var_prefix}user'
@@ -776,7 +777,7 @@ def _get_host_user_token(pdv: ProjectDevVars, host_domain: str, host_user: str =
     :param pdv:                 project development variables.
     :param host_domain:         domain to get user token for.
     :param host_user:           host user to get token for.
-    :param var_prefix:          config variable name prefix. pass 'web_' to get web server host config values.
+    :param var_prefix:          config variable name prefix. pass 'web\\_' to get web server host config values.
     :return:                    token string for domain and user on repository|web host.
     """
     var_name = f'{var_prefix}token'
@@ -1750,6 +1751,10 @@ class GithubCom(RemoteHost):
         :param tag_name:        name of the tag/ref to create the branch from.
         """
         prj = self.repo_obj(86, "create branch error", group_repo)
+        if prj is None:
+            cae.po(f" **** group/repository {group_repo} not available; not created {branch_name=} for {tag_name=}")
+            return
+
         try:
             git_tag = prj.get_git_tag(tag_name)     # https://gist.github.com/ursulacj/36ade01fa6bd5011ea31f3f6b572834e
             prj.create_git_ref(f'refs/heads/{branch_name}', git_tag.sha)
@@ -1767,6 +1772,10 @@ class GithubCom(RemoteHost):
         :param main_branch:     name of the default/main branch.
         """
         project_repo = self.repo_obj(78, "repository initialization error", group_repo)
+        if project_repo is None:
+            cae.po(f" **** group/repository {group_repo} not available; skipped properties/protected-branch setup")
+            return
+
         cae.vpo(f"    - setting remote project properties of new repository '{group_repo}'")
         project_repo.edit(default_branch=main_branch, description=project_desc, visibility='public')
 
@@ -1778,7 +1787,7 @@ class GithubCom(RemoteHost):
 
         cae.po(f"   == initialized project and created {len(branch_masks)} protected branch(es): {branch_masks}")
 
-    def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Repository:
+    def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Optional[Repository]:
         """ convert user repo names to a repository instance of the remote api.
 
         :param err_code:        error code, pass 0 to not quit if a project is not found.
@@ -1795,7 +1804,7 @@ class GithubCom(RemoteHost):
                 exit_error(err_code, err_msg.format(name=group_repo))
             elif debug_or_verbose():
                 cae.po(f"   * repository '{group_repo}' not found on connected remote server (exception: {gh_ex})")
-            return cast(Repository, None)
+            return None
 
     @staticmethod
     def _protect_branches(project_repo: Repository, branch_masks: list[str]):
@@ -1819,9 +1828,11 @@ class GithubCom(RemoteHost):
         check_if(20, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
 
         prj = self.repo_obj(20, "user account/repository fork error", fork_repo_path)
-        cast(AuthenticatedUser, self.connection.get_user()).create_fork(prj)
-
-        cae.po(f" ==== forked {ini_pdv['project_title']} on {domain}")
+        if prj is None:
+            cae.po(f" **** user account/repository {fork_repo_path} not available")
+        else:
+            cast(AuthenticatedUser, self.connection.get_user()).create_fork(prj)
+            cae.po(f" ==== forked {ini_pdv['project_title']} on {domain}")
 
     @_action(*ANY_PRJ_TYPE, shortcut='push')
     def push_project(self, ini_pdv: ProjectDevVars):

@@ -24,7 +24,7 @@ from packaging.version import Version
 
 from ae.base import (
     BUILD_CONFIG_FILE, DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
-    in_wd, load_env_var_defaults, norm_name, norm_path,
+    in_wd, load_env_var_defaults, norm_name, norm_path, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     project_main_file, read_file, stack_frames, write_file, now_str)
 # noinspection PyProtectedMember
@@ -35,7 +35,7 @@ from ae.shell import (
     GIT_VERSION_TAG_PREFIX, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, SHELL_LOG_FILE_NAME_SUFFIX,
     debug_or_verbose, get_main_app, get_pypi_versions, git_add, git_any, git_checkout, git_commit,
     git_current_branch, git_remotes, git_uncommitted,
-    in_prj_dir_venv, on_ci_host, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
+    in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
 from ae.dev_ops import (
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, ENV_VAR_NAME_PREFIX, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
     PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PDV_REQ_DEV_FILE_NAME, PLAYGROUND_PRJ, ROOT_PRJ,
