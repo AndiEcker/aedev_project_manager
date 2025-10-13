@@ -35,7 +35,7 @@ from ae.shell import (
     GIT_VERSION_TAG_PREFIX, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, SHELL_LOG_FILE_NAME_SUFFIX,
     debug_or_verbose, get_main_app, get_pypi_versions, git_add, git_any, git_checkout, git_commit,
     git_current_branch, git_remotes, git_uncommitted,
-    in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
+    in_os_env, in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
 from ae.dev_ops import (
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, ENV_VAR_NAME_PREFIX, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
     PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PDV_REQ_DEV_FILE_NAME, PLAYGROUND_PRJ, ROOT_PRJ,
@@ -51,15 +51,15 @@ from ae.templates import (
 from aedev.project_manager.__main__ import (
     ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     GithubCom, GitlabCom,
-    _act_callable, _action, _available_actions, _expected_args, _get_app_option, _get_branch, _get_host_user_name,
-    _get_host_user_token, _guess_next_action, increment_version,
+    _act_callable, _action, _available_actions, _expected_args,
+    _get_app_option, _get_branch, _get_host_user_name, _get_host_user_token, _get_mirror_remote, _guess_next_action,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
     _print_pdv, _refresh_templates, _renew_prj_dir, _renew_project, _show_status, _wait,
-    add_children_file, cae, check_children_integrity, check_integrity, clone_children, clone_project,
-    commit_children, commit_project, delete_children_file, install_children_editable, install_editable,
+    add_children_file, cae, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
+    commit_project, delete_children_file, increment_version, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
     prepare_children_commit, prepare_commit, refresh_children_outsourced, rename_children_file, renew_children,
-    run_children_command, show_actions, show_children_versions)
+    run_children_command, show_actions, show_children_versions, update_mirror)
 
 
 INTEGRATION_TESTS = False
@@ -183,14 +183,14 @@ itg_root_prj_path = os_path_join(itg_parent_path, itg_root_prj_name)
 itg_projects: dict[str, dict[str, str]] = {}  # 'type'=project_type 'state'='cloned'|'forked' 'role'='mtn'|'ctb'
 
 # get contributor|ctb & maintainer|mtn credential/token (in env|config variables), needed to enable integration tests)
-ext_env = os.environ.copy()
-load_env_var_defaults(".", ext_env)  # use local machine pjm project user to get maintainer&contributor name/mail
-itg_ctb_name = ext_env.get('TEST_CONTRIBUTOR_NAME')
-itg_ctb_token = ext_env.get('TEST_CONTRIBUTOR_TOKEN')
-# itg_ctb_email = ext_env.get('TEST_CONTRIBUTOR_EMAIL')
-itg_mtn_name = ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
-itg_mtn_token = ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if itg_mtn_name != itg_ctb_name else ""
-# itg_mtn_email = ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL')
+itg_ext_env = os.environ.copy()
+load_env_var_defaults(".", itg_ext_env)  # use local machine pjm project user to get maintainer&contributor name/mail
+itg_ctb_name = itg_ext_env.get('TEST_CONTRIBUTOR_NAME')
+itg_ctb_token = itg_ext_env.get('TEST_CONTRIBUTOR_TOKEN')
+# itg_ctb_email = itg_ext_env.get('TEST_CONTRIBUTOR_EMAIL')
+itg_mtn_name = itg_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
+itg_mtn_token = itg_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if itg_mtn_name != itg_ctb_name else ""
+# itg_mtn_email = itg_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL')
 # itg_ctb_root_url = f"https://oauth2:{itg_ctb_token}@{itg_domain}/{itg_ctb_name}"
 # itg_mtn_root_url = f"https://oauth2:{itg_mtn_token}@{itg_domain}/{itg_ns_name}{PDV_REPO_GROUP_SUFFIX}"
 skip_if_no_integration_tests = pytest.mark.skipif('not bool(itg_ctb_token) or not bool(itg_mtn_token)',
@@ -1229,6 +1229,69 @@ class TestActionsLocal:
             assert chi_prj in output
             assert f"local:{chi_ver}" in output
 
+    @skip_if_not_maintainer
+    def test_update_mirror_pjm_onto_github_org(self, capsys):
+        pdv = ProjectDevVars()
+        with in_os_env():   # to load GITHUB_TOKEN credential from .env files
+            # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/{namespace_name}-group-mirror/{project_name}.git
+            update_mirror(pdv, _get_mirror_remote(pdv))
+
+        output = capsys.readouterr().out
+        assert 'aedev-group-mirror' in output
+        assert 'github.com' in output
+        assert pdv['project_name'] in output
+        assert 'ghp_' not in output   # only the first 3 chars of token ('ghp') will be there
+        assert " ==== " in output
+
+    @skip_if_not_maintainer
+    def test_update_mirror_pjm_onto_github_user(self, capsys):
+        pdv = ProjectDevVars()
+        with in_os_env():   # to load GITHUB_TOKEN credential from .env files
+            remote = _get_mirror_remote(pdv).replace('aedev-group-mirror', itg_mtn_name)
+            # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${PDV_AUTHOR}/{project_name}.git
+            update_mirror(pdv, remote)
+
+        output = capsys.readouterr().out
+        assert itg_mtn_name in output
+        assert 'github.com' in output
+        assert pdv['project_name'] in output
+        assert 'ghp_' not in output   # only the first 3 chars of token ('ghp') will be there
+        assert " ==== " in output
+
+    @skip_if_not_maintainer
+    def test_update_mirror_pjm_onto_gitlab_group(self, capsys):
+        pdv = ProjectDevVars()
+        auth = itg_mtn_name + ":" + itg_mtn_token + "@"
+        group = 'aedev-group-mirror'
+        url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + group + "/" + pdv['project_name'] + '.git'
+
+        update_mirror(pdv, url)
+
+        output = capsys.readouterr().out
+        assert group in output
+        assert pdv['repo_domain'] in output
+        assert pdv['project_name'] in output
+        assert auth not in output
+        assert itg_mtn_token not in output
+        assert " ==== " in output
+
+    @skip_if_not_maintainer
+    def test_update_mirror_pjm_onto_gitlab_user(self, capsys):
+        pdv = ProjectDevVars()
+        auth = itg_mtn_name + ":" + itg_mtn_token + "@"
+        user = itg_mtn_name
+        url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + user + "/" + pdv['project_name'] + '.git'
+
+        update_mirror(pdv, url)
+
+        output = capsys.readouterr().out
+        assert user in output
+        assert pdv['repo_domain'] in output
+        assert pdv['project_name'] in output
+        assert auth not in output
+        assert itg_mtn_token not in output
+        assert " ==== " in output
+
 
 class TestHelpersLocal:
     """ test private helper functions that don't need any authentication against git remote hosts. """
@@ -2020,13 +2083,15 @@ class TestHelpersLocal:
         assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
         assert not os.path.exists(BUILD_CONFIG_FILE)
 
-    def test_renew_project_exits(self, empty_repo_path, patched_exit_call_wrapper):
-        root_pdv = ProjectDevVars(project_path=os_path_dirname(empty_repo_path), project_type=ROOT_PRJ)
+    def test_renew_project_exits_on_erroneous_pdv_value(self, empty_repo_path, patched_exit_call_wrapper):
+        pdv = ProjectDevVars(project_path=empty_repo_path)
+        inv_project_type = "any-invalid-or-unknown-project-type"
 
-        calls = patched_exit_call_wrapper(_renew_project, root_pdv, ROOT_PRJ)
+        calls = patched_exit_call_wrapper(_renew_project, pdv, inv_project_type)
 
         assert len(calls) == 1
-        assert "not in parent_folders=" in calls[0][0][1]   # fix: root_pdv['project_path'] = empty_repo_path
+        assert inv_project_type in calls[0][0][1]
+        assert "invalid project type" in calls[0][0][1]
         assert calls[0][0][0] == 8         # (8, err code
 
     def test_renew_project_new_app_from_parent_via_package(self, tmp_path):
