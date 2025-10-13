@@ -41,9 +41,11 @@ from traceback import format_exc
 from typing import (
     TYPE_CHECKING, Any, Callable, Collection, Container, Iterable, Optional, Sequence, Union, cast)
 from unittest.mock import patch
+from urllib.parse import urlparse
 
-from github import Auth, Github, GithubException
+from github import Auth, Github, GithubException, UnknownObjectException
 from github.AuthenticatedUser import AuthenticatedUser
+from github.Organization import Organization
 from github.Repository import Repository
 
 from gitlab import Gitlab, GitlabAuthenticationError, GitlabCreateError, GitlabError, GitlabHttpError, GitlabListError
@@ -78,7 +80,7 @@ from ae.shell import (                                                          
     git_add, git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    hint, in_prj_dir_venv, owner_project_from_url, project_name_version,
+    hint, in_prj_dir_venv, mask_token, owner_project_from_url, project_name_version,
     sh_exit_if_exec_err, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
 from ae.templates import (                                                                  # type: ignore
     LOCK_EXT, MOVE_TPL_TO_PKG_PATH_NAME_PREFIX, OUTSOURCED_MARKER, CACHED_TPL_PROJECTS,
@@ -787,7 +789,21 @@ def _get_host_user_token(pdv: ProjectDevVars, host_domain: str, host_user: str =
     return user_token
 
 
+def _get_mirror_remote(pdv: ProjectDevVars) -> str:
+    """ determine the configured mirror remote name/url for the project specified by the pdv argument..
+
+    :param pdv:                 project dev vars of the project to determine the mirror remote-name/url for.
+    :return:                    remote-name/url of the mirror or an empty string if the specified project has no mirror.
+    """
+    remote_expression = os.environ.get('PJM_MIRROR_REMOTE_EXPRESSION')
+    if not remote_expression:
+        return ""
+
+    return try_eval(remote_expression, glo_vars=pdv.as_dict()) or ""
+
+
 def _get_pdv(**kwargs):
+    """ create a pdv instance from the specified kwargs, check it for errors and if it has errors then exit app. """
     pdv = ProjectDevVars(**kwargs)
     errors = pdv.errors()
     check_if(8, not errors, f"project development variable discrepancies: {_pp(errors)}")
@@ -1039,7 +1055,7 @@ def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> li
         pkg_names = list(chi_vars)
     else:
         chi_presets = _init_children_presets(ini_pdv, chi_vars).copy()
-        pkg_names = try_eval(" ".join(act_args), (Exception, ), glo_vars=chi_presets)
+        pkg_names = try_eval(" ".join(act_args), ignored_exceptions=(Exception, ), glo_vars=chi_presets)
         if pkg_names is UNSET:
             pkg_names = _children_project_names(ini_pdv, act_args, OrderedDict())
             cae.vpo(f"    # action arguments {act_args} are not evaluable with vars={PPF(chi_presets)}")
@@ -1640,7 +1656,7 @@ def _write_commit_message(pdv: ProjectDevVars, pkg_version: str = "{project_vers
 
 class RemoteHost:
     """ base class registering subclasses as remote repo or web host class in :data:`REGISTERED_HOSTS_CLASS_NAMES`. """
-    var_prefix: str = 'repo_'       # config variable name prefix
+    var_prefix: str = 'repo_'       # default config variable name prefix
 
     create_branch: Callable
     release_project: Callable
@@ -1684,11 +1700,12 @@ class RemoteHost:
 
         return src, tgt, forked, branch
 
-    def repo_release_project(self, ini_pdv: ProjectDevVars, version_tag: str):
+    def repo_release_project(self, ini_pdv: ProjectDevVars, version_tag: str) -> str:
         """ prepare project release and reset local repository, optionally create release branch and publish to PyPI.
 
         :param ini_pdv:         project dev vars.
         :param version_tag:     version tag of the project release.
+        :return:                end-of-action confirmation message, to be printed to console.
         """
         project_path = ini_pdv['project_path']
         main_branch = ini_pdv['MAIN_BRANCH']
@@ -1723,7 +1740,7 @@ class RemoteHost:
             self.create_branch(prj_id, release_branch, version_tag)
             msg += f" and released {pkg_version} onto new protected release branch {release_branch}"
 
-        cae.po(f" ==== {msg} of {ini_pdv['project_title']}")
+        return f" ==== {msg} of {ini_pdv['project_title']}"
 
 
 class GithubCom(RemoteHost):
@@ -1733,13 +1750,13 @@ class GithubCom(RemoteHost):
     def connect(self, ini_pdv: ProjectDevVars) -> bool:
         """ connect to gitHub.com remote host.
 
-        :param ini_pdv:         project dev vars (host_token).
+        :param ini_pdv:         project dev vars (only using the value of the 'repo_token' variable).
         :return:                boolean True on successful authentication else False.
         """
         try:
-            self.connection = Github(auth=Auth.Token(ini_pdv.pdv_val('repo_token')))
+            self.connection = Github(auth=Auth.Token(ini_pdv['repo_token']))
         except (Exception, ) as ex:                                 # pylint: disable=broad-exception-caught
-            cae.po(f"****  Github authentication exception: {ex}")
+            cae.po(f"****  Github authentication exception: {mask_token(str(ex))}")
             return False
         return True
 
@@ -1763,6 +1780,24 @@ class GithubCom(RemoteHost):
 
         # protect the branch until GitHub Api supports wildcards in the initial push (see self.init_new_repo())
         self._protect_branches(prj, [branch_name])
+
+    def group_obj(self, user_or_org_name: str) -> Optional[Union[AuthenticatedUser, Organization]]:
+        """ instantiate am authenticated-user or organization object from the specified name.
+
+        :param user_or_org_name:name of a user or organization.
+        :return:                instantiated user/organization object or None if name not found as user/org.
+        """
+        if not self.connection:
+            return None
+
+        auth_user = self.connection.get_user()  # get_user(user_or_org)->NamedUser-obj, not having create_repo() method
+        if user_or_org_name.lower() == auth_user.login.lower():
+            return cast(AuthenticatedUser, auth_user)
+
+        try:
+            return self.connection.get_organization(user_or_org_name)
+        except UnknownObjectException:
+            return None
 
     def init_new_repo(self, group_repo: str, project_desc: str, main_branch: str):
         """ config new project repo.
@@ -1882,7 +1917,7 @@ class GithubCom(RemoteHost):
         """
         _check_action(ini_pdv, self.release_project)
 
-        self.repo_release_project(ini_pdv, version_tag)
+        cae.po(self.repo_release_project(ini_pdv, version_tag))
 
     @_action(*ANY_PRJ_TYPE, shortcut='request')
     def request_merge(self, ini_pdv: ProjectDevVars):
@@ -1949,14 +1984,14 @@ class GitlabCom(RemoteHost):
         :param ini_pdv:         project dev vars (REPO_HOST_PROTOCOL, host_domain, host_token).
         :return:                boolean True on successful authentication else False.
         """
-        token = ini_pdv.pdv_val('repo_token')
+        token = ini_pdv['repo_token']
         try:
             self.connection = Gitlab(ini_pdv['REPO_HOST_PROTOCOL'] + ini_pdv['repo_domain'], private_token=token)
             if cae.debug:
                 self.connection.enable_debug()
             self.connection.auth()          # authenticate and create user attribute
         except (Exception, ) as ex:         # pylint: disable=broad-exception-caught
-            cae.po(f"****  Gitlab connection exception: {ex}" + ("" if token else " (repo_token is empty)"))
+            cae.po(f"****  Gitlab connect exception: {mask_token(str(ex))}" + ("" if token else " (empty repo_token)"))
             return False
         return True
 
@@ -2372,7 +2407,13 @@ class GitlabCom(RemoteHost):
         """
         _check_action(ini_pdv, self.release_project)
 
-        self.repo_release_project(ini_pdv, version_tag)
+        msg = self.repo_release_project(ini_pdv, version_tag)
+
+        if mirror_remote := _get_mirror_remote(ini_pdv):
+            update_mirror(ini_pdv, mirror_remote)
+            msg += f" and updated mirror at {mask_token(mirror_remote)}"
+
+        cae.po(msg)
 
     @_action(PARENT_PRJ, ROOT_PRJ)
     def request_children_merge(self, ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):
@@ -3262,6 +3303,56 @@ def show_versions(ini_pdv: ProjectDevVars):
             msg += f" web:{connection.deployed_version(): <9}"
 
     cae.po(msg)
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=(('mirror-url-or-remote-name', ), ), shortcut='mirror')
+def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):
+    """ create or update a mirror of the actual repo onto the specified remote/host.
+
+    :param ini_pdv:             project dev vars of the project to create/update a mirror/replication for.
+    :param mirror_remote:       mirror remote name or server/host url (optionally with authentication) to push to.
+
+    .. note::
+        there are three more pushable (but currently not implemented) git ref namespaces: pull, pipelines and lfs.
+        other git ref namespaces are stash and remotes (remotes cannot be pushed - therefore the git push option
+        --mirror cannot be used to create&update a mirror at GitHub/GitLab).
+    """
+    # next ~21 code lines only needed because silly GitHub server does not allow to create new mirror via git push
+    url_parts = urlparse(mirror_remote)
+    if url_parts.netloc:
+        mirror_url = mirror_remote
+    else:
+        remotes = ini_pdv.pdv_val('remote_urls')
+        if mirror_remote not in remotes:
+            cae.po(f" **** invalid mirror remote name/url {mirror_remote}")
+            return
+        mirror_url = remotes[mirror_remote]
+        url_parts = urlparse(mirror_url)
+    ini_rep = None
+    if url_parts.hostname == 'github.com':
+        group_project = owner_project_from_url(mirror_url)
+        usr_or_org, repo_name = group_project.split("/", maxsplit=1)
+        mirror_api = GithubCom()
+        if not mirror_api.connect(cast(ProjectDevVars, {'repo_token': url_parts.password})):
+            cae.po(" **** connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
+            return
+        if not mirror_api.repo_obj(0, "", group_project):
+            group_obj = mirror_api.group_obj(usr_or_org)
+            if not group_obj:
+                cae.po(f" **** invalid user or organization name {usr_or_org}")
+                return
+            group_obj.create_repo(repo_name)
+            ini_rep = partial(mirror_api.init_new_repo, group_project, ini_pdv['project_title'], ini_pdv['MAIN_BRANCH'])
+
+    # git push --prune <url+token> '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/notes/*:refs/notes/*'
+    output = git_push(ini_pdv['project_path'], mirror_remote, "--prune",
+                      *[f"+refs/{ref_group}/*:refs/{ref_group}/*" for ref_group in ('heads', 'tags', 'notes')])
+    if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
+        cae.po(f" **** update mirror error:{_pp(mask_token(output))}")
+    else:
+        if ini_rep is not None:
+            ini_rep()
+        cae.po(f" ==== successfully updated mirror at remote {mask_token(mirror_remote)}")
 
 
 # ----------------------- main ----------------------------------------------------------------------------------------
