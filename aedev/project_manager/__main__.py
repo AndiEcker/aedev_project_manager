@@ -1,6 +1,6 @@
 """
-main module of project_manager
-==============================
+Python Project Manager
+======================
 
 
 external helpers dependencies
@@ -80,7 +80,7 @@ from ae.shell import (                                                          
     git_add, git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    hint, in_prj_dir_venv, mask_token, owner_project_from_url, project_name_version,
+    hint, in_os_env, in_prj_dir_venv, mask_token, owner_project_from_url, project_name_version,
     sh_exit_if_exec_err, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
 from ae.templates import (                                                                  # type: ignore
     LOCK_EXT, MOVE_TPL_TO_PKG_PATH_NAME_PREFIX, OUTSOURCED_MARKER, CACHED_TPL_PROJECTS,
@@ -150,14 +150,19 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
     def _deco(fun):
         # global REGISTERED_ACTIONS
         method_of = stack_var('__qualname__')
+
         if 'local_action' not in deco_kwargs:
             deco_kwargs['local_action'] = not method_of
         if project_types == (PARENT_PRJ, ROOT_PRJ) and 'arg_names' not in deco_kwargs:
             deco_kwargs['arg_names'] = ARGS_CHILDREN_DEFAULT
-        doc_str = os.linesep.join(_ for _ in fun.__doc__.split(os.linesep)
-                                  if ':param ini_pdv:' not in _ and ':return:' not in _)
-        REGISTERED_ACTIONS[(method_of + "." if method_of else "") + fun.__name__] = {
-            'annotations': fun.__annotations__, 'docstring': doc_str, 'project_types': project_types, **deco_kwargs}
+
+        sep = os.linesep
+        doc_str = sep.join(_ for _ in fun.__doc__.split(sep)
+                           if ':param ini_pdv:' not in _ and ':return:' not in _ and _.strip())
+
+        full_name = (method_of + "." if method_of else "") + fun.__name__
+        REGISTERED_ACTIONS[full_name] = {'full_name': full_name, 'annotations': fun.__annotations__,
+                                         'docstring': doc_str, 'project_types': project_types, **deco_kwargs}
 
         @wraps(fun)
         def _wrapped(*fun_args, **fun_kwargs):  # fun_args==(self, ) for remote action methods and ==() for functions
@@ -169,6 +174,21 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
 
 def _act_callable(host_api: Optional["RemoteHost"], act_name: str) -> Optional[Callable]:
     return globals().get(act_name) or getattr(host_api, act_name, None)
+
+
+def _act_help_print(spec: ActionSpec, indent: int = 9):
+    ind = " " * indent
+    sep = os.linesep
+
+    cae.po(f"{ind}{spec['full_name']}: " + (sep + ind).join(_ for _ in spec['docstring'].split(sep)))
+
+    if 'arg_names' in spec or 'flags' in spec:
+        cae.po(f"{ind}- args/flags: {_expected_args(spec)}")
+
+    cae.po(f"{ind}- project types: {', '.join(_ for _ in spec['project_types'] if _)}")
+
+    if 'shortcut' in spec:
+        cae.po(f"{ind}- shortcut: {spec['shortcut']}")
 
 
 def _act_spec(pdv: ProjectDevVars, act_name: str) -> tuple[dict[str, Any], str]:   # ActionSpecification
@@ -186,6 +206,14 @@ def _act_spec(pdv: ProjectDevVars, act_name: str) -> tuple[dict[str, Any], str]:
                             return reg_spec, var_prefix
 
     return {'local_action': True}, '?¿?'  # action isn't found; return pseudo action spec to display an error later
+
+
+def _act_specs(act_name: str) -> list[ActionSpec]:
+    act_specs = []
+    for qual_name in [act_name] + [_ + "." + act_name for _ in REGISTERED_HOSTS_CLASS_NAMES.values()]:
+        if qual_name in REGISTERED_ACTIONS:
+            act_specs.append(REGISTERED_ACTIONS[qual_name])
+    return act_specs
 
 
 def _available_actions(project_type: Union[UnsetType, str] = UNSET) -> set[str]:
@@ -1021,7 +1049,8 @@ def _init_act_exec_args() -> tuple[ProjectDevVars, str, tuple, dict[str, Any]]: 
         ini_pdv['host_api'] = host_api = globals()[_get_host_class_name(host_domain)]()
         check_if(38, bool(_act_callable(ini_pdv.pdv_val('host_api'), act_name)),
                  f"action {act_name} not implemented for {host_domain}")
-        check_if(39, host_api.connect(ini_pdv), f"connection to {host_domain} remote host server failed")
+        if not host_api.connect(ini_pdv):
+            cae.po(f" **** connection to {host_domain} remote host server failed")
 
     act_flags: ActionFlags = {}
     _init_act_args_check(ini_pdv, act_spec, act_name, act_args, act_flags)
@@ -1745,7 +1774,7 @@ class RemoteHost:
 
 class GithubCom(RemoteHost):
     """ remote connection and actions on remote repo in gitHub.com. """
-    connection: Github                  #: connection to GitHub host
+    connection: Optional[Github] = None     #: connection to GitHub host
 
     def connect(self, ini_pdv: ProjectDevVars) -> bool:
         """ connect to gitHub.com remote host.
@@ -1757,6 +1786,7 @@ class GithubCom(RemoteHost):
             self.connection = Github(auth=Auth.Token(ini_pdv['repo_token']))
         except (Exception, ) as ex:                                 # pylint: disable=broad-exception-caught
             cae.po(f"****  Github authentication exception: {mask_token(str(ex))}")
+            self.connection = None
             return False
         return True
 
@@ -1832,6 +1862,7 @@ class GithubCom(RemoteHost):
         :return:                GitHub repository if found, else return None if err_code is zero else quit.
         """
         try:
+            assert self.connection  # mypy
             # search for repo projects: repos = list(self.connection.search_repositories(query="user:AndiEcker"))
             return self.connection.get_repo(group_repo)
         except (GithubException, Exception) as gh_ex:           # pylint: disable=broad-exception-caught
@@ -1863,7 +1894,7 @@ class GithubCom(RemoteHost):
         check_if(20, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
 
         prj = self.repo_obj(20, "user account/repository fork error", fork_repo_path)
-        if prj is None:
+        if prj is None or not self.connection:
             cae.po(f" **** user account/repository {fork_repo_path} not available")
         else:
             cast(AuthenticatedUser, self.connection.get_user()).create_fork(prj)
@@ -1886,7 +1917,7 @@ class GithubCom(RemoteHost):
 
         new_repo = False
         push_refs = []
-        if not self.repo_obj(0, "", owner_project):
+        if not self.repo_obj(0, "", owner_project) and self.connection:
             usr_obj = cast(AuthenticatedUser, self.connection.get_user())
             usr_obj.create_repo(project_name)   # if not, then git push throws the error "Repository not found"
             new_repo = True
@@ -1965,7 +1996,7 @@ class GithubCom(RemoteHost):
 
 class GitlabCom(RemoteHost):
     """ remote connection and actions on gitlab.com. """
-    connection: Gitlab                  #: connection to Gitlab host
+    connection: Optional[Gitlab] = None     #: connection to Gitlab host
 
     def branch_merge_requests(self, ini_pdv: ProjectDevVars, branch: str) -> list[ProjectMergeRequest]:
         """ determine the merge/pull requests (opened or closed) for the specified branch.
@@ -1992,6 +2023,7 @@ class GitlabCom(RemoteHost):
             self.connection.auth()          # authenticate and create user attribute
         except (Exception, ) as ex:         # pylint: disable=broad-exception-caught
             cae.po(f"****  Gitlab connect exception: {mask_token(str(ex))}" + ("" if token else " (empty repo_token)"))
+            self.connection = None
             return False
         return True
 
@@ -2033,7 +2065,7 @@ class GitlabCom(RemoteHost):
         cae.vpo(f"    - remote project properties of new package {project_name}: {PPF(project_properties)}")
 
         retries = 3
-        while retries:
+        while retries and self.connection:
             try:
                 # using UserProtectManager|owner_obj.projects.create() for user projects results in 403 Forbidden error
                 project = self.connection.projects.create(project_properties)
@@ -2084,7 +2116,7 @@ class GitlabCom(RemoteHost):
                 exit_error(88, f"no merge request found for {project_path=} and {branch=}")
             check_if(88, len(requests) == 1, f"multiple merge {requests=} found for {project_path=} and {branch=}")
             request = requests[0]
-        if request is None:     # mypy does not recognize forked and that exit_error() terminates app
+        if request is None or self.connection is None:  # mypy doesn't see: exit_error() terminates app
             return 0
 
         if not message:
@@ -2124,6 +2156,7 @@ class GitlabCom(RemoteHost):
         :return:                python-gitlab project instance if found, else return None if err_code is zero else quit.
         """
         try:                                        # e.g., GitlabGetError: 404: 404 Project Not Found
+            assert self.connection                  # mypy
             return self.connection.projects.get(owner_project)
         except (GitlabError, Exception) as ex:      # pylint: disable=broad-exception-caught
             msg = f"owner/project {owner_project} not found on remote {self.connection}; exception={ex})"
@@ -2144,24 +2177,33 @@ class GitlabCom(RemoteHost):
         user_name = _get_host_user_name(ini_pdv, domain)
 
         owner_obj: Optional[Union[Group, User]] = None
-        try:
-            owner_obj = self.connection.groups.get(group_name)
-        except GitlabError:
-            groups = self.connection.groups.list(search=group_name)
-            if groups:
-                owner_obj = groups[0]
 
-        if owner_obj is None:
+        if self.connection:
             try:
-                owner_obj = self.connection.users.get(user_name)
-            except GitlabError:
-                users = self.connection.users.list(username=user_name)
-                if users:
-                    owner_obj = users[0]
+                owner_obj = self.connection.groups.get(group_name)
+            except (GitlabError, Exception):                            # pylint: disable=broad-exception-caught
+                try:
+                    groups = self.connection.groups.list(search=group_name)
+                    if groups:
+                        owner_obj = groups[0]
+                except (GitlabError, Exception):                        # pylint: disable=broad-exception-caught
+                    pass    # owner_obj == None
+
+            if owner_obj is None:
+                try:
+                    owner_obj = self.connection.users.get(user_name)
+                except (GitlabError, Exception):                        # pylint: disable=broad-exception-caught
+                    try:
+                        users = self.connection.users.list(username=user_name)
+                        if users:
+                            owner_obj = users[0]
+                    except (GitlabError, Exception):                    # pylint: disable=broad-exception-caught
+                        pass    # owner_obj == None
 
         if owner_obj is None:
             exit_error(37, f"neither group '{group_name}' nor user '{user_name}' found on repo host '{domain}'")
             raise  # never executed; needed by mypy for owner_obj type checking # pylint: disable=misplaced-bare-raise
+
         return owner_obj
 
     # ----------- remote action methods ----------------------------------------------------------------------------
@@ -2253,8 +2295,9 @@ class GitlabCom(RemoteHost):
         check_if(20, domain == 'gitlab.com', f"invalid host domain '{domain}'! add option --repo_domain=gitlab.com")
 
         user_name = _get_host_user_name(ini_pdv, domain)
-        if debug_or_verbose() and self.connection.user is not None and user_name != self.connection.user.name:
-            cae.po(f"    # {domain} user name {self.connection.user.name=} differs from .env-configured-{user_name=}")
+        conn = self.connection
+        if debug_or_verbose() and conn and conn.user is not None and user_name != conn.user.name:
+            cae.po(f"    # {domain} user name {conn.user.name=} differs from .env-configured-{user_name=}")
 
         host_url = f"{ini_pdv['REPO_HOST_PROTOCOL']}{domain}"
         user_url = f"{host_url}/{user_name}"  # clone at parent dir is creating the project root folder
@@ -2340,7 +2383,7 @@ class GitlabCom(RemoteHost):
             self.push_project(chi_pdv)
             if chi_pdv != children_pdv[-1]:
                 _wait(ini_pdv)
-        cae.po(f"===== pushed {_children_desc(ini_pdv, children_pdv)}")
+        cae.po(f" ==== pushed {_children_desc(ini_pdv, children_pdv)}")
 
     @_action(*ANY_PRJ_TYPE, shortcut='push')
     def push_project(self, ini_pdv: ProjectDevVars):
@@ -2395,11 +2438,11 @@ class GitlabCom(RemoteHost):
             self.release_project(chi_pdv, 'LATEST')
             if chi_pdv != children_pdv[-1]:
                 _wait(ini_pdv)
-        cae.po(f"===== released {_children_desc(ini_pdv, children_pdv)}")
+        cae.po(f" ==== released {_children_desc(ini_pdv, children_pdv)}")
 
     @_action(*ANY_PRJ_TYPE, arg_names=(("version-tag", ), ('LATEST', )), shortcut='release')
     def release_project(self, ini_pdv: ProjectDevVars, version_tag: str):
-        """ update local main branch from origin, and if pip_name is set, then release the latest/specified version too.
+        """ update local main branch from origin, optionally release (to PyPI if pip_name is set) and mirror to GitHub.
 
         :param ini_pdv:         project dev vars.
         :param version_tag:     push version tag in the format ``v<version-number>`` to release or ``LATEST`` to use
@@ -2409,9 +2452,10 @@ class GitlabCom(RemoteHost):
 
         msg = self.repo_release_project(ini_pdv, version_tag)
 
-        if mirror_remote := _get_mirror_remote(ini_pdv):
-            update_mirror(ini_pdv, mirror_remote)
-            msg += f" and updated mirror at {mask_token(mirror_remote)}"
+        with in_os_env(start_dir=ini_pdv['project_path']):
+            if mirror_remote := _get_mirror_remote(ini_pdv):
+                update_mirror(ini_pdv, mirror_remote)           # mirror this gitlab.com-hosted project onto GitHub
+                msg += f" and updated mirror at github.com/{owner_project_from_url(mirror_remote)}"
 
         cae.po(msg)
 
@@ -2423,7 +2467,7 @@ class GitlabCom(RemoteHost):
             self.request_merge(chi_pdv)
             if chi_pdv != children_pdv[-1]:
                 _wait(ini_pdv)
-        cae.po(f"===== requested merge of {_children_desc(ini_pdv, children_pdv)}")
+        cae.po(f" ==== requested merge of {_children_desc(ini_pdv, children_pdv)}")
 
     @_action(*ANY_PRJ_TYPE, shortcut='request')
     def request_merge(self, ini_pdv: ProjectDevVars):
@@ -2471,6 +2515,10 @@ class GitlabCom(RemoteHost):
     def search_repos(self, ini_pdv: ProjectDevVars, fragment: str = ""):
         """ search remote repositories via a text fragment in its project name/description. """
         fragment = fragment or ini_pdv['project_name']
+        if not self.connection:
+            cae.po(f" **** no connection (wrong credentials?) to search repositories at {ini_pdv['repo_domain']}")
+            return
+
         repos = self.connection.projects.list(search=fragment, get_all=True)
         cae.po(f"----  found {len(repos)} repos containing '{fragment}' in its name project name or description:")
         for repo in repos:
@@ -2482,7 +2530,7 @@ class GitlabCom(RemoteHost):
         """ display the local and remote status of parent/root children repos. """
         for chi_pdv in children_pdv:
             self.show_status(chi_pdv)
-        cae.po(f"===== status info of {_children_desc(ini_pdv, children_pdv)}")
+        cae.po(f" ==== status info of {_children_desc(ini_pdv, children_pdv)}")
 
     @_action(arg_names=(('owner|group|user/project_name', ), ), shortcut='remote')
     def show_remote(self, _ini_pdv: ProjectDevVars, owner_project_path: str):
@@ -2492,7 +2540,7 @@ class GitlabCom(RemoteHost):
         if prj_instance is None or not _show_remote_gitlab(prj_instance):
             cae.po(f"***** project {owner_project_path} unavailable via the remote server connection {self.connection}")
         else:
-            cae.po(f"===== dumped remote repository info of {owner_project_path}")
+            cae.po(f" ==== dumped remote repository info of {owner_project_path}")
 
     @_action(PARENT_PRJ, *ANY_PRJ_TYPE, shortcut='status')
     def show_status(self, ini_pdv: ProjectDevVars):
@@ -2735,7 +2783,7 @@ def add_children_file(ini_pdv: ProjectDevVars, file_name: str, rel_path: str, *c
         if add_file(chi_pdv, file_name, rel_path):
             added.append(chi_pdv['project_name'])
 
-    cae.po(f"===== added {len(added)}/{len(children_pdv)} times {file_name} into {rel_path} for: {added}")
+    cae.po(f" ==== added {len(added)}/{len(children_pdv)} times {file_name} into {rel_path} for: {added}")
     return len(added) == (1 if is_root else 0) + len(children_pdv)
 
 
@@ -2855,7 +2903,7 @@ def check_children_integrity(parent_pdv: ProjectDevVars, *children_pdv: ProjectD
         cae.po(f"  --- integrity check of {chi_pdv['project_title']}")
         check_integrity(chi_pdv)
 
-    cae.po(f"===== passed integrity checks of {_children_desc(parent_pdv, children_pdv)}")
+    cae.po(f" ==== passed integrity checks of {_children_desc(parent_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='check')
@@ -2903,7 +2951,7 @@ def clone_children(parent_or_root_pdv: ProjectDevVars, *owner_name_versions: str
     for own_nam_ver in owner_name_versions:
         project_paths.append(clone_project(parent_or_root_pdv, own_nam_ver))
 
-    cae.po(f"===== {len(project_paths)} projects cloned: {_pp(project_paths)}")
+    cae.po(f" ==== {len(project_paths)} projects cloned: {_pp(project_paths)}")
     return project_paths
 
 
@@ -2954,7 +3002,7 @@ def commit_children(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
         commit_project(chi_pdv)
-    cae.po(f"===== committed {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== committed {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, pre_action=check_integrity, shortcut='commit')
@@ -2990,7 +3038,7 @@ def delete_children_file(ini_pdv: ProjectDevVars, file_name: str, *children_pdv:
         if delete_file(chi_pdv, file_name):
             c_del.append(chi_pdv)
 
-    cae.po(f"===== deleted {file_name} in {_children_desc(ini_pdv, children_pdv=c_del)}")
+    cae.po(f" ==== deleted {file_name} in {_children_desc(ini_pdv, children_pdv=c_del)}")
     return len(c_del) == (1 if is_root else 0) + len(children_pdv)
 
 
@@ -3030,7 +3078,7 @@ def install_children_editable(ini_pdv: ProjectDevVars, *children_pdv: ProjectDev
     """ install parent children or namespace portions as editable on the local machine. """
     for chi_pdv in children_pdv:
         install_editable(chi_pdv)
-    cae.po(f"===== installed as editable {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== installed as editable {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='editable')
@@ -3055,7 +3103,7 @@ def new_children(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars) -> list
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
         new_vars.append(renew_project(chi_pdv))
-    cae.po(f"===== renewed {_children_desc(ini_pdv, children_pdv=new_vars)}")
+    cae.po(f" ==== renewed {_children_desc(ini_pdv, children_pdv=new_vars)}")
     return new_vars
 
 
@@ -3100,7 +3148,7 @@ def prepare_children_commit(ini_pdv: ProjectDevVars, title: str, *children_pdv: 
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
         prepare_commit(chi_pdv, title=title)
-    cae.po(f"===== prepared commit of {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== prepared commit of {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, arg_names=((), ('commit-message-title', ), ), shortcut='prepare')
@@ -3125,7 +3173,7 @@ def refresh_children_outsourced(ini_pdv: ProjectDevVars, *children_pdv: ProjectD
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
         refresh_outsourced(chi_pdv)
-    cae.po(f"===== refreshed {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== refreshed {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='refresh')
@@ -3160,7 +3208,7 @@ def rename_children_file(ini_pdv: ProjectDevVars, old_file_name: str, new_file_n
         if rename_file(chi_pdv, old_file_name, new_file_name):
             ren.append(chi_pdv['project_name'])
 
-    cae.po(f"===== renamed {len(ren)}/{len(children_pdv) + 1} times {old_file_name} to {new_file_name} in: {ren}")
+    cae.po(f" ==== renamed {len(ren)}/{len(children_pdv) + 1} times {old_file_name} to {new_file_name} in: {ren}")
     return len(ren) == 1 + len(children_pdv)
 
 
@@ -3194,7 +3242,7 @@ def renew_children(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):
     """ complete/renew/update the local children projects of the specified parent/namespace-root. """
     for chi_pdv in children_pdv:
         renew_project(chi_pdv)
-    cae.po(f"===== updated {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== updated {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='renew')
@@ -3222,48 +3270,39 @@ def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: P
         if chi_pdv != children_pdv[-1]:
             _wait(ini_pdv)
 
-    cae.po(f"===== run command '{command}' for {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== run command '{command}' for {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(local_action=False, shortcut='actions')    # local_action=False sets host_api to display remote actions
 def show_actions(ini_pdv: ProjectDevVars):
     """ get available/registered/implemented actions info of the specified/current project and remote. """
-    compact = not _get_app_option(ini_pdv, 'more_verbose')
-    host_domain = _get_host_domain(ini_pdv)
-    sep = os.linesep
-    ind = " " * 9
-
+    host_api = ini_pdv.pdv_val('host_api')
+    repo_domain = _get_host_domain(ini_pdv)
     actions = sorted(_available_actions())
-    if compact:
-        cae.po(f"  --- available actions (locally and on {host_domain}, add --verbose to see other host actions):")
-        for act in actions:
-            act_fun = _act_callable(ini_pdv.pdv_val('host_api'), act)
-            if callable(act_fun):
-                cae.po(f"    - {act_fun.__name__: <30} {(act_fun.__doc__ or '').split(sep)[0]}")
+
+    prefix = f"  --- found {len(actions)} available actions"
+    if not _get_app_option(ini_pdv, 'more_verbose'):    # compact output
+        cae.po(prefix + "; add the --more_verbose (-v) option for action details:")
+        for act_name in actions:
+            if act_fun := _act_callable(host_api, act_name):
+                cae.po(f"    - {act_fun.__name__: <30} {(act_fun.__doc__ or '').split(os.linesep)[0]}")
+
     else:
-        cae.po(f"  --- all registered actions (locally and at {'|'.join(REGISTERED_HOSTS_CLASS_NAMES)}):")
+        cae.po(prefix + f" (locally and at {'|'.join(REGISTERED_HOSTS_CLASS_NAMES)}):")
 
-        def _act_print(act_reg_key: str):
-            spe = REGISTERED_ACTIONS[act_reg_key]
-            cae.po(f"{ind}{act_reg_key}==" + (sep + ind).join(_ for _ in spe['docstring'].split(sep)))
-            if 'arg_names' in spe or 'flags' in spe:
-                cae.po(f"{ind}args/flags: {_expected_args(spe)}")
-            cae.po(f"{ind}project types: {', '.join(_ for _ in spe['project_types'] if _)}")
-            if 'shortcut' in spe:
-                cae.po(f"{ind}shortcut: {spe['shortcut']}")
+        for act_name in actions:
+            cae.po(f"    - {act_name} " + "-" * (120 - len(act_name)))
+            for spec in _act_specs(act_name):
+                _act_help_print(spec)
 
-        for act in actions:
-            cae.po(f"    - {act} -------------------------------------------------------------------")
-            for name in [act] + [_ + "." + act for _ in REGISTERED_HOSTS_CLASS_NAMES.values()]:
-                if name in REGISTERED_ACTIONS:
-                    _act_print(name)
+        if other_host_actions := [_ for _ in actions if not _act_callable(host_api, _)]:
+            fail_msg = ("" if host_api.connection else f"(due to missing/wrong {mask_token(ini_pdv['repo_token'])=})"
+                        ) if host_api else f"(due to invalid {repo_domain=})"
+            # noinspection PyUnboundLocalVariable
+            cae.po(f"  --- {len(other_host_actions)} actions registered but not available for this project {fail_msg}")
+            cae.po(f"      {', '.join(other_host_actions)}")
 
-    if other_host_actions := ', '.join(_ for _ in actions if not _act_callable(ini_pdv.pdv_val('host_api'), _)):
-        cae.po(f"  --- actions registered but not available on {host_domain}:")
-        # noinspection PyUnboundLocalVariable
-        cae.po(f"      {other_host_actions}")
-
-    cae.po(f"===== actions available for {ini_pdv['project_title']}")
+    cae.po(f" ==== project manager actions for {ini_pdv['project_title']}")
 
 
 @_action(PARENT_PRJ, ROOT_PRJ)
@@ -3271,7 +3310,7 @@ def show_children_versions(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVar
     """ show package versions (local, remote and on pypi) for the specified children of a namespace/parent. """
     for chi_pdv in children_pdv:
         show_versions(chi_pdv)
-    cae.po(f"===== versions shown of {_children_desc(ini_pdv, children_pdv)}")
+    cae.po(f" ==== versions shown of {_children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(shortcut='versions')
@@ -3361,11 +3400,24 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):
 def prepare_and_run_main():                                                                # pragma: no cover
     """ prepare and run app """
     cae.run_app()                                                   # parse command line arguments
+
     ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()  # init globals, check action, compile args
     host_api = ini_pdv.pdv_val('host_api')                          # determine optional host API client instance
     action_callable = _act_callable(host_api, act_name)             # determine action function|method
 
-    action_callable(ini_pdv, *act_args, **act_flags)                # execute action
+    if _get_app_option(ini_pdv, 'help'):
+        cae.po()
+        cae.show_help()
+        if act_specs := _act_specs(act_name):
+            cae.po()
+            if len(act_specs) > 1:
+                cae.po(f"found {len(act_specs)} possible {act_name} actions:")
+            else:
+                cae.po("action details:")
+            for spec in act_specs:
+                _act_help_print(spec, indent=2)                     # show help for action
+    else:
+        action_callable(ini_pdv, *act_args, **act_flags)            # execute action
 
     if not cae.verbose:                                             # if not in verbose debug mode then
         temp_context_cleanup()                                      # cleanup default context and git clone context
@@ -3390,10 +3442,10 @@ cae.add_argument('arguments',
                       " actions expecting either a list of package/portion names or an expression using one of the"
                       " preset children sets like all|editable|modified|develop|filterBranch|filterExpression",
                  nargs='*')
-cae.add_option('branch', "name of the branch or version-tag to checkout/filter-/work-on", "", short_opt='b')
+cae.add_option('branch', "name of the branch or version-tag to checkout/filter-/work-on", "")
 cae.add_option('delay', "seconds to pause, e.g. between sub-actions of a children-bulk-action", 12.3, short_opt='w')
 cae.add_option('docs_domain', f"documentation domain (default={PDV_docs_domain})", None, short_opt=UNSET)
-cae.add_option('force', "force action execution. specify multiple times to ignore multiple errors", '++', short_opt='f')
+cae.add_option('force', "force action execution. specify multiple times to ignore multiple errors", '++')
 cae.add_option('filterExpression', "Python expression evaluated against each children project, to be used as"
                                    " 'filterExpression' children-set-expression argument", "", short_opt='F')
 cae.add_option('filterBranch', "branch name matching the children current branch, to be used as"
@@ -3402,21 +3454,20 @@ cae.add_option('git_log', "enables git command logging for clone_project|fork_pr
 cae.add_option('more_verbose', "enables a more verbose console output", UNSET, short_opt='v')  # != cae.verbose
 cae.add_option('namespace_name', "namespace name of a new namespace root or portion (module/package) project", "")
 cae.add_option('project_name', "project package or portion name", "", short_opt='P')
-cae.add_option('project_path', "project root directory (default=current working directory)", "", short_opt='p')
+cae.add_option('project_path', "project root directory (default=current working directory)", "")
 cae.add_option('repo_domain', f"git hosting service domain (default={PDV_repo_domain})", None, short_opt='d')
 cae.add_option('repo_group', "upstream user|group name at the repository hosting service", None, short_opt='g')
 cae.add_option('repo_token', "user credential access token of the git hosting service", None, short_opt='t')
 cae.add_option('repo_user', "user account name at the repository hosting service", None, short_opt='u')
-cae.add_option('versionIncrementPart', "project version number part to increment (0=disable, 1...3=mayor...patch)",
-               3, short_opt='i', choices=range(4))
+cae.add_option('versionIncrementPart', "project version number part to increment (0=disable, 1...3=mayor...patch)", 3,
+               short_opt='i', choices=range(4))
 cae.add_option('web_domain', "web app deployment platform (default=pythonanywhere.com)", None, short_opt=UNSET)
 cae.add_option('web_token', "user credential token at the used app deployment platform", None, short_opt=UNSET)
 cae.add_option('web_user', "user name at the used web app deployment platform", None, short_opt=UNSET)
 for template_pkg in ["namespace portion's root project"] + TPL_IMPORT_NAMES:
-    cae.add_option(template_path_option(template_pkg), f"local path of {template_pkg} template package",
-                   "", short_opt=UNSET)
-    cae.add_option(template_version_option(template_pkg), f"branch/version-tag of {template_pkg} template package",
-                   "", short_opt=UNSET)
+    tpl_pkg_suf = f" of {template_pkg} template package"                                # pylint: disable=invalid-name
+    cae.add_option(template_path_option(template_pkg), "local path" + tpl_pkg_suf, "", short_opt=UNSET)
+    cae.add_option(template_version_option(template_pkg), "branch/version-tag" + tpl_pkg_suf, "", short_opt=UNSET)
 
 
 if __name__ == '__main__':                                                                  # pragma: no cover

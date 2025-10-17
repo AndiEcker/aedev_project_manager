@@ -2248,13 +2248,25 @@ class TestHelpersRemote:
                 assert ret.startswith(f"¡current branch '{new_branch}' not on remote")
 
     @skip_if_not_maintainer
-    def test_init_act_exec_args_show_remote(self, mocked_app_options, patched_exit_call_wrapper):
+    def test_init_act_exec_args_show_remote(self, capsys, mocked_app_options):
         mocked_app_options['action'] = 'show_remote'
         mocked_app_options['arguments'] = ["ae-group/ae_base"]
 
         mocked_app_options['repo_token'] = "anyInvalidTstToken"
 
-        assert patched_exit_call_wrapper(_init_act_exec_args)   # fails on authenticating if not enough --force added
+        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()  # no exit_app but fails on authenticating
+
+        output = capsys.readouterr().out
+        assert "401 Unauthorized" in output
+        assert " **** connection to gitlab.com remote host server failed" in output
+
+        assert isinstance(ini_pdv, dict)    # ProjectDevVars
+        assert act_name == mocked_app_options['action']
+        assert act_args == mocked_app_options['arguments']
+        assert act_flags == {}
+        assert 'host_api' in ini_pdv
+        assert isinstance(ini_pdv.pdv_val('host_api'), GitlabCom)
+        assert ini_pdv['repo_token'] == mocked_app_options['repo_token']
 
         mocked_app_options['repo_token'] = itg_mtn_token   # use token from local .env file
 
