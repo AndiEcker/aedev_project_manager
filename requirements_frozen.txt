@@ -22,7 +22,7 @@ ae_dynamicod==0.3.15
 ae_literal==0.3.35
 ae_updater==0.3.17
 ae_core==0.3.76
-ae_console==0.3.84
+ae_console==0.3.85
 ae_shell==0.3.7
 ae_templates==0.3.1
 ae_dev_ops==0.3.8

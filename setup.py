@@ -61,7 +61,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.9',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.3',
+    'version': '0.3.4',
     'zip_safe': True,
 }
 
