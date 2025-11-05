@@ -15,6 +15,8 @@ setup_kwargs = {
         'Programming Language :: Python :: 3.12', 'Topic :: Software Development :: Libraries :: Python Modules',
         'Typing :: Typed'],
     'description': 'aedev namespace package portion project_manager: create and maintain Python projects locally and remotely',
+    'entry_points': {       'console_scripts': [       'pjm = aedev.project_manager.__main__:main',
+                                   'project-manager = aedev.project_manager.__main__:main']},
     'extras_require': {       'dev': [       'aedev_project_tpls', 'aedev_aedev', 'anybadge', 'coverage-badge', 'aedev_project_manager',
                        'flake8', 'mypy', 'pylint', 'pytest', 'pytest-cov', 'pytest-django', 'typing',
                        'types-setuptools'],
@@ -59,7 +61,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.9',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.5',
+    'version': '0.3.6',
     'zip_safe': True,
 }
 
