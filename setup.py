@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.58
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.59
 """ setup of aedev namespace package portion project_manager: create and maintain Python projects locally and remotely. """
 # noinspection PyUnresolvedReferences
 import sys
@@ -12,11 +12,9 @@ setup_kwargs = {
     'author_email': 'aecker2@gmail.com',
     'classifiers': [       'Development Status :: 3 - Alpha', 'Natural Language :: English', 'Operating System :: OS Independent',
         'Programming Language :: Python', 'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.9', 'Topic :: Software Development :: Libraries :: Python Modules',
+        'Programming Language :: Python :: 3.12', 'Topic :: Software Development :: Libraries :: Python Modules',
         'Typing :: Typed'],
     'description': 'aedev namespace package portion project_manager: create and maintain Python projects locally and remotely',
-    'entry_points': {       'console_scripts': [       'pjm = aedev.project_manager.__main__:main',
-                                   'project-manager = aedev.project_manager.__main__:main']},
     'extras_require': {       'dev': [       'aedev_project_tpls', 'aedev_aedev', 'anybadge', 'coverage-badge', 'aedev_project_manager',
                        'flake8', 'mypy', 'pylint', 'pytest', 'pytest-cov', 'pytest-django', 'typing',
                        'types-setuptools'],
@@ -24,9 +22,9 @@ setup_kwargs = {
         'tests': [       'anybadge', 'coverage-badge', 'aedev_project_manager', 'flake8', 'mypy', 'pylint', 'pytest',
                          'pytest-cov', 'pytest-django', 'typing', 'types-setuptools']},
     'install_requires': [       'anybadge', 'coverage', 'coverage-badge', 'flake8', 'mypy', 'packaging', 'Pillow', 'types-Pillow', 'PyGithub',
-        'pylint', 'pytest', 'pytest-cov', 'python-gitlab', 'requests', 'requests-toolbelt', 'setuptools', 'ae_base',
-        'ae_files', 'ae_paths', 'ae_dynamicod', 'ae_literal', 'ae_updater', 'ae_core', 'ae_console', 'ae_shell',
-        'ae_templates', 'ae_dev_ops', 'ae_pythonanywhere'],
+        'pylint', 'pytest', 'pytest-cov', 'python-gitlab', 'requests', 'requests-toolbelt', 'setuptools', 'ae_base==0.3.73',
+        'ae_files==0.3.25', 'ae_paths==0.3.43', 'ae_dynamicod==0.3.15', 'ae_literal==0.3.35', 'ae_updater==0.3.17', 'ae_core==0.3.76', 'ae_console==0.3.85', 'ae_shell==0.3.7',
+        'ae_templates==0.3.1', 'ae_dev_ops==0.3.8', 'ae_pythonanywhere==0.3.1'],
     'keywords': ['configuration', 'development', 'environment', 'productivity'],
     'license': 'GPL-3.0-or-later',
     'long_description': ('# project_manager command line tool\n'
@@ -61,7 +59,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.9',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.4',
+    'version': '0.3.5',
     'zip_safe': True,
 }
 

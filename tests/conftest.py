@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.58
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.59
 # pylint: disable=redefined-outer-name, unused-argument; suppress fixtures conflicts (silly pylint)
 """ fixtures for to test this project """
 import os
@@ -34,7 +34,7 @@ def restore_app_env(sys_argv_app_key_restore):
     # LOCAL IMPORT because a portion may not depend-on/use ae.core
     # noinspection PyProtectedMember
     # pylint: disable=import-outside-toplevel
-    from ae.core import app_inst_lock, _APP_INSTANCES, _unregister_app_instance     # type: ignore
+    from ae.core import _APP_INSTANCES, app_inst_lock, logger_shutdown, _unregister_app_instance     # type: ignore
 
     yield sys_argv_app_key_restore
 
@@ -52,11 +52,14 @@ def restore_app_env(sys_argv_app_key_restore):
             # remove app from ae.core app register/dict
             _unregister_app_instance(key)
 
+        if not app_keys:    # else logger_shutdown got called already by _unregister_app_instance()
+            logger_shutdown()
+
 
 @pytest.fixture
 def cons_app(restore_app_env):
     """ provide ConsoleApp instance that will be unregistered automatically """
-    # LOCAL IMPORT because some portions like e.g. ae_core does not depend/use ae.console
+    # LOCAL IMPORT because some portions like e.g. ae_core does not depend-on/use ae.console
     from ae.console import ConsoleApp       # type: ignore # pylint: disable=import-outside-toplevel
     yield ConsoleApp()
 
