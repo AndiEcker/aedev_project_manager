@@ -597,7 +597,7 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
             # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
             # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
             extra_args = ["--doctest-modules"] + extra_args + path_args
-        sh_exit_if_exec_err(46, "python -m pytest", extra_args=extra_args)
+        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
         db_ok = os_path_isfile(cov_db)
         check_if(47, db_ok, f"coverage db file ({cov_db}) not created for tests or doctests in {path_args}")
         os.makedirs(sub_dir, exist_ok=True)
