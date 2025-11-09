@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.59
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.62
 image: python:3.12
 
 
@@ -7,13 +7,13 @@ image: python:3.12
 
 before_script:
   - python --version
-  - pip install --upgrade setuptools pip
-  - pip install --upgrade -r requirements_frozen.txt -r tests/requirements.txt
+  - pip install --upgrade setuptools pip pipx
+  - pip install --upgrade -r requirements.txt -r tests/requirements.txt
 
 
 integrity:
   script:
-    - project-manager -v check-integrity
+    - pipx run --spec aedev_project_manager project-manager -v check-integrity
   artifacts:
     paths:
       - mypy_report/

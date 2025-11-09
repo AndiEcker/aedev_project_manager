@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.59
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.62
 """ setup of aedev namespace package portion project_manager: create and maintain Python projects locally and remotely. """
 # noinspection PyUnresolvedReferences
 import sys
@@ -61,7 +61,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.9',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.6',
+    'version': '0.3.7',
     'zip_safe': True,
 }
 

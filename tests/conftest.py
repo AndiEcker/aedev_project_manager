@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.59
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.62
 # pylint: disable=redefined-outer-name, unused-argument; suppress fixtures conflicts (silly pylint)
 """ fixtures for to test this project """
 import os
@@ -18,7 +18,7 @@ def tst_app_key():
 
 
 @pytest.fixture
-def sys_argv_app_key_restore(tst_app_key):          # needed for tests using sys.argv/get_opt() of ConsoleApp
+def sys_argv_app_key_restore(tst_app_key):          # needed for tests using sys.argv/get_option() of ConsoleApp
     """ change sys.argv before test run to use test app key and restore sys.argv after test run. """
     old_argv = sys.argv
     sys.argv = [tst_app_key, ]
