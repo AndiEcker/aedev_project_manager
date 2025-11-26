@@ -14,7 +14,7 @@ import time
 
 from collections import OrderedDict
 from inspect import getframeinfo
-from typing import Any, Iterable, Optional, Union
+from typing import cast, Any, Iterable, Optional, Union
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -27,25 +27,33 @@ from ae.base import (
     in_wd, load_env_var_defaults, norm_name, norm_path, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     project_main_file, read_file, stack_frames, write_file, now_str)
-# noinspection PyProtectedMember
-from ae.core import _unregister_app_instance
 from ae.paths import path_items
-from ae.shell import (
-    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX,
-    GIT_VERSION_TAG_PREFIX, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, SHELL_LOG_FILE_NAME_SUFFIX,
-    debug_or_verbose, get_main_app, get_pypi_versions, git_add, git_any, git_checkout, git_commit,
-    git_current_branch, git_remotes, git_uncommitted,
-    in_os_env, in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
-from ae.dev_ops import (
-    ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, ENV_VAR_NAME_PREFIX, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PDV_REQ_DEV_FILE_NAME, PLAYGROUND_PRJ, ROOT_PRJ,
-    VERSION_PREFIX, VERSION_QUOTE,
-    code_file_version, latest_remote_version, main_file_path, ProjectDevVars)
-from ae.templates import (
-    OUTSOURCED_FILE_NAME_PREFIX, OUTSOURCED_MARKER, CACHED_TPL_PROJECTS,
+from ae.core import main_app_instance, temp_context_cleanup
+from ae.console import ConsoleApp
+from ae.shell import debug_or_verbose
+from ae.pythonanywhere import PythonanywhereApi
+from ae.template import (
+    OUTSOURCED_FILE_NAME_PREFIX, OUTSOURCED_MARKER,
     TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID, TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_PLACEHOLDER_ID_PREFIX,
-    TEMPLATE_PLACEHOLDER_ID_SUFFIX, TPL_FILE_NAME_PREFIX, TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX,
+    TEMPLATE_PLACEHOLDER_ID_SUFFIX, TPL_FILE_NAME_PREFIX)
+from aedev.base import (
+    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
+    ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
+    PIP_INSTALL_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
+    code_file_version, get_pypi_versions)
+from aedev.commands import (
+    EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
+    SHELL_LOG_FILE_NAME_SUFFIX,
+    git_add, git_any, git_checkout, git_commit, git_current_branch, git_remotes,
+    git_uncommitted, in_os_env, in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs)
+from aedev.project_vars import (
+    ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PDV_REQ_DEV_FILE_NAME, PLAYGROUND_PRJ, ROOT_PRJ,
+    increment_version, latest_remote_version, main_file_path, ProjectDevVars)
+
+from aedev.project_manager.templates import (
+    CACHED_TPL_PROJECTS, TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX,
     register_template, template_path_option, template_version_option)
+
 
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import (
@@ -55,11 +63,11 @@ from aedev.project_manager.__main__ import (
     _get_app_option, _get_branch, _get_host_user_name, _get_host_user_token, _get_mirror_remote, _guess_next_action,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
     _print_pdv, _refresh_templates, _renew_prj_dir, _renew_project, _show_status, _wait,
-    add_children_file, cae, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
-    commit_project, delete_children_file, increment_version, install_children_editable, install_editable,
+    add_children_file, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
+    commit_project, delete_children_file, init_main, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
     prepare_children_commit, prepare_commit, refresh_children_outsourced, rename_children_file, renew_children,
-    run_children_command, show_actions, show_children_versions, update_mirror)
+    run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
 
 
 INTEGRATION_TESTS = False
@@ -68,7 +76,7 @@ INTEGRATION_TESTS = False
 def setup_module():
     """ clone template projects to speedup tests, printing warning messages if the tested module is not set up. """
     print()
-    print(f"::::: {os_path_basename(__file__)} setup_module BEG - {get_main_app()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} setup_module BEG - {main_app_instance()=} {TEST_TPL_REGISTER=}")
 
     # for import_name in tst_namespaces_roots + TPL_IMPORT_NAMES:
     for import_name in TPL_IMPORT_NAMES:
@@ -112,51 +120,49 @@ def setup_module():
                 _push_to_remote_and_pypi(root_pdv)
                 print(f" !__! successfully pushed the auto-updated {_uncommitted} file(s) of {itg_root_prj_name}")
 
-    # prevent call of ae.shell.exit_error() because it will unregister the main app instance cae and the template cache
-    exit_error_patcher.append(patch('aedev.project_manager.__main__.exit_error', new=_log_exit_error_calls))
-    exit_error_patcher.append(patch('ae.shell.exit_error', new=_log_exit_error_calls))
-    for patcher in exit_error_patcher:
+    # log unpatched calls of app.shutdown() and prevent unregister of the main app instance and the template cache
+    shutdown_patcher.append(patch('ae.core.AppBase.shutdown', new=_log_shutdown_calls))
+    shutdown_patcher.append(patch('ae.console.ConsoleApp.shutdown', new=_log_shutdown_calls))
+    for patcher in shutdown_patcher:
         patcher.start()
 
-    print(f"::::: {os_path_basename(__file__)} setup_module END - {get_main_app()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} setup_module END - {main_app_instance()=} {TEST_TPL_REGISTER=}")
 
 
 def teardown_module():
     """ check if the tested module is still set up correctly at the end of this test module. """
     print()
-    print(f"::::: {os_path_basename(__file__)} teardown_module BEG - {get_main_app()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} teardown_module BEG - {main_app_instance()=} {TEST_TPL_REGISTER=}")
     errors = []
 
-    CACHED_TPL_PROJECTS.clear()  # prevent side effects if other module unit tests running after
+    CACHED_TPL_PROJECTS.clear()                     # prevent side effects if other module unit tests running after
 
-    temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)  # remove temp cache of cloned tst_repo and template projects
+    temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)   # remove temp cache of cloned tst_repo and template projects
     temp_context_cleanup()
 
-    _unregister_app_instance(cae.app_key)  # remove registered main app from ae.core module/_APP_INSTANCES
-
-    for err, msg, trace in logged_exit_error_calls:
-        print(f" **** detected unpatched call of exit_error() with {err=} and {msg=}")
+    for err, msg, trace in logged_shutdown_calls:
+        print(f" **** detected unpatched call of shutdown() with {err=} and {msg=}")
         for call_stack_entry in trace:
             print(f"    * {call_stack_entry}")
-    for patcher in exit_error_patcher:
+    for patcher in shutdown_patcher:
         patcher.stop()
-    if logged_exit_error_calls:
-        errors.append("detected unredirected calls of ae.shell.exit_error() in one or more unit tests")
+    if logged_shutdown_calls:
+        errors.append("detected unredirected calls of app.shutdown() in one or more unit tests")
 
-    print(f"::::: {os_path_basename(__file__)} teardown_module END - {get_main_app()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} teardown_module END - {main_app_instance()=} {TEST_TPL_REGISTER=}")
 
     assert not errors, f"test module teardown with {len(errors)} {errors=}"
 
 
-# mock/replacement of :func:`as.shell.exit_error` to log calls when patched by func:`patched_exit_call_wrapper` fixture
-exit_error_patcher = []
-logged_exit_error_calls = []
+# mocking :meth:`as.console.ConsoleApp.shutdown` to log calls when patched by func:`patched_shutdown_wrapper` fixture
+shutdown_patcher = []
+logged_shutdown_calls = []
 
 
-def _log_exit_error_calls(error_code: int, error_message: str):
-    """ ae.shell.exit_error()-mock to prevent unregister of main app and template projects and to log them in tests. """
+def _log_shutdown_calls(main_app: Any, exit_code: int, error_message: str = ""):
+    """ AppBase|ConsoleApp.shutdown()-mock to prevent unregister of main-app|template-projects to log them in tests. """
     print()
-    print(f"***** exit_error() called with {error_code=} and {error_message=}; stack:")
+    print(f"***** app.shutdown() called with {exit_code=} and {error_message=}; {main_app=}; stack:")
     trace = []
     for fra in stack_frames():
         inf = getframeinfo(fra)
@@ -166,11 +172,17 @@ def _log_exit_error_calls(error_code: int, error_message: str):
         if inf.function.startswith("test_"):
             break
     print()
-    logged_exit_error_calls.append((error_code, error_message, trace))  # to be printed again by teardown_module()
+    logged_shutdown_calls.append((exit_code, error_message, trace))  # to be printed again by teardown_module()
 
 
 # determine if the esc (external source code) parent folder exists on the local machine
 esc_parent_path = _path if os_path_isdir(_path := os_path_join(os.getcwd(), "..", "..", 'esc')) else ""
+
+
+@pytest.fixture
+def app_pjm(restore_app_env):
+    """ provide project-manager-ConsoleApp instance that will be unregistered automatically """
+    yield init_main()
 
 
 # integration tests domain, local path, test projects, names|credentials for maintainer/mtn and contributor/ctb roles
@@ -352,11 +364,11 @@ def mocked_app_options():
     """ mock ConsoleApp option/config-var-setter/getter and option value requests via _get_app_option/debug_or_verbose.
 
     main ConsoleApp instance argument parsing gets prevented by monkey-patching, e.g., of main_app.get_option().
-    direct access to pdv['main_app_options'] gets not detected and mocked by this fixture; useful to fix side effects
+    also direct access to pdv['main_app_options'] gets mocked by this fixture; useful to fix side effects
     of mocked child-pdv when option values should only be specified for the parent.
 
-    because cae is only initialized but no args got parsed. therefore and to let debug_or_verbose() also behave like the
-    value specified by the mocked option 'more_verbose', ae.shell.debug_or_verbose() will also get patched accordingly.
+    to let ae.shell.debug_or_verbose() also behave like the value specified by the mocked option 'more_verbose',
+    it will also get patched accordingly.
     """
     def _app_option(_pdv: ProjectDevVars, opt_nam: str) -> Optional[Any]:
         if opt_nam in mocked_options:
@@ -366,7 +378,7 @@ def mocked_app_options():
     def _dbg_or_verbose():
         return mocked_options.get('more_verbose', False)
 
-    main_app = get_main_app()
+    main_app = cast(ConsoleApp, main_app_instance())
     ori_get_arg = main_app.get_argument
     ori_get_opt = main_app.get_option
 
@@ -379,8 +391,7 @@ def mocked_app_options():
     main_app.get_argument = main_app.get_option = lambda opt: mocked_options.get(opt, None)
 
     with (patch('aedev.project_manager.__main__._get_app_option', new=_app_option),
-          patch('ae.dev_ops.get_main_app', return_value=main_app),
-          patch('ae.shell.get_main_app', return_value=main_app),
+          patch('ae.core.main_app_instance', return_value=main_app),
           patch('aedev.project_manager.__main__.debug_or_verbose', new=_dbg_or_verbose),
           patch('ae.shell.debug_or_verbose', new=_dbg_or_verbose),
           ):
@@ -446,7 +457,8 @@ def empty_repo_path():
 
 @pytest.fixture
 def gitlab_remote():
-    """ provide a connected Gitlab remote repository api. """
+    """ provide a connected Gitlab remote repository api """
+    assert itg_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {itg_mtn_token=}"
     remote_project = GitlabCom()
     remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
                                              'repo_domain': itg_domain,
@@ -476,35 +488,6 @@ def module_repo_path():
     with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'module') as project_path:
         _ensure_tst_ns_portion_version_file(project_path)
         yield project_path
-
-
-@pytest.fixture
-def patched_exit_call_wrapper(mocked_app_options):
-    """ log :func:`ae.shell.exit_error` function calls and args, while preventing main app shutdown.
-
-    inherit from mocked_app_options to prevent call of get_option()/parse_arguments() from check_if()
-    """
-    exit_call_args = []
-
-    class _ExitCaller(Exception):
-        """ exception to recognize and simulate app exit for function to be tested. """
-
-    def _exit_(*args, **kwargs):
-        # nonlocal exit_call_args
-        exit_call_args.append((args, kwargs))
-        raise _ExitCaller("to be caught by the _call_wrapper() of the patched_exit_call_wrapper unit test fixture")
-
-    def _call_wrapper(fun, *args, **kwargs):
-        exit_call_args.clear()
-        try:
-            ret = fun(*args, **kwargs)
-        except _ExitCaller:
-            ret = None
-        print(f"patched_exit_call_wrapper._call_wrapper {ret=}")
-        return exit_call_args
-
-    with patch('aedev.project_manager.__main__.exit_error', new=_exit_), patch('ae.shell.exit_error', new=_exit_):
-        yield _call_wrapper
 
 
 @pytest.fixture
@@ -578,14 +561,27 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
 
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token
 class TestActionsGitLab:
-    def test_clean_releases(self, gitlab_remote, mocked_app_options, module_repo_path):
+    def test_show_remote1(self, app_pjm, capsys, gitlab_remote, temp_parent_path):
+        prj_grp = 'ae-group'
+        prj_nam = 'ae_base'
+        with (patch('aedev.project_manager.__main__._get_host_group', return_value=prj_grp),
+              patch('aedev.project_manager.__main__._get_host_domain', return_value=""), ):
+
+            gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
+
+            output = capsys.readouterr().out
+            assert " -- " + prj_grp + "/" + prj_nam + " remote repository attributes:" in output
+            assert " - default_branch = develop" in output
+            assert " - visibility = public" in output
+
+    def test_clean_releases(self, app_pjm, gitlab_remote, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['repo_token'] = itg_mtn_token
         mocked_app_options['more_verbose'] = True
 
         gitlab_remote.clean_releases(ProjectDevVars(project_path=module_repo_path))
 
-    def test_fork_project(self, gitlab_remote, temp_parent_path):
+    def test_fork_project(self, app_pjm, gitlab_remote, temp_parent_path):
         project_name = 'ae_base'
         project_path = os_path_join(esc_parent_path or temp_parent_path, project_name)
         pdv = ProjectDevVars(project_path=project_path)
@@ -596,18 +592,21 @@ class TestActionsGitLab:
         assert os_path_isfile(os_path_join(project_path, 'ae', 'base.py'))
         assert pdv['REMOTE_UPSTREAM'] in git_remotes(project_path)
 
-    def test_show_remote(self, capsys, gitlab_remote):
-        with (patch('aedev.project_manager.__main__._get_host_group', return_value="ae-group"),
-              patch('aedev.project_manager.__main__._get_host_domain', return_value=""),
-              ):
-            gitlab_remote.show_remote(ProjectDevVars(project_path=".."), "ae-group/ae_base")
-            output = capsys.readouterr().out
-            assert "default_branch = develop" in output
-            assert "path_with_namespace = ae-group/ae_base" in output
-            assert "visibility = public" in output
+    def test_show_remote(self, capsys, app_pjm, gitlab_remote, temp_parent_path):
+        prj_grp = 'ae-group'
+        prj_nam = 'ae_base'
+        with (patch('aedev.project_manager.__main__._get_host_group', return_value=prj_grp),
+              patch('aedev.project_manager.__main__._get_host_domain', return_value=""), ):
 
-    def test_show_children_status(self, capsys, changed_repo_path, empty_repo_path, gitlab_remote, mocked_app_options,
-                                  module_repo_path):
+            gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
+
+            output = capsys.readouterr().out
+            assert " -- " + prj_grp + "/" + prj_nam + " remote repository attributes:" in output
+            assert " - default_branch = develop" in output
+            assert " - visibility = public" in output
+
+    def test_show_children_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote,
+                                  mocked_app_options, module_repo_path):
         mocked_app_options['more_verbose'] = False
         chi_prj_vars = {norm_name(os_path_basename(_)): ProjectDevVars(project_path=_) 
                         for _ in (changed_repo_path, empty_repo_path, module_repo_path)}
@@ -632,7 +631,7 @@ class TestActionsGitLab:
         assert "-- git status:" in output
         assert "*** next action discrepancy:" in output
 
-    def test_show_status(self, capsys, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
+    def test_show_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
         verbose = debug_or_verbose()
         err_prefix = "empty or invalid project version"
         for project_path in paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path):
@@ -652,7 +651,8 @@ class TestActionsGitLab:
             else:
                 assert "-- next action guess: renew_project" in output, f"with {project_path=}"
 
-    def test_show_status_main_branch(self, capsys, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
+    def test_show_status_main_branch(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote,
+                                     module_repo_path):
         verbose = debug_or_verbose()
         err_prefix = "detected main_branch='develop' with added/changed/uncommitted files: "
         for project_path in paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path):
@@ -675,7 +675,8 @@ class TestActionsGitLab:
             else:  # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
-    def test_show_status_unstaged(self, capsys, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
+    def test_show_status_unstaged(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote,
+                                  module_repo_path):
         verbose = debug_or_verbose()
         err_prefix = "unstaged files found! run git add, or delete them: "
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
@@ -700,7 +701,8 @@ class TestActionsGitLab:
             else:
                 assert False, "itg test projects does not make sense here"
 
-    def test_show_status_committed(self, capsys, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
+    def test_show_status_committed(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote,
+                                   module_repo_path):
         verbose = debug_or_verbose()
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
             _ensure_tst_ns_portion_version_file(project_path)
@@ -720,7 +722,7 @@ class TestActionsGitLab:
 
 
 class TestActionsLocal:
-    def test_add_children_file(self, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_add_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
 
@@ -766,7 +768,8 @@ class TestActionsLocal:
         assert tpl_content in read_file(tpl_dst_path)
         assert OUTSOURCED_MARKER in read_file(tpl_dst_path)
 
-    def test_check_children_integrity(self, capsys, changed_repo_path, empty_repo_path, module_repo_path):
+    def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
+                                      module_repo_path, patched_shutdown_wrapper):
         par_pdv = ProjectDevVars(project_path=os_path_dirname(changed_repo_path))
 
         check_children_integrity(par_pdv, ProjectDevVars(project_path=changed_repo_path))
@@ -775,36 +778,37 @@ class TestActionsLocal:
         check_children_integrity(par_pdv, ProjectDevVars(project_path=empty_repo_path))
         assert " ==== " in capsys.readouterr().out
 
-        # removed together with patched_exit_call_wrapper arg because fails with error '(46, ')
-        # .. but only when running on console via pjm command line (not in PyCharm)
-        # cl=patched_exit_call_wrapper(check_children_integrity, par_pdv, ProjectDevVars(project_path=module_repo_path))
-        # assert len(cl) == 1
-        # assert cl[0][0][0] == 44    # '(44, '
-        # assert capsys.readouterr().out
+        cl = patched_shutdown_wrapper(check_children_integrity, par_pdv, ProjectDevVars(project_path=module_repo_path))
+        assert len(cl) == 1
+        assert cl[0]['exit_code'] == 46 if on_ci_host() else 44  # (44, tplsChk) (46, pytest-exec w/ CI_PROJECT_ID set)
+        assert capsys.readouterr().out
 
-    def test_check_integrity(self, capsys, changed_repo_path, empty_repo_path):
+    def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_integrity(ProjectDevVars(project_path=changed_repo_path))
         assert capsys.readouterr().out
 
         check_integrity(ProjectDevVars(project_path=empty_repo_path))
         assert capsys.readouterr().out
 
-    def test_check_integrity_errors(self, capsys, mocked_app_options, module_repo_path, patched_exit_call_wrapper):
+    def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,
+                                    patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = False
 
-        calls = patched_exit_call_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
+        calls = patched_shutdown_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
 
         assert len(calls) == 1
+        assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (13, ) (44, ) (46, w/ CI_PROJECT_ID set)
         assert capsys.readouterr().out
 
         mocked_app_options['more_verbose'] = True
 
-        calls = patched_exit_call_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
+        calls = patched_shutdown_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
 
         assert len(calls) == 1
+        assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (44, ) (46, )
         assert capsys.readouterr().out
 
-    def test_clone_children_of_ae_namespace(self):
+    def test_clone_children_of_ae_namespace(self, app_pjm):
         project_versions = (f"ae-group/ae_base{PROJECT_VERSION_SEP}0.3.60", f"ae_paths{PROJECT_VERSION_SEP}0.3.42")
 
         with init_parent() as parent_dir:
@@ -819,7 +823,7 @@ class TestActionsLocal:
                 version = project_versions[idx].split(PROJECT_VERSION_SEP)[1]
                 assert version == code_file_version(project_main_file(import_name, project_path=project_path))
 
-    def test_clone_project_via_app_options_and_release_branch(self):
+    def test_clone_project_via_app_options_and_release_branch(self, app_pjm):
         import_name = 'ae.console'
         project_name = norm_name(import_name)
         project_version = "0.3.81"
@@ -835,7 +839,7 @@ class TestActionsLocal:
             assert os_path_isdir(project_path)
             assert project_version == code_file_version(project_main_file(import_name, project_path=project_path))
 
-    def test_clone_project_via_app_options_and_version_tag(self):
+    def test_clone_project_via_app_options_and_version_tag(self, app_pjm):
         import_name = 'ae.console'
         project_name = norm_name(import_name)
         project_version = "0.3.81"
@@ -851,7 +855,7 @@ class TestActionsLocal:
             assert os_path_isdir(project_path)
             assert project_version == code_file_version(project_main_file(import_name, project_path=project_path))
 
-    def test_clone_project_via_owner_name_prefix(self):
+    def test_clone_project_via_owner_name_prefix(self, app_pjm):
         group_name = 'ae-group'
         import_name = 'ae.base'
         project_name = norm_name(import_name)
@@ -868,16 +872,16 @@ class TestActionsLocal:
             assert os_path_isdir(project_path)
             assert project_version == code_file_version(project_main_file(import_name, project_path=project_path))
 
-    def test_commit_children(self, mocked_app_options, module_repo_path, patched_exit_call_wrapper):
+    def test_commit_children(self, app_pjm, mocked_app_options, module_repo_path, patched_shutdown_wrapper):
         mocked_app_options['project_path'] = os_path_dirname(module_repo_path)
         mocked_app_options['more_verbose'] = True
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "commit message testing commit_children")
 
-        cl = patched_exit_call_wrapper(commit_children,
-                                       ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
-                                       ProjectDevVars(project_path=module_repo_path))
+        cl = patched_shutdown_wrapper(commit_children,
+                                      ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
+                                      ProjectDevVars(project_path=module_repo_path))
         assert len(cl) == 1         # _check_action() failed because of no-branch/unstaged files/commit-msg-file-w/o-ver
-        assert cl[0][0][0] == 13    # '(13, '
+        assert cl[0]['exit_code'] == 13     # (13, )
 
         git_checkout(module_repo_path, new_branch="new_branch_for_test_commit_children")
         git_add(module_repo_path)
@@ -886,25 +890,25 @@ class TestActionsLocal:
         commit_children(ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
                         ProjectDevVars(project_path=module_repo_path))
 
-    def test_commit_project(self, mocked_app_options, module_repo_path, patched_exit_call_wrapper):
+    def test_commit_project(self, app_pjm, mocked_app_options, module_repo_path, patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = True
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "commit project msg w/o version placeholder")
 
-        assert patched_exit_call_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
 
         git_add(module_repo_path)
 
-        assert patched_exit_call_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
 
         git_checkout(module_repo_path, new_branch="tst_commit_project_branch_name")
 
-        assert patched_exit_call_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
 
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "msg-title with {project_version} placeholder")
 
-        assert not patched_exit_call_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert not patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
 
-    def test_delete_children_file(self, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_delete_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
         root_pdv = ProjectDevVars(project_path=empty_repo_path)
@@ -944,7 +948,7 @@ class TestActionsLocal:
         assert args[0] == 90
         assert args[1].startswith(PIP_INSTALL_CMD)
 
-    def test_new_app(self):
+    def test_new_app(self, app_pjm):
         with init_parent() as par_path:
             project_name = "TstApp"
             project_path = os_path_join(par_path, project_name)
@@ -958,7 +962,7 @@ class TestActionsLocal:
             assert os_path_isfile(main_file)
             assert code_file_version(main_file) == pdv['NULL_VERSION']  # no main_app_options['versionIncrementPart']
 
-    def test_new_children(self, mocked_app_options, module_repo_path):
+    def test_new_children(self, app_pjm, mocked_app_options, module_repo_path):
         mocked_app_options['namespace_name'] = tst_ns_name
 
         parent_pdv = ProjectDevVars(project_path=os_path_dirname(module_repo_path), 
@@ -975,7 +979,7 @@ class TestActionsLocal:
         assert os_path_isfile(main_file_path(module_repo_path, MODULE_PRJ, namespace_name=tst_ns_name))
         assert not os_path_isfile(main_file_path(module_repo_path, PACKAGE_PRJ, namespace_name=tst_ns_name))
 
-    def test_new_django(self, temp_parent_path):
+    def test_new_django(self, app_pjm, temp_parent_path):
         project_path = os_path_join(temp_parent_path, "django_project_root")
         pdv = ProjectDevVars(main_app_options=project_path, project_path=project_path)
 
@@ -984,7 +988,7 @@ class TestActionsLocal:
         assert new_pdv['project_type'] == DJANGO_PRJ
         assert os_path_isfile(main_file_path(project_path, DJANGO_PRJ))
 
-    def test_new_django_without_namespace(self, mocked_app_options, empty_repo_path):
+    def test_new_django_without_namespace(self, app_pjm, mocked_app_options, empty_repo_path):
         mocked_app_options['project_path'] = empty_repo_path
 
         pdv = ProjectDevVars(project_path=empty_repo_path)
@@ -996,7 +1000,7 @@ class TestActionsLocal:
         assert new_pdv['project_type'] == DJANGO_PRJ
         assert os_path_isfile(main_file_path(empty_repo_path, DJANGO_PRJ))
 
-    def test_new_module(self, mocked_app_options, module_repo_path):
+    def test_new_module(self, app_pjm, mocked_app_options, module_repo_path):
         mocked_app_options['namespace_name'] = tst_ns_name
         mocked_app_options['project_path'] = module_repo_path
 
@@ -1009,7 +1013,7 @@ class TestActionsLocal:
         assert os_path_isfile(main_file_path(module_repo_path, MODULE_PRJ, namespace_name=tst_ns_name))
         assert not os_path_isfile(main_file_path(module_repo_path, PACKAGE_PRJ, namespace_name=tst_ns_name))
 
-    def test_new_module_from_root(self, mocked_app_options, root_repo_path):
+    def test_new_module_from_root(self, app_pjm, mocked_app_options, root_repo_path):
         mocked_app_options['namespace_name'] = tst_ns_name
         mocked_app_options['project_path'] = root_repo_path
 
@@ -1023,7 +1027,7 @@ class TestActionsLocal:
         assert os_path_isfile(main_file_path(root_repo_path, ROOT_PRJ, namespace_name=tst_ns_name))
         assert os_path_isfile(main_file_path(new_pdv['project_path'], ROOT_PRJ, namespace_name=tst_ns_name))
 
-    def test_new_namespace_root(self, temp_parent_path):
+    def test_new_namespace_root(self, app_pjm, temp_parent_path):
         project_path = os_path_join(temp_parent_path, tst_root_prj_name)
         pdv = ProjectDevVars(main_app_options={'versionIncrementPart': 3},
                              namespace_name=tst_ns_name, project_path=project_path)
@@ -1037,7 +1041,7 @@ class TestActionsLocal:
         assert os_path_basename(ver_file_path) == PY_INIT
         assert code_file_version(ver_file_path) == "0.3.1"
 
-    def test_new_package(self, temp_parent_path):
+    def test_new_package(self, app_pjm, temp_parent_path):
         tst_prj = 'tst_prj_name'
         prj_path = os_path_join(temp_parent_path, tst_prj)
 
@@ -1047,7 +1051,7 @@ class TestActionsLocal:
         assert not os_path_isfile(main_file_path(prj_path, MODULE_PRJ))
         assert os_path_isfile(main_file_path(prj_path, PACKAGE_PRJ))
 
-    def test_new_playground(self, mocked_app_options, empty_repo_path):
+    def test_new_playground(self, app_pjm, mocked_app_options, empty_repo_path):
         playground_prj_dir = empty_repo_path + '_playground'
         os.rename(empty_repo_path, playground_prj_dir)
         mocked_app_options['project_path'] = playground_prj_dir
@@ -1067,7 +1071,8 @@ class TestActionsLocal:
         assert new_pdv['project_type'] == MODULE_PRJ
         assert files < set(path_items(os_path_join(module_repo_path, "**")))
 
-    def test_prepare_children_commit(self, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_prepare_children_commit(self, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
+                                     module_repo_path):
         title = "prepare children commit msg title - also adding unstaged files - V {project_version}"
         added = "unstaged_file_to_be_added_by_prepare_action.py"
         test_projects = (changed_repo_path, empty_repo_path, module_repo_path)
@@ -1093,16 +1098,17 @@ class TestActionsLocal:
             assert git_uncommitted(chi_path) == uncommitted[chi_path] | {added} | {chi_version_files[chi_path]}
             assert title in msg_file_content.split(os.linesep)[0], f"with {chi_path=}"
 
-    def test_prepare_commit_check_action_errors(self, changed_repo_path, mocked_app_options, patched_exit_call_wrapper):
+    def test_prepare_commit_check_action_errors(self, app_pjm, changed_repo_path, mocked_app_options,
+                                                patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = True
         title = "commit msg title"
 
-        cl = patched_exit_call_wrapper(prepare_commit, ProjectDevVars(project_path=changed_repo_path), title)
+        cl = patched_shutdown_wrapper(prepare_commit, ProjectDevVars(project_path=changed_repo_path), title)
 
-        assert len(cl) == 1         # _check_action() failed because on main branch with changed/unstaged files
-        assert cl[0][0][0] == 13    # '(13, '
+        assert len(cl) == 1                 # _check_action() failed because on main branch with changed/unstaged files
+        assert cl[0]['exit_code'] == 13     # (13, )
 
-    def test_prepare_commit(self, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_prepare_commit(self, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['more_verbose'] = True
         title = "commit msg title with {project_version} placeholder"
         for prj_path in (changed_repo_path, empty_repo_path, module_repo_path):
@@ -1130,7 +1136,7 @@ class TestActionsLocal:
 
         assert os_path_isdir(tst_dir)
 
-    def test_rename_children_file(self, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_rename_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
         root_pdv = ProjectDevVars(project_path=empty_repo_path)
@@ -1164,10 +1170,10 @@ class TestActionsLocal:
 
         renew_children(par_pdv, chi_pdv)
 
-        with patch('ae.shell.git_fetch', return_value=['mocked git fetch error']):
+        with patch('aedev.commands.git_fetch', return_value=['mocked git fetch error']):
             renew_children(par_pdv, chi_pdv)
 
-    def test_renew_project(self, mocked_app_options, module_repo_path, patched_exit_call_wrapper):
+    def test_renew_project(self, app_pjm, mocked_app_options, module_repo_path):
         mocked_app_options['versionIncrementPart'] = 3
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
         assert code_file_version(version_file_path) == tst_pkg_version
@@ -1176,7 +1182,7 @@ class TestActionsLocal:
 
         assert code_file_version(version_file_path) == tst_pkg_version   # not incrementing because no remote repo
 
-    def test_renew_project_version_disabled_version_inc(self, mocked_app_options, module_repo_path):
+    def test_renew_project_version_disabled_version_inc(self, app_pjm, mocked_app_options, module_repo_path):
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
 
         mocked_app_options['versionIncrementPart'] = 0
@@ -1191,7 +1197,7 @@ class TestActionsLocal:
 
         assert code_file_version(version_file_path) == PDV_NULL_VERSION     # disabled via main_app_options
 
-    def test_run_children_command(self, capsys, empty_repo_path, mocked_app_options):
+    def test_run_children_command(self, capsys, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['delay'] = 0
         par_pdv = ProjectDevVars(project_path=os_path_dirname(empty_repo_path))
         chi_pdv = ProjectDevVars(project_path=empty_repo_path)
@@ -1202,7 +1208,7 @@ class TestActionsLocal:
         output = capsys.readouterr().out
         assert output.count(echo_word) == 3  # one for each child and a final one on action complete
 
-    def test_show_actions(self, capsys, changed_repo_path, empty_repo_path, mocked_app_options):
+    def test_show_actions(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
         pdv = ProjectDevVars(**{'host_api': GitlabCom()})
 
         mocked_app_options['more_verbose'] = False
@@ -1213,7 +1219,7 @@ class TestActionsLocal:
         show_actions(pdv)
         assert capsys.readouterr().out
 
-    def test_show_children_versions(self, capsys):
+    def test_show_children_versions(self, capsys, app_pjm):
         chi_grp = 'ae-group'
         chi_prj = 'ae_base'
         chi_ver = "0.3.60"
@@ -1230,7 +1236,16 @@ class TestActionsLocal:
             assert f"local:{chi_ver}" in output
 
     @skip_if_not_maintainer
-    def test_update_mirror_pjm_onto_github_org(self, capsys):
+    def test_update_mirror_pjm_onto_github_org(self, capsys, app_pjm):
+        """
+        manual configuration needed after creating the user group/organization because GitHub automatically protect the
+        default branch for organizations. You need to explicitly allow force pushes for the protected branch. for that
+        navigate to the aedev_project_manager repository within your aedev-group-mirror organization on GitHub. then
+        click on Settings (top tab) and then in the left sidebar, under "Code and automation", click Branches. here you
+        should see a rule for the default branch 'develop'. now click the 'Edit' (pencil icon) button next to it. scroll
+        down and look for the option 'Allow force pushes' and check the box to enable it and click 'Save changes'.
+        alternative: simply 'Delete' the branch protection rule entirely.
+        """
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
             # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/{namespace_name}-group-mirror/{project_name}.git
@@ -1244,7 +1259,7 @@ class TestActionsLocal:
         assert " ==== " in output
 
     @skip_if_not_maintainer
-    def test_update_mirror_pjm_onto_github_user(self, capsys):
+    def test_update_mirror_pjm_onto_github_user(self, capsys, app_pjm):
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
             remote = _get_mirror_remote(pdv).replace('aedev-group-mirror', itg_mtn_name)
@@ -1259,7 +1274,14 @@ class TestActionsLocal:
         assert " ==== " in output
 
     @skip_if_not_maintainer
-    def test_update_mirror_pjm_onto_gitlab_group(self, capsys):
+    def test_update_mirror_pjm_onto_gitlab_group(self, capsys, app_pjm):
+        """
+        manual config needed after creating the user group because GitLab defaults to not allow mirror/force pushes
+        in user groups (allowed in the user account). for that navigate to the aedev_project_manager repository within
+        your aedev-group-mirror group on GitLab. hover over Settings (left sidebar) and select Repository. expand the
+        Protected branches section. the row for the develop branch provides two ways to fix this: toggle the switch
+        labeled 'Allowed to force push' to 'On' or click the 'Unprotect' (yellow/red button) button.
+        """
         pdv = ProjectDevVars()
         auth = itg_mtn_name + ":" + itg_mtn_token + "@"
         group = 'aedev-group-mirror'
@@ -1276,7 +1298,7 @@ class TestActionsLocal:
         assert " ==== " in output
 
     @skip_if_not_maintainer
-    def test_update_mirror_pjm_onto_gitlab_user(self, capsys):
+    def test_update_mirror_pjm_onto_gitlab_user(self, app_pjm, capsys):
         pdv = ProjectDevVars()
         auth = itg_mtn_name + ":" + itg_mtn_token + "@"
         user = itg_mtn_name
@@ -1309,7 +1331,7 @@ class TestHelpersLocal:
             assert MODULE_PRJ in REGISTERED_ACTIONS['test_fun']['project_types']
             assert REGISTERED_ACTIONS['test_fun']['docstring'] == " test fun docstring "
 
-            # cae.get_option = lambda opt: "" # prevent argument parsing via cae
+            # app.get_option = lambda opt: "" # prevent argument parsing
             # project_manager_main.ACTION_NAME = 'test_fun'
             # project_manager_main.INI_PDV['project_type'] = APP_PRJ
             assert dec(test_fun)() == ()
@@ -1334,34 +1356,35 @@ class TestHelpersLocal:
         assert 'new_app' in _available_actions(project_type=NO_PRJ)
         assert 'fork_project' not in _available_actions(project_type=NO_PRJ)
 
-    def test_check_arguments(self, patched_exit_call_wrapper):
+    def test_check_arguments(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
         pdv = ProjectDevVars(**{'project_type': PARENT_PRJ})
         act_spec = {'docstring': "act new_app docstring", 'project_types': ANY_PRJ_TYPE}
 
-        calls = patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', [], {})
+        calls = patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', [], {})
 
         assert len(calls) == 1
-        assert calls[0][0][0] == 9  # (9, err code
-        assert 'new_app' in calls[0][0][1]     # action not available for PARENT_PRJ project type
+        assert calls[0]['exit_code'] == 9                   # (9, ) err code
+        assert 'new_app' in calls[0]['error_message']       # action not available for PARENT_PRJ project type
 
         pdv['project_type'] = MODULE_PRJ
 
-        assert len(patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', [], {})) == 0
+        assert len(patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', [], {})) == 0
 
-        calls = patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', ['argument_value'], {})
+        calls = patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', ['argument_value'], {})
         assert len(calls) == 1
-        assert calls[0][0][0] == 9  # (9, err code
-        assert 'argument_value' in calls[0][0][1]     # unexpected argument
+        assert calls[0]['exit_code'] == 9                       # (9, ) err code
+        assert 'argument_value' in calls[0]['error_message']    # unexpected argument
 
-        assert len(patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'show_remote', [], {})) == 0
+        assert len(patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'show_remote', [], {})) == 0
 
-        calls = patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'show_remote', [], {'zzz': 1})
+        calls = patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'show_remote', [], {'zzz': 1})
+
         assert len(calls) == 1
-        assert calls[0][0][0] == 9          # (9, err code for args parse error
-        assert 'zzz' in calls[0][0][1]      # unexpected flag arg passed
+        assert calls[0]['exit_code'] == 9               # (9, ) err code for args parse error
+        assert 'zzz' in calls[0]['error_message']       # unexpected flag arg passed
 
         pdv['project_type'] = ROOT_PRJ
-        assert not patched_exit_call_wrapper(_init_act_args_check, pdv, act_spec, 'install_portions_editable', [], {})
+        assert not patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'install_portions_editable', [], {})
 
         act_spec['arg_names'] = ((ARG_ALL, ),
                                  ('portions-sets-expr', ),
@@ -1377,7 +1400,7 @@ class TestHelpersLocal:
         with pytest.raises(KeyError):
             _init_act_args_check(pdv, {}, 'invalid_action', [], {})
 
-    def test_check_arguments_except_empty_action(self):
+    def test_check_arguments_except_empty_action(self, app_pjm):
         with pytest.raises(KeyError):
             _init_act_args_check(ProjectDevVars(), {}, "", [], {})
 
@@ -1395,7 +1418,7 @@ class TestHelpersLocal:
         spe = {'flags': {'FLAG': False}}
         assert "FLAG=False" in _expected_args(spe)
 
-    def test_get_branch(self, mocked_app_options, module_repo_path):
+    def test_get_branch(self, app_pjm, mocked_app_options, module_repo_path):
         branch = "tst_branch_name"
         mocked_app_options['branch'] = branch
         pdv = ProjectDevVars(project_path=os_path_dirname(module_repo_path))
@@ -1406,7 +1429,7 @@ class TestHelpersLocal:
         with patch('aedev.project_manager.__main__.git_current_branch', return_value=branch):
             assert _get_branch(pdv) == branch
 
-    def test_get_host_user_name(self, mocked_app_options, module_repo_path, monkeypatch):
+    def test_get_host_user_name(self, app_pjm, mocked_app_options, module_repo_path, monkeypatch):
         # monkeypatch.delenv('PDV_AUTHOR', raising=False)
         # monkeypatch.delenv('AE_OPTIONS_REPO_USER', raising=False)
         # monkeypatch.delenv('AE_OPTIONS_REPO_USER_AT_GITLAB_COM', raising=False)
@@ -1497,7 +1520,7 @@ class TestHelpersLocal:
 
             assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
 
-    def test_get_host_user_token(self, empty_repo_path, mocked_app_options, monkeypatch):
+    def test_get_host_user_token(self, app_pjm, empty_repo_path, mocked_app_options, monkeypatch):
         # these tests would fail ONLY if run via "pjm check" because the tokens get loaded from .env by pjm
         for env_var in os.environ:
             if "REPO_TOKEN" in env_var.upper():  # AE_OPTIONS... or PDV_repo_token
@@ -1703,7 +1726,7 @@ class TestHelpersLocal:
 
         assert _guess_next_action(ProjectDevVars(project_path=empty_repo_path)) == 'commit_project'
 
-    def test_init_act_exec_args_check_deploy(self, empty_repo_path, mocked_app_options):
+    def test_init_act_exec_args_check_deploy(self, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['action'] = 'check_deploy'
         mocked_app_options['arguments'] = ['WORKTREE', 'ALL', 'MASKS=["file_mask1", "file_mask2"]']
         mocked_app_options['web_domain'] = 'eu.pythonanywhere.com'
@@ -1720,13 +1743,13 @@ class TestHelpersLocal:
         assert act_flags['MASKS'] == ["file_mask1", "file_mask2"]
         assert act_flags['CLEANUP'] is False
 
-    def test_init_act_exec_args_exits(self, mocked_app_options, patched_exit_call_wrapper):
+    def test_init_act_exec_args_exits(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
         mocked_app_options['action'] = 'what_ever_not_existing_action'
         mocked_app_options['arguments'] = ['what_ever_invalid_action_arg']
 
-        assert patched_exit_call_wrapper(_init_act_exec_args)
+        assert patched_shutdown_wrapper(_init_act_exec_args)
 
-    def test_init_act_exec_args_new_app(self, mocked_app_options):
+    def test_init_act_exec_args_new_app(self, app_pjm, mocked_app_options):
         mocked_app_options['action'] = 'new_app'
         mocked_app_options['arguments'] = []
 
@@ -1738,7 +1761,7 @@ class TestHelpersLocal:
         assert act_args == []
         assert act_flags == {}
 
-    def test_init_act_exec_args_for_local_action_show_versions(self, mocked_app_options, module_repo_path):
+    def test_init_act_exec_args_for_local_action_show_versions(self, app_pjm, mocked_app_options, module_repo_path):
         mocked_app_options['action'] = 'show-versions'
         mocked_app_options['arguments'] = []
         mocked_app_options['project_path'] = module_repo_path
@@ -1751,7 +1774,7 @@ class TestHelpersLocal:
         assert act_flags == {}
         assert 'host_api' not in ini_pdv
 
-    def test_init_children_pdv_args_branch_filter(self):
+    def test_init_children_pdv_args_branch_filter(self, app_pjm):
         filtered_branch = "tst_filtered_branch_name"
         ch1_pdv = ProjectDevVars(**{'project_path': 'n_a'})
         ch2_pdv = ProjectDevVars(**{'project_path': 'n_b'})
@@ -1766,18 +1789,18 @@ class TestHelpersLocal:
             par_pdv['main_app_options'] = {'filterBranch': filtered_branch}
             assert _init_children_pdv_args(par_pdv, ['filterBranch']) == [ch2_pdv]
 
-    def test_init_children_pdv_args_exit(self, mocked_app_options, patched_exit_call_wrapper):
+    def test_init_children_pdv_args_exit(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
         ini_pdv = ProjectDevVars(**{'children_project_vars': {}, 'namespace_name': "nn"})
 
-        assert len(patched_exit_call_wrapper(_init_children_pdv_args, ini_pdv, [])) == 1    # missing/empty args
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [])) == 1    # missing/empty args
 
-        assert len(patched_exit_call_wrapper(_init_children_pdv_args, ini_pdv, ["undefined_project_nam"])) == 0  # noErr
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["undefined_project_nam"])) == 0  # noErr
 
-        assert len(patched_exit_call_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 1  # missing branch
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 1  # missing branch
 
         mocked_app_options['filterBranch'] = "branch_name_to_filter"
 
-        assert len(patched_exit_call_wrapper(_init_children_pdv_args, ini_pdv, [ARG_ALL])) == 1
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [ARG_ALL])) == 1
 
     def test_init_children_pdv_args_expression(self, temp_parent_path):
         par_pdv = ProjectDevVars(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
@@ -1816,7 +1839,7 @@ class TestHelpersLocal:
             assert _init_children_pdv_args(par_pdv, ["ps_a&ps_b"]) == [ch1_pdv]
             assert _init_children_pdv_args(par_pdv, ["ps_a", "&", "ps_b"]) == [ch1_pdv]
 
-    def test_init_children_pdv_args_list(self, empty_repo_path, mocked_app_options):
+    def test_init_children_pdv_args_list(self, app_pjm, empty_repo_path, mocked_app_options):
         par_dir = os_path_dirname(empty_repo_path)
         par_pdv = ProjectDevVars(**{'project_path': par_dir, 'project_type': PARENT_PRJ})
         ch1_dir = os_path_join(par_dir, 'p1')
@@ -1890,7 +1913,7 @@ class TestHelpersLocal:
         assert 'filterBranch' not in presets
         assert presets['filterExpression'] == set()  # invalid expression evaluates to False
 
-    def test_print_pdv(self):
+    def test_print_pdv(self, app_pjm):
         _print_pdv(ProjectDevVars(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
         # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
 
@@ -1988,7 +2011,8 @@ class TestHelpersLocal:
         assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
         assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
 
-    def test_refresh_templates_file_include_default_and_with_pdv_vars(self, mocked_app_options, monkeypatch, tmp_path):
+    def test_refresh_templates_file_include_default_and_with_pdv_vars(self, app_pjm, mocked_app_options, monkeypatch,
+                                                                      tmp_path):
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         namespace_name = "tns"
         portion_name = 'destination_portion_name'
@@ -2042,7 +2066,7 @@ class TestHelpersLocal:
         assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
         assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
 
-    def test_renew_prj_dir(self, mocked_app_options, tmp_path):
+    def test_renew_prj_dir(self, app_pjm, mocked_app_options, tmp_path):
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         app_name = 'cpl_prj_dir_app'
         project_path = norm_path(os_path_join(parent_dir, app_name))
@@ -2083,18 +2107,19 @@ class TestHelpersLocal:
         assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
         assert not os.path.exists(BUILD_CONFIG_FILE)
 
-    def test_renew_project_exits_on_erroneous_pdv_value(self, empty_repo_path, patched_exit_call_wrapper):
+    def test_renew_project_exits_on_erroneous_pdv_value(self, app_pjm, empty_repo_path, mocked_app_options,
+                                                        patched_shutdown_wrapper):
         pdv = ProjectDevVars(project_path=empty_repo_path)
         inv_project_type = "any-invalid-or-unknown-project-type"
 
-        calls = patched_exit_call_wrapper(_renew_project, pdv, inv_project_type)
+        calls = patched_shutdown_wrapper(_renew_project, pdv, inv_project_type)
 
         assert len(calls) == 1
-        assert inv_project_type in calls[0][0][1]
-        assert "invalid project type" in calls[0][0][1]
-        assert calls[0][0][0] == 8         # (8, err code
+        assert calls[0]['exit_code'] == 8         # (8, ) err code
+        assert inv_project_type in calls[0]['error_message']
+        assert "invalid project type" in calls[0]['error_message']
 
-    def test_renew_project_new_app_from_parent_via_package(self, tmp_path):
+    def test_renew_project_new_app_from_parent_via_package(self, app_pjm, tmp_path):
         project_name = "tst_app_prj"
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         project_path = norm_path(os_path_join(parent_dir, project_name))
@@ -2117,7 +2142,7 @@ class TestHelpersLocal:
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
 
-    def test_renew_project_new_app_from_parent_via_abs_path(self, mocked_app_options, tmp_path):
+    def test_renew_project_new_app_from_parent_via_abs_path(self, app_pjm, mocked_app_options, tmp_path):
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         pkg_name = "tst_app_prj"
         project_path = norm_path(os_path_join(parent_dir, pkg_name))
@@ -2138,7 +2163,7 @@ class TestHelpersLocal:
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
 
-    def test_renew_project_new_package_from_parent_via_rel_path(self, tmp_path):
+    def test_renew_project_new_package_from_parent_via_rel_path(self, app_pjm, tmp_path):
         pkg_name = "new_tst_pkg_prj"
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         project_path = norm_path(os_path_join(parent_dir, pkg_name))
@@ -2163,7 +2188,7 @@ class TestHelpersLocal:
 
             assert git_current_branch(project_path).startswith(f"created_new_{PACKAGE_PRJ}_{pkg_name}_")
 
-    def test_wait(self):
+    def test_wait(self, app_pjm):
         mock_sleep = MagicMock()
         with patch('aedev.project_manager.__main__.time.sleep', new=mock_sleep):
             _wait(ProjectDevVars(**{'main_app_options': {'delay': 3.69}}))
@@ -2248,7 +2273,7 @@ class TestHelpersRemote:
                 assert ret.startswith(f"¡current branch '{new_branch}' not on remote")
 
     @skip_if_not_maintainer
-    def test_init_act_exec_args_show_remote(self, capsys, mocked_app_options):
+    def test_init_act_exec_args_show_remote(self, capsys, app_pjm, mocked_app_options):
         mocked_app_options['action'] = 'show_remote'
         mocked_app_options['arguments'] = ["ae-group/ae_base"]
 
@@ -2291,7 +2316,8 @@ class TestHelpersRemote:
         assert 'host_api' in ini_pdv
         assert isinstance(ini_pdv.pdv_val('host_api'), GitlabCom)
 
-    def test_show_status(self, capsys, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path):
+    def test_show_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
+                         module_repo_path):
         mocked_app_options['more_verbose'] = False
         test_projects = paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path)
 
@@ -2375,6 +2401,18 @@ class TestHelpersRemote:
         assert "-- project vars:" in output
         assert "-- git status:" in output
         assert "-- next action guess:" in output
+
+    def test_web_app_version(self):
+        class MockedPythonanywhereApi:
+            project_name: str = "tst_web_app_version_project_name"
+
+            @staticmethod
+            def deployed_file_content(_file_path: str):
+                return f"\"\"\" doc \"\"\"{os.linesep}{os.linesep}{VERSION_PREFIX}{'3.6.9'}{VERSION_QUOTE}{os.linesep}"
+
+        connection = MockedPythonanywhereApi()    # migrated web_app_version() from ae.pythonanywhere.deployed_version()
+
+        assert web_app_version(cast(PythonanywhereApi, cast(object, connection))) == '3.6.9'
 
 
 @skip_gitlab_ci

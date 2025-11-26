@@ -24,6 +24,8 @@ ae_updater
 ae_core
 ae_console
 ae_shell
-ae_templates
-ae_dev_ops
+ae_template
 ae_pythonanywhere
+aedev_base
+aedev_commands
+aedev_project_vars

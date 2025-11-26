@@ -3,23 +3,36 @@ Python Project Manager
 ======================
 
 
+constants, classes and helper functions
+---------------------------------------
+
+this main module of the project-manager tool implements the CLI including the supported dev-ops (actions)
+
+the classes :class:`GithubCom` and :class:`GitlabCom` are providing access to the related
+repository hosting services and the :class:`PythonanywhereCom` to check and deploy web apps.
+
+constants like :data:`PPF` :mod:`pprint` implement a formatter for a pretty and consistent indented console output.
+
+helper functions like :func:`web_app_version` determining the remote version of a deployed django app project package.
+
+
 external helpers dependencies
 -----------------------------
 
-helper functions to categorize and maintain project attributes are provided by the
-:mod:`ae.dev_ops` module portion. for example, :func:`~ae.dev_ops.increment_version`,
-:func:`~ae.dev_ops.latest_remote_version` or :func:`~ae.dev_ops.replace_file_version`
-are used by ``pjm`` to determine or manipulate the local/remote/released versions
-of your projects.
+helper functions to categorize and maintain project attributes are provided by the two external
+module :mod:`aedev.commands` and :mod:`aedev.project_vars`, portions of the ``aedev`` namespace.
 
-the ``ae`` namespace portion :mod:`ae.templates` provides the base functionality
-(e.g., :func:`~ae.templates.deploy_template` and :func:`~ae.templates.patch_string`)
+helper functions provided by the :mod:`aedev.commands` encapsulate ``git`` and ``pip`` commands.
+:func:`~aedev.project_vars.increment_version`, :func:`~aedev.project_vars.latest_remote_version` or
+:func:`~aedev.project_vars.replace_file_version` are used by this module to determine or manipulate
+the local/remote/released versions of your projects.
+
+the ``ae`` namespace portion :mod:`ae.template` provides the base functionality
+(e.g., :func:`~ae.template.deploy_template` and :func:`~ae.template.patch_string`)
 to generate outsourced project files from the `aedev.*_tpls` template projects
-(like e.g. :mod:`aedev.project_tpls` or :mod:`aedev.app_tpls`). all this is implemented
-by the pjm function :func:`~aedev.project_manager.__main__.refresh_templates`.
-
-helper functions to encapsulate the shell commands used by ``pjm``, like e.g. ``git`` and ``pip``,
-are provided by the :mod:`ae.shell` portion.
+(like e.g. :mod:`aedev.project_tpls` or :mod:`aedev.app_tpls`). all this is bundled
+in the pjm function :func:`~aedev.project_manager.__main__._refresh_templates` and
+the internal module :mod:`~aedev.project_manager.templates`.
 
 the portion :mod:`ae.pythonanywhere` portion encapsulates the web API to deploy Django web applications
 to the Pythonanywhere webserver.
@@ -29,12 +42,14 @@ import ast
 import datetime
 import glob
 import os
+import pprint
 import re
 import shutil
 import time
 
 from collections import OrderedDict
 from difflib import context_diff, diff_bytes, ndiff, unified_diff
+from fnmatch import fnmatch
 from functools import partial, wraps
 from os import makedirs as patchable_makedirs
 from traceback import format_exc
@@ -57,7 +72,7 @@ from PIL import Image
 
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    UNSET, UnsetType,
+    PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, load_env_var_defaults, module_attr, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     os_path_relpath, os_path_splitext,
@@ -70,31 +85,40 @@ from ae.paths import (                                                          
 from ae.dynamicod import try_call, try_eval                                                 # type: ignore
 from ae.literal import Literal                                                              # type: ignore
 from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_PLATFORM     # type: ignore
-from ae.core import DEBUG_LEVEL_DISABLED                                                    # type: ignore
+from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                              # type: ignore
 from ae.console import ConsoleApp                                                           # type: ignore
-from ae.shell import (                                                                      # type: ignore
+from ae.shell import debug_or_verbose, get_domain_user_var                                  # type: ignore
+from ae.template import (                                                                   # type: ignore
+    LOCK_EXT, OUTSOURCED_MARKER,
+    SKIP_IF_PORTION_DST_NAME_PREFIX, TEMPLATES_FILE_NAME_PREFIXES, TPL_FILE_NAME_PREFIX,
+    Replacer,
+    deploy_template)
+from ae.pythonanywhere import PythonanywhereApi                                             # type: ignore
+from aedev.base import (                                                                    # type: ignore
+    ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
+    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
+    TemplateProjectType,
+    code_version, get_pypi_versions, project_name_version)
+from aedev.commands import (                                                                # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
-    PIP_INSTALL_CMD, PIP_CMD, PPF, PROJECT_VERSION_SEP, GitRemotesType,
-    bytes_file_diff, check_commit_msg_file, check_if, debug_or_verbose, exit_error,
-    get_domain_user_variable, get_pypi_versions,
+    GitRemotesType,
+    bytes_file_diff, check_commit_msg_file,
     git_add, git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    hint, in_os_env, in_prj_dir_venv, mask_token, owner_project_from_url, project_name_version,
-    sh_exit_if_exec_err, sh_exit_if_git_err, sh_log, sh_logs, temp_context_cleanup)
-from ae.templates import (                                                                  # type: ignore
-    LOCK_EXT, MOVE_TPL_TO_PKG_PATH_NAME_PREFIX, OUTSOURCED_MARKER, CACHED_TPL_PROJECTS,
-    SKIP_IF_PORTION_DST_NAME_PREFIX, TEMPLATES_FILE_NAME_PREFIXES, TPL_FILE_NAME_PREFIX,
-    TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    Replacer, TemplateProjectType,
-    deploy_template, project_templates, template_path_option, template_version_option)
-from ae.dev_ops import (                                                                    # type: ignore
-    ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ, VERSION_PREFIX, VERSION_QUOTE,
+    hint, in_os_env, in_prj_dir_venv, mask_token, owner_project_from_url,
+    sh_exit_if_exec_err, sh_exit_if_git_err, sh_log, sh_logs)
+from aedev.project_vars import (                                                            # type: ignore
+    PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ,
     ChildrenType,
-    increment_version, latest_remote_version, main_file_path, project_owner_name_version, replace_file_version,
-    root_packages_masks, skip_files_lean_web, ProjectDevVars)
-from ae.pythonanywhere import PythonanywhereApi                                             # type: ignore
+    frozen_req_file_path, increment_version, latest_remote_version, main_file_path, project_owner_name_version,
+    replace_file_version, root_packages_masks, skip_files_lean_web,
+    ProjectDevVars)
+
+from aedev.project_manager.templates import (
+    MOVE_TPL_TO_PKG_PATH_NAME_PREFIX, CACHED_TPL_PROJECTS,
+    TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
+    project_templates, setup_kwargs_literal, template_path_option, template_version_option)
 
 
 # --------------- global constants ------------------------------------------------------------------------------------
@@ -105,6 +129,8 @@ ARGS_CHILDREN_DEFAULT = ((ARG_ALL, ), ('children-sets-expr', ), ('children-names
 
 DJANGO_EXCLUDED_FROM_CLEANUP = {'db.sqlite', 'project.db', '**/django.mo', 'media/**/*', 'static/**/*'}
 """ set of file path masks/pattern to exclude essential files from to be cleaned-up on the server. """
+
+PPF = pprint.PrettyPrinter(indent=6, width=189, depth=12).pformat   #: formatter for console printouts
 
 TPL_IMPORT_NAMES = ([TPL_IMPORT_NAME_PREFIX + norm_name(_) + TPL_IMPORT_NAME_SUFFIX for _ in ANY_PRJ_TYPE] +
                     [TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX])
@@ -131,12 +157,7 @@ REGISTERED_ACTIONS: RegisteredActions = {}                  #: implemented actio
 
 REGISTERED_HOSTS_CLASS_NAMES: dict[str, str] = {}           #: class names of all supported remote host domains
 
-# because ae.core determines the app version with stack_var('__version__') it doesn't find it, alternatively to pass
-# it via the app_version kwarg to ConsoleApp() the next line could be uncommented:
-# __version__ = module_attr('aedev.project_manager', '__version__'))
-cae = ConsoleApp(app_name="pjm", app_version=module_attr('aedev.project_manager', '__version__'),
-                 debug_level=DEBUG_LEVEL_DISABLED)          # DEBUG_LEVEL_VERBOSE is now default in ae.core/ae.console
-""" main app instance of this pjm tool, initialized out of __name__ == '__main__' to be used for unit tests """
+cae = cast(ConsoleApp, cast(object, None))    #: main app instance of this pjm tool, initialized by :func:`init_main`
 
 
 # --------------- module helpers --------------------------------------------------------------------------------------
@@ -228,10 +249,10 @@ def _check_action(pdv: ProjectDevVars, *acceptable_actions: Callable):
     guessed_action = _guess_next_action(pdv)
     has_discrepancy = guessed_action.startswith("¡")
 
-    check_if(13, not has_discrepancy,
-             f"found discrepancy (while checking the execution of {action_desc}):\n" + " " * 6 + guessed_action[1:])
+    cae.chk(13, not has_discrepancy,
+            f"found discrepancy (while checking the execution of {action_desc}):\n" + " " * 6 + guessed_action[1:])
     if not has_discrepancy:
-        check_if(13, guessed_action in action_names, f"expected '{guessed_action}' instead of {action_desc}" + hint(
+        cae.chk(13, guessed_action in action_names, f"expected '{guessed_action}' instead of {action_desc}" + hint(
             'pjm', _act_callable(pdv.pdv_val('host_api'), guessed_action) or guessed_action, " to follow the workflow"))
 
 
@@ -239,17 +260,17 @@ def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:
     increment_part = cast(int, _get_app_option(pdv, 'versionIncrementPart'))
     project_path = pdv['project_path']
     local_ver = pdv['project_version']
-    check_if(75, try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, )),
-             f"local project version '{local_ver}' has invalid format not conform to PEP 440")
+    cae.chk(75, try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, )),
+            f"local project version '{local_ver}' has invalid format not conform to PEP 440")
 
     if git_tag_list(project_path, tag_pattern=pdv['VERSION_TAG_PREFIX'] + "*"):  # not the first/initial project version
         next_version = latest_remote_version(pdv, increment_part=increment_part)
         version_match = _check_version(next_version) == _check_version(local_ver)
-        check_if(77, version_match, f"version mismatch: local={local_ver} next-remote={next_version}")
+        cae.chk(77, version_match, f"version mismatch: local={local_ver} next-remote={next_version}")
 
     tag = pdv['VERSION_TAG_PREFIX'] + local_ver
     errors = git_tag_add(project_path, tag, commit_msg_file=pdv['COMMIT_MSG_FILE_NAME'])
-    check_if(79, not bool(errors), f"error in adding the git {tag=}:{_pp(errors)}")
+    cae.chk(79, not bool(errors), f"error in adding the git {tag=}:{_pp(errors)}")
 
     return tag
 
@@ -279,7 +300,7 @@ def _check_children_not_exist(parent_or_root_pdv: ProjectDevVars, *project_versi
     parent_path = prj_path if parent_or_root_pdv['project_type'] == PARENT_PRJ else os_path_dirname(prj_path)
     for pkg_and_ver in project_versions:
         project_path = os_path_join(parent_path, pkg_and_ver.split(PROJECT_VERSION_SEP)[0])
-        check_if(12, not os_path_isdir(project_path), f"project path {project_path} does already exist")
+        cae.chk(12, not os_path_isdir(project_path), f"project path {project_path} does already exist")
 
 
 def _check_children_to_clone(parent_root_sister_pdv: ProjectDevVars, *project_owner_name_versions: str):
@@ -295,9 +316,9 @@ def _check_children_to_clone(parent_root_sister_pdv: ProjectDevVars, *project_ow
         own, prj, ver = project_owner_name_version(own_prj_ver, owner_default=def_grp, namespace_default=def_nsn)
         prj_names.append(prj)
 
-        check_if(58, prj.startswith(nsn), f"namespace-name-prefix {nsn} mismatch for specified portion '{own_prj_ver}'")
-        check_if(58, own == group or not own or not group, f"project owner mismatch: --repo_group {group} != {own}")
-        check_if(58, ver == branch or not ver or not branch, f"branch to clone mismatch: --branch {branch} != {ver}")
+        cae.chk(58, prj.startswith(nsn), f"namespace-name-prefix {nsn} mismatch for specified portion '{own_prj_ver}'")
+        cae.chk(58, own == group or not own or not group, f"project owner mismatch: --repo_group {group} != {own}")
+        cae.chk(58, ver == branch or not ver or not branch, f"branch to clone mismatch: --branch {branch} != {ver}")
 
     _check_children_not_exist(parent_root_sister_pdv, *prj_names)
 
@@ -307,23 +328,23 @@ def _check_resources_img(pdv: ProjectDevVars) -> list[str]:
     local_images = FilesRegister(os_path_join(pdv['project_path'], "img", "**"))
     for name, files in local_images.items():
         dup_files = duplicates(norm_path(str(file)) for file in files)
-        check_if(69, not dup_files, f"duplicate image file paths for '{name}': {dup_files}")
+        cae.chk(69, not dup_files, f"duplicate image file paths for '{name}': {dup_files}")
 
     file_names: list[str] = []
     for name, files in local_images.items():
         file_names.extend(norm_path(str(file)) for file in files)
     dup_files = duplicates(file_names)
-    check_if(69, not dup_files, f"image resources file paths duplicates: {dup_files}")
+    cae.chk(69, not dup_files, f"image resources file paths duplicates: {dup_files}")
 
     for name, files in local_images.items():
         for file_name in (norm_path(str(file)) for file in files):
-            check_if(69, bool(read_file(file_name, extra_mode='b')), f"empty image resource in {file_name}")
+            cae.chk(69, bool(read_file(file_name, extra_mode='b')), f"empty image resource in {file_name}")
             # noinspection PyBroadException
             try:
                 img = Image.open(file_name)
                 img.verify()
             except Exception as ex:                                 # pylint: disable=broad-exception-caught
-                check_if(69, False, f"Pillow/PIL detected corrupt image {file_name=} {ex=}")
+                cae.chk(69, False, f"Pillow/PIL detected corrupt image {file_name=} {ex=}")
 
     if debug_or_verbose():
         cae.po(f"    = passed checks of {len(local_images)} image resources ({len(file_names)} files: {file_names})")
@@ -339,17 +360,17 @@ def _check_resources_i18n_ae(file_name: str, content: str):
     """
     eval_texts = try_eval(content, ignored_exceptions=(Exception, ))
     texts = ast.literal_eval(content)
-    check_if(69, eval_texts == texts, f"eval and literal_eval results differ in {file_name}")
-    check_if(69, isinstance(texts, dict), f"no dict literal in {file_name}, got {type(texts)}")
+    cae.chk(69, eval_texts == texts, f"eval and literal_eval results differ in {file_name}")
+    cae.chk(69, isinstance(texts, dict), f"no dict literal in {file_name}, got {type(texts)}")
     for key, text in texts.items():
-        check_if(69, isinstance(key, str), f"file content dict keys must be strings, but got {type(key)}")
-        check_if(69, isinstance(text, (str, dict)), f"dict values must be str|dict, got {type(text)}")
+        cae.chk(69, isinstance(key, str), f"file content dict keys must be strings, but got {type(key)}")
+        cae.chk(69, isinstance(text, (str, dict)), f"dict values must be str|dict, got {type(text)}")
         if isinstance(text, dict):
             for sub_key, sub_txt in text.items():
-                check_if(69, isinstance(sub_key, str), f"sub-dict-keys must be strings, got {type(sub_key)}")
+                cae.chk(69, isinstance(sub_key, str), f"sub-dict-keys must be strings, got {type(sub_key)}")
                 typ = float if sub_key in ('app_flow_delay', 'fade_out_app', 'next_page_delay',
                                            'page_update_delay', 'tour_start_delay', 'tour_exit_delay') else str
-                check_if(69, isinstance(sub_txt, typ), f"sub-dict-values of {sub_key} must be {typ}")
+                cae.chk(69, isinstance(sub_txt, typ), f"sub-dict-values of {sub_key} must be {typ}")
 
 
 def _check_resources_i18n_po(file_name: str, content: str):
@@ -360,11 +381,11 @@ def _check_resources_i18n_po(file_name: str, content: str):
     """
     native = '/en/' in file_name
     mo_file_name = os_path_splitext(file_name)[0] + '.mo'
-    check_if(69, os_path_isfile(mo_file_name), f"missing compiled message file {mo_file_name}")
+    cae.chk(69, os_path_isfile(mo_file_name), f"missing compiled message file {mo_file_name}")
     if not on_ci_host():    # skip this check on CI host because the unpacked/installed mo/po file dates are not correct
         po_date = datetime.datetime.fromtimestamp(os.path.getmtime(file_name))
         mo_date = datetime.datetime.fromtimestamp(os.path.getmtime(mo_file_name))
-        check_if(69, native or po_date <= mo_date, f"{file_name} ({po_date}) not compiled into .mo ({mo_date})")
+        cae.chk(69, native or po_date <= mo_date, f"{file_name} ({po_date}) not compiled into .mo ({mo_date})")
 
     id_marker = "msgid"
     str_marker = "msgstr"
@@ -373,33 +394,33 @@ def _check_resources_i18n_po(file_name: str, content: str):
     for lno, text in enumerate(content.split(os.linesep), start=1):
         in_id = in_txt.startswith(id_marker)
         if text.startswith(id_marker):
-            check_if(69, not in_txt, f"new {id_marker} in uncompleted {in_txt} in {file_name=}:{lno=}")
-            check_if(69, not msg_id, f"duplicate {id_marker} in {file_name=}:{lno=}")
-            check_if(69, text[len(id_marker) + 1] == text[-1] == '"', f"missing \" in {text} in {file_name=}:{lno=}")
+            cae.chk(69, not in_txt, f"new {id_marker} in uncompleted {in_txt} in {file_name=}:{lno=}")
+            cae.chk(69, not msg_id, f"duplicate {id_marker} in {file_name=}:{lno=}")
+            cae.chk(69, text[len(id_marker) + 1] == text[-1] == '"', f"missing \" in {text} in {file_name=}:{lno=}")
             msg_id = text[len(id_marker) + 2:-1]
-            check_if(69, in_header or msg_id != "", f"missing header or empty {id_marker} text in {file_name=}:{lno=}")
+            cae.chk(69, in_header or msg_id != "", f"missing header or empty {id_marker} text in {file_name=}:{lno=}")
             in_txt = text
         elif text.startswith(str_marker):
-            check_if(69, text[len(str_marker) + 1] == text[-1] == '"', f"missing \" in {text} in {file_name=}:{lno=}")
-            check_if(69, in_header or bool(msg_id and in_id), f"{str_marker} w/o {id_marker} in {file_name=}:{lno=}")
+            cae.chk(69, text[len(str_marker) + 1] == text[-1] == '"', f"missing \" in {text} in {file_name=}:{lno=}")
+            cae.chk(69, in_header or bool(msg_id and in_id), f"{str_marker} w/o {id_marker} in {file_name=}:{lno=}")
             msg_str = text[len(str_marker) + 2:-1]
             in_txt = text
         elif in_txt:
             if text:
-                check_if(69, text[0] == text[-1] == '"', f"misplaced \" in multiline {in_txt=} in {file_name=}:{lno=}")
+                cae.chk(69, text[0] == text[-1] == '"', f"misplaced \" in multiline {in_txt=} in {file_name=}:{lno=}")
                 if in_id:
                     msg_id += text[1:-1]
                 else:       # in_txt.startswith(str_marker)
                     msg_str += text[1:-1]
                 in_txt += ".."
             else:
-                check_if(69, in_header or msg_id != "", f"empty id text in {file_name=}:{lno=}")
+                cae.chk(69, in_header or msg_id != "", f"empty id text in {file_name=}:{lno=}")
                 if debug_or_verbose() and not native and not msg_str:
                     cae.po(f"    # ignoring empty translation of \"{msg_id}\" in {file_name=}:{lno=}")
                 in_txt = msg_id = msg_str = ""
                 in_header = False
         else:
-            check_if(69, not text or text[0] == "#", f"expected comment/empty-line, got {text} in {file_name=}:{lno=}")
+            cae.chk(69, not text or text[0] == "#", f"expected comment/empty-line, got {text} in {file_name=}:{lno=}")
 
 
 def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:
@@ -410,12 +431,12 @@ def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:
         for stem_name, files in regs.items():
             for file_name in (norm_path(str(file)) for file in files):
                 content = read_file(file_name)
-                check_if(69, bool(content), f"stem {stem_name} has empty translation message file {file_name}")
+                cae.chk(69, bool(content), f"stem {stem_name} has empty translation message file {file_name}")
                 chk_func(file_name, content)
                 file_names.append(file_name)
 
         dup_files = duplicates(file_names)
-        check_if(69, not dup_files, f"file paths duplicates of {stem_mask} translations: {dup_files}")
+        cae.chk(69, not dup_files, f"file paths duplicates of {stem_mask} translations: {dup_files}")
 
         if debug_or_verbose():
             cae.po(f"    = passed checks of {len(regs)} {stem_mask} (with {len(file_names)} files: {file_names})")
@@ -431,17 +452,17 @@ def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:
 
     for name, files in local_sounds.items():
         dup_files = duplicates(norm_path(str(file)) for file in files)
-        check_if(69, not dup_files, f"duplicate sound file paths for '{name}': {dup_files}")
+        cae.chk(69, not dup_files, f"duplicate sound file paths for '{name}': {dup_files}")
 
     file_names: list[str] = []
     for name, files in local_sounds.items():
         file_names.extend(norm_path(str(file)) for file in files)
     dup_files = duplicates(file_names)
-    check_if(69, not dup_files, f"sound resources file paths duplicates: {dup_files}")
+    cae.chk(69, not dup_files, f"sound resources file paths duplicates: {dup_files}")
 
     for name, files in local_sounds.items():
         for file_name in (norm_path(str(file)) for file in files):
-            check_if(69, bool(read_file(file_name, extra_mode='b')), f"empty sound resource in {file_name}")
+            cae.chk(69, bool(read_file(file_name, extra_mode='b')), f"empty sound resource in {file_name}")
 
     if debug_or_verbose():
         cae.po(f"    = passed checks of {len(local_sounds)} sound resources ({len(file_names)} files: {file_names})")
@@ -515,8 +536,8 @@ def _check_templates(pdv: ProjectDevVars):  # pylint: disable=too-many-locals,to
             cae.po("      " + "      ".join(dif), end="")
 
         cae.po()
-        check_if(44, False, f"template check failed: {len(missing)=} {len(outdated)=}"
-                            f"; update outsourced files via the actions 'refresh' or 'renew'")
+        cae.chk(44, False, f"template check failed: {len(missing)=} {len(outdated)=}"
+                           f"; update outsourced files via the actions 'refresh' or 'renew'")
 
     elif checked:
         cae.po(f"  === {len(checked)} outsourced files from {tpl_cnt} template projects are up-to-date"
@@ -578,7 +599,7 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
         if _get_app_option(pdv, 'more_verbose') and not cae.debug:
             cae.po(_pp(out))
         matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
-        check_if(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
+        cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
         write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
         score = matcher.group(1) if matcher else "<undetermined>"
         sh_exit_if_exec_err(62, "anybadge",
@@ -597,9 +618,9 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
             # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
             # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
             extra_args = ["--doctest-modules"] + extra_args + path_args
-        sh_exit_if_exec_err(46, "python -m pytest", extra_args=extra_args)
+        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
         db_ok = os_path_isfile(cov_db)
-        check_if(47, db_ok, f"coverage db file ({cov_db}) not created for tests or doctests in {path_args}")
+        cae.chk(47, db_ok, f"coverage db file ({cov_db}) not created for tests or doctests in {path_args}")
         os.makedirs(sub_dir, exist_ok=True)
         if db_ok:           # prevent FileNotFoundError exception to allow ignorable fail on forced check run
             os.rename(cov_db, os_path_join(sub_dir, cov_db))
@@ -622,16 +643,16 @@ def _check_version(version_number: str, prefix_to_check: str = "") -> str:
     if prefix_to_check:
         prefix_len = len(prefix_to_check)
         if version_number[:prefix_len] != prefix_to_check:
-            exit_error(76, f"version number '{version_number}' is missing the version tag prefix '{prefix_to_check}")
+            cae.shutdown(76, error_message=f"{version_number=} is missing the version tag prefix '{prefix_to_check}")
         version_number = version_number[prefix_len:]
 
     if version_number.count('.') != 2:
-        exit_error(76, f"version number '{version_number}' doas not contain exactly two dot characters")
+        cae.shutdown(76, error_message=f"{version_number=} doas not contain exactly two dot characters")
 
     try:
         Version(version_number)
     except InvalidVersion as ex:
-        exit_error(76, f"version number '{version_number}' is not conform to PEP 440 ({ex})")
+        cae.shutdown(76, error_message=f"{version_number=} is not conform to PEP 440 ({ex})")
 
     return version_number
 
@@ -748,8 +769,8 @@ def _get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str
             if not host_domain:
                 pre, *suf = option_name.split('_', maxsplit=1)
                 if f"{pre}_" in ('repo_', 'web_') and suf and suf[0] != 'domain':
-                    host_domain = cast(str, _get_app_option(pdv, f'{pre}_domain'))
-            val = get_domain_user_variable(cae, option_name, domain=host_domain, user=host_user)
+                    host_domain = _get_app_option(pdv, f'{pre}_domain') or ""
+            val = get_domain_user_var(option_name, domain=host_domain, user=host_user)
         finally:
             for var_name in loaded_env_vars:
                 os.environ.pop(var_name)
@@ -767,7 +788,7 @@ def _get_host_domain(pdv: ProjectDevVars, var_prefix: str = 'repo_') -> str:
         host_domain = pdv[f'{var_prefix}domain']
 
     # if not _get_host_class_name(host_domain):
-    #    exit_error(9, f"unknown domain {host_domain}, pass {' or [xx.]'.join(REGISTERED_HOSTS_CLASS_NAMES)}")
+    #    cae.shutdown(7, error_message=f"unknown {host_domain=}, pass {' or [xx.]'.join(REGISTERED_HOSTS_CLASS_NAMES)}")
 
     return host_domain
 
@@ -834,7 +855,7 @@ def _get_pdv(**kwargs):
     """ create a pdv instance from the specified kwargs, check it for errors and if it has errors then exit app. """
     pdv = ProjectDevVars(**kwargs)
     errors = pdv.errors()
-    check_if(8, not errors, f"project development variable discrepancies: {_pp(errors)}")
+    cae.chk(8, not errors, f"project development variable discrepancies: {_pp(errors)}")
     return pdv
 
 
@@ -952,16 +973,16 @@ def _init_act_args_check(ini_pdv: ProjectDevVars, act_spec: Any, act_name: str, 
 
     optional_flags = act_spec.get('flags', {})
     for flag_name, _flag_value in act_flags.items():
-        check_if(9, flag_name in optional_flags,
-                 f"invalid command line flag {flag_name} for {act_name} action; expected: {optional_flags.keys()}")
+        cae.chk(9, flag_name in optional_flags,
+                f"invalid command line flag {flag_name} for {act_name} action; expected: {optional_flags.keys()}")
 
     for flag_name, flag_def in optional_flags.items():
         val_pos, flag_type = len(flag_name) + 1, type(flag_def)
         for act_arg in act_args[:]:
             if (bool_flag := act_arg == flag_name) or act_arg.startswith(flag_name + '='):
                 flag_val = True if bool_flag else Literal(act_arg[val_pos:]).value
-                check_if(9, isinstance(flag_val, flag_type),
-                         f"command line flag {flag_name} has invalid type '{type(flag_val)}', expected '{flag_type}'")
+                cae.chk(9, isinstance(flag_val, flag_type),
+                        f"command line flag {flag_name} has invalid type '{type(flag_val)}', expected '{flag_type}'")
                 act_flags[flag_name] = flag_val
                 act_args.remove(act_arg)
                 break
@@ -984,14 +1005,14 @@ def _init_act_args_check(ini_pdv: ProjectDevVars, act_spec: Any, act_name: str, 
             if pos_ok and all(cae.get_option(opt_name) for opt_name in opt_names):
                 break
         else:
-            exit_error(9, f"expected arguments/flags: {_expected_args(act_spec)}")
+            cae.shutdown(9, error_message=f"expected arguments/flags: {_expected_args(act_spec)}")
     elif arg_count:
-        exit_error(9, f"no arguments expected, but got {act_args}")
+        cae.shutdown(9, error_message=f"no arguments expected, but got {act_args}")
 
     project_type = ini_pdv['project_type']
     cae.vpo(f"    - detected project type '{project_type}' for project in {ini_pdv['project_path']}")
     if project_type not in act_spec['project_types']:
-        exit_error(9, f"action '{act_name}' only available for: {act_spec['project_types']}")
+        cae.shutdown(9, error_message=f"action '{act_name}' only available for: {act_spec['project_types']}")
 
     cae.dpo("    = passed checks of basic command line options and arguments")
 
@@ -1037,9 +1058,10 @@ def _init_act_exec_args() -> tuple[ProjectDevVars, str, tuple, dict[str, Any]]: 
                 act_name = found_act_name
                 act_args[:] = initial_args
                 break
+            cae.show_help()
             msg = "undefined/new projects" if project_type is NO_PRJ else f"projects of type '{project_type}'"
-            exit_error(36, f"invalid action '{act_name}' for {msg}. valid actions: {actions}")
-            return ini_pdv, "request exit of unit test with patched exit_error()", (), {}
+            cae.shutdown(36, error_message=f"invalid action '{act_name}' for {msg}. valid actions: {actions}")
+            return ini_pdv, "request exit of unit test with patched shutdown()", (), {}
         act_name += '_' + norm_name(act_args[0])
         act_args[:] = act_args[1:]
 
@@ -1047,8 +1069,8 @@ def _init_act_exec_args() -> tuple[ProjectDevVars, str, tuple, dict[str, Any]]: 
     if not act_spec['local_action']:
         host_domain = ini_pdv[f'{var_prefix}domain']
         ini_pdv['host_api'] = host_api = globals()[_get_host_class_name(host_domain)]()
-        check_if(38, bool(_act_callable(ini_pdv.pdv_val('host_api'), act_name)),
-                 f"action {act_name} not implemented for {host_domain}")
+        cae.chk(38, bool(_act_callable(ini_pdv.pdv_val('host_api'), act_name)),
+                f"action {act_name} not implemented for {host_domain}")
         if not host_api.connect(ini_pdv):
             cae.po(f" **** connection to {host_domain} remote host server failed")
 
@@ -1092,12 +1114,12 @@ def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> li
             pkg_names = _children_project_names(ini_pdv, pkg_names, chi_vars)
 
     for preset in ('filterExpression', 'filterBranch'):  # == (preset in presets)
-        check_if(23, bool(_get_app_option(ini_pdv, preset)) == any((preset in _) for _ in act_args),
-                 f"mismatch of option '{preset}' and its usage in children-sets-expression {' '.join(act_args)}")
-    check_if(23, bool(pkg_names) and isinstance(pkg_names, (list, set, tuple)),
-             f"empty or invalid children/portion arguments: '{act_args}' resulting in: {pkg_names}")
-    check_if(23, len(pkg_names) == len(set(pkg_names)),
-             f"{len(pkg_names) - len(set(pkg_names))} duplicate children specified: {duplicates(pkg_names)}")
+        cae.chk(23, bool(_get_app_option(ini_pdv, preset)) == any((preset in _) for _ in act_args),
+                f"mismatch of option '{preset}' and its usage in children-sets-expression {' '.join(act_args)}")
+    cae.chk(23, bool(pkg_names) and isinstance(pkg_names, (list, set, tuple)),
+            f"empty or invalid children/portion arguments: '{act_args}' resulting in: {pkg_names}")
+    cae.chk(23, len(pkg_names) == len(set(pkg_names)),
+            f"{len(pkg_names) - len(set(pkg_names))} duplicate children specified: {duplicates(pkg_names)}")
 
     if not bool(pkg_names) and isinstance(pkg_names, (list, set, tuple)):
         cae.po(f"no children/portion found matching the arguments: '{act_args}'")
@@ -1230,11 +1252,14 @@ def _refresh_templates(pdv: ProjectDevVars, logger: Callable = print, **replacer
             patchable_makedirs(dir_path)
         patchable_write_file(file_path, new_content, extra_mode=extra_mode)
 
-    check_if(41, not (_errors := pdv.errors()), f"project dev var {_errors=}")  # if pdv['AUTHOR']
+    cae.chk(41, not (_errors := pdv.errors()), f"project dev var {_errors=}")  # if pdv['AUTHOR']
 
     project_type = pdv['project_type']
     if project_type == NO_PRJ:
         return set()
+
+    _update_frozen_req_files(pdv)   # update any frozen *requirements.txt files (for renew and refresh actions) and
+    _refresh_pdv(pdv)               # update pdv vars to provide actual dependencies versions to the setup.py template
 
     namespace_name = pdv['namespace_name']
     project_path = pdv['project_path']
@@ -1280,6 +1305,9 @@ def _refresh_templates(pdv: ProjectDevVars, logger: Callable = print, **replacer
         for tpl_file_path in get_files(os_path_join(tpl_path, "**/.*")) + get_files(os_path_join(tpl_path, "**/*")):
             tpl_files.append((patcher, tpl_file_path, os_path_relpath(os_path_dirname(tpl_file_path), tpl_path)))
 
+    tpl_vars = pdv.copy()
+    tpl_vars['frozen_req_file_path'] = frozen_req_file_path
+    tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
     for pre_pass in (True, False):  # generate f-string templates twice to allow dependencies between two templates
         dst_files: set[str] = set()
         for patcher, tpl_file_path, dst_path in tpl_files:
@@ -1294,7 +1322,7 @@ def _refresh_templates(pdv: ProjectDevVars, logger: Callable = print, **replacer
             if dst_path.startswith(MOVE_TPL_TO_PKG_PATH_NAME_PREFIX):
                 dst_path = os_path_join(pdv['package_path'], dst_path[len(MOVE_TPL_TO_PKG_PATH_NAME_PREFIX):])
 
-            deploy_template(tpl_file_path, dst_path, patcher, pdv,
+            deploy_template(tpl_file_path, dst_path, patcher, tpl_vars,
                             logger=logger, replacer=replacer, dst_files=dst_files, creator=_refresh_tpl_creator)
 
         # reload setup_kwargs.long_description with renewed project version to be actual for the setup.py template
@@ -1383,7 +1411,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
 
     if not new_repo:
         errors = _update_project(ini_pdv, remote_names=remote_urls)
-        check_if(15, not bool(errors), f"update errors in {project_path=}:{_pp(errors)}")
+        cae.chk(15, not bool(errors), f"update errors in {project_path=}:{_pp(errors)}")
 
     _renew_prj_dir(ini_pdv)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
@@ -1391,7 +1419,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
     inc_part = cast(int, _get_app_option(ini_pdv, 'versionIncrementPart'))
     project_version = latest_remote_version(ini_pdv, increment_part=inc_part)
     errors = replace_file_version(ini_pdv['version_file'], version=project_version, increment_part=0)
-    check_if(15, not bool(errors), errors)
+    cae.chk(15, not bool(errors), errors)
     # refresh ini_pdv (project_version and related project dev variables like project_title)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
 
@@ -1483,6 +1511,23 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:
     remote_urls = ini_pdv.pdv_val('remote_urls')
 
     if verbose:
+        sh_kwargs = {'exit_on_err': False, 'app_obj': cae}
+
+        cae.dpo("  --- setup.py check:")
+        sh_exit_if_exec_err(14, "python setup.py check", **sh_kwargs)           # prints output if cae.debug
+
+        cae.po("  --- editable packages:")
+        output: list[str] = []
+        sh_exit_if_exec_err(14, PIP_CMD, extra_args=("list", "--editable"), lines_output=output, **sh_kwargs)
+        for line in [] if cae.debug else output:                                # sh_exit*() prints output if cae.debug
+            cae.po(f"      {line}")
+
+        cae.po("  --- outdated packages:")
+        output = []
+        sh_exit_if_exec_err(14, PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, **sh_kwargs)
+        for line in [] if cae.debug else output:
+            cae.po(f"      {line}")
+
         cae.po("  --- project vars:")
         _print_pdv(ini_pdv)
 
@@ -1573,9 +1618,7 @@ def _update_frozen_req_files(pdv: ProjectDevVars):
 
 
 def _update_frozen_req_file(req_file_path: str):
-    frozen_file_stub, frozen_file_ext = os_path_splitext(req_file_path)
-    frozen_file_path = f'{frozen_file_stub}_frozen{frozen_file_ext}'
-    if not os_path_isfile(frozen_file_path):
+    if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
         return
 
     out_lines: list[str] = []
@@ -1592,8 +1635,10 @@ def _update_frozen_req_file(req_file_path: str):
                 version = prj_pdv['project_version']
                 out_lines[line] = f"{prj_name}=={version}  # {req}"
 
+    if OUTSOURCED_MARKER in out_lines[0]:
+        out_lines = out_lines[1:]
     pip_freeze_comment = "## The following requirements were added by pip freeze:"
-    write_file(frozen_file_path, os.linesep.join(out_lines).replace(pip_freeze_comment, ""))
+    patchable_write_file(frozen_file_path, os.linesep.join(out_lines).replace(pip_freeze_comment, ""))
 
 
 # pylint: disable-next=too-many-locals,too-many-branches
@@ -1714,14 +1759,14 @@ class RemoteHost:
         forked = upstream_name in remote_urls
         if forked:
             owner_name = remote_urls[upstream_name].split('/')[-2]
-            check_if(64, owner_name == group_name, f"upstream/owner-group mismatch: '{owner_name}' != '{group_name}'")
+            cae.chk(64, owner_name == group_name, f"upstream/owner-group mismatch: '{owner_name}' != '{group_name}'")
             user_name = _get_host_user_name(ini_pdv, domain)
         else:
             user_name = group_name
 
         origin_name = ini_pdv['REMOTE_ORIGIN']
         origin_user = remote_urls.get(origin_name, "/").split('/')[-2]
-        check_if(64, origin_user == user_name, f"{origin_name}/user mismatch: '{origin_user}' != '{user_name}'")
+        cae.chk(64, origin_user == user_name, f"{origin_name}/user mismatch: '{origin_user}' != '{user_name}'")
 
         # target_project_id/project_id is the upstream/forked and source_project_id is the origin/fork
         src = self.repo_obj(65, f"{user_name}/{project_name}")
@@ -1742,7 +1787,7 @@ class RemoteHost:
         remote_names = ini_pdv.pdv_val('remote_urls')
 
         errors = _update_project(ini_pdv, remote_names=remote_names)
-        check_if(84, not bool(errors), f"update project errors:{_pp(errors)}" + hint(
+        cae.chk(84, not bool(errors), f"update project errors:{_pp(errors)}" + hint(
             'pjm', self.release_project, " later to retry if server is currently unavailable, or check remotes config"))
 
         # switch back to local main_branch and then merge-in the release-branch&-tag from remotes/origin/main_branch
@@ -1757,13 +1802,13 @@ class RemoteHost:
             pkg_version = _check_version(version_tag, prefix_to_check=ini_pdv['VERSION_TAG_PREFIX'])
 
         tag_remotes = set(git_tag_remotes(project_path, version_tag, remote_names=remote_names))
-        check_if(85, set(remote_names) == tag_remotes, f"missing {version_tag=} at {set(remote_names) - tag_remotes}")
+        cae.chk(85, set(remote_names) == tag_remotes, f"missing {version_tag=} at {set(remote_names) - tag_remotes}")
 
         msg = f"updated local {main_branch} branch"
         if ini_pdv['pip_name']:  # create release*ver branch only for projects available in PyPi via pip
             release_branch = ini_pdv['RELEASE_REF_PREFIX'] + pkg_version
-            check_if(85, not git_ref_in_branch(project_path, release_branch, branch=remote_branch),
-                     f"release branch {release_branch} already exists in the {remote_branch=}")
+            cae.chk(85, not git_ref_in_branch(project_path, release_branch, branch=remote_branch),
+                    f"release branch {release_branch} already exists in the {remote_branch=}")
             cae.dpo(f"   -- creating branch '{release_branch}' for tag '{version_tag}' at {remote_branch=}")
             prj_id = f"{_get_host_group(ini_pdv, _get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
             self.create_branch(prj_id, release_branch, version_tag)
@@ -1806,7 +1851,7 @@ class GithubCom(RemoteHost):
             git_tag = prj.get_git_tag(tag_name)     # https://gist.github.com/ursulacj/36ade01fa6bd5011ea31f3f6b572834e
             prj.create_git_ref(f'refs/heads/{branch_name}', git_tag.sha)
         except (GithubException, Exception):        # pylint: disable=broad-exception-caught
-            exit_error(86, f"error creating branch '{branch_name}' for tag '{tag_name}': {format_exc()}")
+            cae.shutdown(86, error_message=f"error creating {branch_name=} for tag '{tag_name}': {format_exc()}")
 
         # protect the branch until GitHub Api supports wildcards in the initial push (see self.init_new_repo())
         self._protect_branches(prj, [branch_name])
@@ -1867,7 +1912,7 @@ class GithubCom(RemoteHost):
             return self.connection.get_repo(group_repo)
         except (GithubException, Exception) as gh_ex:           # pylint: disable=broad-exception-caught
             if err_code:
-                exit_error(err_code, err_msg.format(name=group_repo))
+                cae.shutdown(err_code, error_message=err_msg.format(name=group_repo))
             elif debug_or_verbose():
                 cae.po(f"   * repository '{group_repo}' not found on connected remote server (exception: {gh_ex})")
             return None
@@ -1891,7 +1936,7 @@ class GithubCom(RemoteHost):
     def fork_project(self, ini_pdv: ProjectDevVars, fork_repo_path: str):
         """ create/renew a fork of a remote repo specified via the 1st argument, into our user namespace. """
         domain = _get_host_domain(ini_pdv)
-        check_if(20, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
+        cae.chk(20, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
 
         prj = self.repo_obj(20, "user account/repository fork error", fork_repo_path)
         if prj is None or not self.connection:
@@ -1913,7 +1958,7 @@ class GithubCom(RemoteHost):
         owner_project = owner_project_from_url(ini_pdv.pdv_val('remote_urls')[ini_pdv['REMOTE_ORIGIN']])
 
         changed = git_uncommitted(project_path)
-        check_if(16, not changed, f"{project_name} has {len(changed)} uncommitted files: {changed}")
+        cae.chk(16, not changed, f"{project_name} has {len(changed)} uncommitted files: {changed}")
 
         new_repo = False
         push_refs = []
@@ -1985,7 +2030,7 @@ class GithubCom(RemoteHost):
         end_msg = _show_status(ini_pdv)
 
         domain = _get_host_domain(ini_pdv)
-        check_if(19, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
+        cae.chk(19, domain == 'github.com', f"invalid host domain '{domain}'! add option --repo_domain=github.com")
         group_name = _get_host_group(ini_pdv, domain)
         prj_instance = self.repo_obj(0, "repository status fetch error", f"{group_name}/{ini_pdv['project_name']}")
         if prj_instance is not None:   # project got already pushed to remote
@@ -2036,12 +2081,12 @@ class GitlabCom(RemoteHost):
         """
         cae.dpo(f"   -- creating branch '{branch_name}' for tag '{tag_name}' at the remote")
         prj = self.repo_obj(86, owner_prj)
-        if prj is None:  # never None because exit_error() call, but added if to make mypy happy
+        if prj is None:  # never None because shutdown() call, but added if to make mypy happy
             return
         try:
             prj.branches.create({'branch': branch_name, 'ref': tag_name})
         except (GitlabHttpError, GitlabCreateError, GitlabError, Exception):    # pylint: disable=broad-exception-caught
-            exit_error(86, f"error '{format_exc()}' creating branch '{branch_name}' for tag '{tag_name}'")
+            cae.shutdown(86, error_message=f"error '{format_exc()}' creating {branch_name=} for tag '{tag_name}'")
 
     def init_new_remote_repo(self, ini_pdv: ProjectDevVars) -> str:
         """ create a group/user project specified in ini_pdv or quit with error if group/user not found.
@@ -2113,10 +2158,10 @@ class GitlabCom(RemoteHost):
         if forked:  # request is None
             requests = self.branch_merge_requests(pdv, branch := git_current_branch(project_path))
             if not requests:
-                exit_error(88, f"no merge request found for {project_path=} and {branch=}")
-            check_if(88, len(requests) == 1, f"multiple merge {requests=} found for {project_path=} and {branch=}")
+                cae.shutdown(88, error_message=f"no merge request found for {project_path=} and {branch=}")
+            cae.chk(88, len(requests) == 1, f"multiple merge {requests=} found for {project_path=} and {branch=}")
             request = requests[0]
-        if request is None or self.connection is None:  # mypy doesn't see: exit_error() terminates app
+        if request is None or self.connection is None:  # mypy doesn't see: self.shutdown() terminates app
             return 0
 
         if not message:
@@ -2161,7 +2206,7 @@ class GitlabCom(RemoteHost):
         except (GitlabError, Exception) as ex:      # pylint: disable=broad-exception-caught
             msg = f"owner/project {owner_project} not found on remote {self.connection}; exception={ex})"
             if err_code:
-                exit_error(err_code, msg)
+                cae.shutdown(err_code, error_message=msg)
             elif debug_or_verbose():
                 cae.po(f"   # {msg}")
             return None
@@ -2201,7 +2246,7 @@ class GitlabCom(RemoteHost):
                         pass    # owner_obj == None
 
         if owner_obj is None:
-            exit_error(37, f"neither group '{group_name}' nor user '{user_name}' found on repo host '{domain}'")
+            cae.shutdown(37, error_message=f"neither {group_name=} nor {user_name=} found on repo host {domain=}")
             raise  # never executed; needed by mypy for owner_obj type checking # pylint: disable=misplaced-bare-raise
 
         return owner_obj
@@ -2222,7 +2267,7 @@ class GitlabCom(RemoteHost):
         cae.po(f"    - found {len(all_branches)} branches to check for to be deleted: {all_branches}")
 
         pypi_releases = get_pypi_versions(pip_name, pypi_test=ini_pdv['parent_folder'] == 'TsT')
-        check_if(34, bool(pypi_releases), "no PyPI releases found (check installation of pip)")
+        cae.chk(34, bool(pypi_releases), "no PyPI releases found (check installation of pip)")
         cae.po(f"    - found {len(pypi_releases)} PyPI release versions protected from to be deleted: {pypi_releases}")
 
         deleted = []
@@ -2236,7 +2281,7 @@ class GitlabCom(RemoteHost):
                 # git_push(project_path, _git_repo_url(ini_pdv, authentic=True), branch_name, extra_args=("--delete",))
                 group_repo = f"{_get_host_group(ini_pdv, _get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
                 project = self.repo_obj(33, group_repo)
-                if project is None:  # never None because exit_error() call, but added if to make mypy happy
+                if project is None:  # never None because app.shutdown() call, but added if to make mypy happy
                     continue
                 try:
                     project.protectedbranches.delete(branch_name)
@@ -2277,8 +2322,8 @@ class GitlabCom(RemoteHost):
     # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements
     def fork_project(self, ini_pdv: ProjectDevVars, owner_project_path: str):
         """ create or renew a fork of a remote repo, specified via the 1st argument, into our user namespace. """
-        check_if(20, (slash_count := owner_project_path.count('/')) == 1,
-                 f"exact one slash (/) expected in the specified '{owner_project_path=}' (got {slash_count} slashes)")
+        cae.chk(20, (slash_count := owner_project_path.count('/')) == 1,
+                f"exact one slash (/) expected in the specified '{owner_project_path=}' (got {slash_count} slashes)")
 
         upstream_group, project_name = owner_project_path.split('/', maxsplit=1)
 
@@ -2287,12 +2332,12 @@ class GitlabCom(RemoteHost):
             os.makedirs(project_path, exist_ok=True)
             ini_pdv = _init_pdv(project_path=project_path)
 
-        check_if(20, project_name == ini_pdv['project_name'],
-                 f"project name mismatch ('{project_name} != {ini_pdv['project_name']})!"
-                 f" change working directory to the project root folder or specify it with --project_path option..")
+        cae.chk(20, project_name == ini_pdv['project_name'],
+                f"project name mismatch ('{project_name} != {ini_pdv['project_name']})!"
+                f" change working directory to the project root folder or specify it with --project_path option..")
 
         domain = _get_host_domain(ini_pdv)
-        check_if(20, domain == 'gitlab.com', f"invalid host domain '{domain}'! add option --repo_domain=gitlab.com")
+        cae.chk(20, domain == 'gitlab.com', f"invalid host domain '{domain}'! add option --repo_domain=gitlab.com")
 
         user_name = _get_host_user_name(ini_pdv, domain)
         conn = self.connection
@@ -2303,8 +2348,8 @@ class GitlabCom(RemoteHost):
         user_url = f"{host_url}/{user_name}"  # clone at parent dir is creating the project root folder
         origin_url = f"{user_url}/{project_name}.git"  # after remotes renewed==_git_repo_url(ini_pdv, remotes=remotes)
         upstream_url = f"{host_url}/{upstream_group}/{project_name}.git"
-        check_if(20, not bool(ups_failure := url_failure(upstream_url)),
-                 f"repository to fork from is not available at {upstream_url}; reason: {ups_failure}")
+        cae.chk(20, not bool(ups_failure := url_failure(upstream_url)),
+                f"repository to fork from is not available at {upstream_url}; reason: {ups_failure}")
 
         project_path = ini_pdv['project_path']
         main_branch = ini_pdv['MAIN_BRANCH']
@@ -2330,10 +2375,10 @@ class GitlabCom(RemoteHost):
         if os_path_isdir(os_path_join(project_path, GIT_FOLDER_NAME)):  # renew if project path AND git repo exists
             ups_ok = remote_urls.get(upstream_name) == upstream_url
             ori_ok = remote_urls.get(origin_name) == origin_url
-            check_if(20, ups_ok and ori_ok, "remote urls discrepancies for" +
-                     ("" if ups_ok else f" upstream ({remote_urls.get(upstream_name)=} != {upstream_url=})") +
-                     (" and" if not ups_ok and not ori_ok else "") +
-                     ("" if ori_ok else f" origin ({remote_urls.get(origin_name)=} != {origin_url=})"))
+            cae.chk(20, ups_ok and ori_ok, "remote urls discrepancies for" +
+                    ("" if ups_ok else f" upstream ({remote_urls.get(upstream_name)=} != {upstream_url=})") +
+                    (" and" if not ups_ok and not ori_ok else "") +
+                    ("" if ori_ok else f" origin ({remote_urls.get(origin_name)=} != {origin_url=})"))
             if ena_log:
                 sh_log(f"# renewed fork_project {project_name=} enabled/extended git shell command logging",
                        log_file_paths=sh_logs(log_enable_dir=project_path, log_name_prefix='git'))
@@ -2344,7 +2389,7 @@ class GitlabCom(RemoteHost):
             action = 'created'
 
             prj_instance = self.repo_obj(20, owner_project_path)
-            if prj_instance is not None:            # never None because exit_error() call (added if to make mypy happy)
+            if prj_instance is not None:            # never None because shutdown() call (added if to make mypy happy)
                 try:
                     prj_instance.forks.create({})   # not-needed/defaults-to {'namespace_path': user_name/project_name}
                 except (GitlabAuthenticationError, GitlabCreateError, GitlabError) as ex:
@@ -2352,17 +2397,17 @@ class GitlabCom(RemoteHost):
                         cae.po(f"    # {owner_project_path} got already forked in {user_name}/{project_name}")
                         action = "locally refreshed"
                     else:
-                        exit_error(20, f"raised {ex=} on creating new fork of {owner_project_path} into {user_name}")
+                        cae.shutdown(20, error_message=f"new fork of {owner_project_path} to {user_name} raised {ex=}")
 
             wait_seconds = 36
             while (reason := url_failure(origin_url)) and wait_seconds > 0:
                 cae.po(f" . . .waiting for repository fork at {origin_url=} (to be {action}, unavailable {reason=})")
                 time.sleep(6)
                 wait_seconds -= 6
-            check_if(20, wait_seconds > 0, f"timeout in waiting for repository fork at {origin_url=}")
+            cae.chk(20, wait_seconds > 0, f"timeout in waiting for repository fork at {origin_url=}")
 
             prj_path = git_clone(user_url, project_name, parent_path=os_path_dirname(project_path), enable_log=ena_log)
-            check_if(21, bool(prj_path), f"failed to clone {origin_url} to {project_path}")
+            cae.chk(21, bool(prj_path), f"failed to clone {origin_url} to {project_path}")
             cae.dpo(f"    - cloned {origin_url} repo (from fork {upstream_url}) to {prj_path}")
 
             if action == 'created':
@@ -2399,7 +2444,7 @@ class GitlabCom(RemoteHost):
         owner_project = owner_project_from_url(remote_urls[origin_name])
 
         changed = git_uncommitted(project_path)
-        check_if(17, not changed, f"{owner_project} has {len(changed)} uncommitted files: {changed}")
+        cae.chk(17, not changed, f"{owner_project} has {len(changed)} uncommitted files: {changed}")
 
         errors = ""
         if not self.repo_obj(0, owner_project):
@@ -2455,7 +2500,7 @@ class GitlabCom(RemoteHost):
         with in_os_env(start_dir=ini_pdv['project_path']):
             if mirror_remote := _get_mirror_remote(ini_pdv):
                 update_mirror(ini_pdv, mirror_remote)           # mirror this gitlab.com-hosted project onto GitHub
-                msg += f" and updated mirror at github.com/{owner_project_from_url(mirror_remote)}"
+                msg += " and updated mirror"
 
         cae.po(msg)
 
@@ -2545,8 +2590,6 @@ class GitlabCom(RemoteHost):
     @_action(PARENT_PRJ, *ANY_PRJ_TYPE, shortcut='status')
     def show_status(self, ini_pdv: ProjectDevVars):
         """ show git status of the specified/current project locally and on remote. """
-        end_msg = _show_status(ini_pdv)  # print status to console, apart from the summary/last line which gets returned
-
         for remote_name, remote_url in ini_pdv.pdv_val('remote_urls').items():
             if owner_prj := self.repo_obj(0, owner_project_from_url(remote_url)):
                 cae.po(f"  --- {remote_name} remote attributes at {remote_url}")
@@ -2554,7 +2597,19 @@ class GitlabCom(RemoteHost):
             elif debug_or_verbose():
                 cae.po(f"    # {remote_name} repository unavailable at {remote_url}")
 
-        cae.po("=" + end_msg[1:])   # replace space char with '=' to make it a real end of action printout
+        # print status to console, apart from the summary/last line which gets returned
+        cae.po("=" + _show_status(ini_pdv)[1:])   # replace space char with '=' to make it a real end of action printout
+
+
+def web_app_version(connection: PythonanywhereApi) -> str:
+    """ determine the version of a deployed django project package.
+
+    :param connection:      established connection to the *.pythonanywhere.com server.
+    :return:                version string of the package deployed to the web host/server
+                            or empty string if package version file or version-in-file not found.
+    """
+    init_file_content = connection.deployed_file_content(os_path_join(connection.project_name, PY_INIT))
+    return "" if init_file_content is None else code_version(init_file_content)
 
 
 class PythonanywhereCom(RemoteHost):
@@ -2600,7 +2655,7 @@ class PythonanywhereCom(RemoteHost):
         func = self.check_deploy if action == 'check' else self.deploy_project
         lean_msg = ' lean' if optional_flags['LEAN'] else ''
         verbose = debug_or_verbose()
-        deployed_ver = self.connection.deployed_version()
+        deployed_ver = web_app_version(self.connection)
         cae.po(f" ---- {action} {version_tag}{lean_msg} against host/project {prj_desc} {deployed_ver}")
 
         project_path = ini_pdv['project_path']
@@ -2615,14 +2670,14 @@ class PythonanywhereCom(RemoteHost):
             if version_tag == 'LATEST':
                 version_tag = prefix + latest_remote_version(ini_pdv, increment_part=0)
             else:
-                check_if(85, version_tag[0] == prefix and version_tag.count(".") == 2,
-                         f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}0.3.6, got '{version_tag}'")
-                check_if(85, not deployed_ver or version_tag[1:] in (deployed_ver, increment_version(deployed_ver)),
-                         f"too big increment between old|deployed ({deployed_ver}) and new version ({version_tag[1:]})"
-                         + hint('pjm', func, " with the correct version or add --force to skip this version check"))
+                cae.chk(85, version_tag[0] == prefix and version_tag.count(".") == 2,
+                        f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}0.3.6, got '{version_tag}'")
+                cae.chk(85, not deployed_ver or version_tag[1:] in (deployed_ver, increment_version(deployed_ver)),
+                        f"too big increment between old|deployed ({deployed_ver}) and new version ({version_tag[1:]})"
+                        + hint('pjm', func, " with the correct version or add --force to skip this version check"))
             project_path = git_clone(ini_pdv['repo_root'], ini_pdv['project_name'], "--filter=blob:none",
                                      branch_or_tag=version_tag)
-            check_if(85, bool(project_path), "git clone tmp cleanup error, to check run again with the -D 1 option")
+            cae.chk(85, bool(project_path), "git clone tmp cleanup error, to check run again with the -D 1 option")
             branch_or_tag = f"{prefix}{deployed_ver}...{version_tag}"
 
         path_masks = optional_flags['MASKS'] + ['manage.py'] + root_packages_masks(ini_pdv.pdv_val('project_packages'))
@@ -2686,8 +2741,8 @@ class PythonanywhereCom(RemoteHost):
                 cae.po(f"  --- {len(to_cleanup)} deletable{lean_msg} files: {_pp(sorted(to_cleanup))}" + hint(
                     'pjm', func, " to remove them from the server") if action == 'check' else "")
 
-        check_if(85, bool(to_deploy | to_delete | to_cleanup), f"no {which_files}|cleanup files found in {version_tag}"
-                 + hint('pjm', func, f" specifying ALL as extra argument to {action} all deployable project files"))
+        cae.chk(85, bool(to_deploy | to_delete | to_cleanup), f"no {which_files}|cleanup files found in {version_tag}"
+                + hint('pjm', func, f" specifying ALL as extra argument to {action} all deployable project files"))
 
         verbose = action == 'check' or verbose
         cae.po(f" ===  {len(to_deploy)} {which_files} files found to migrate server to {version_tag} version"
@@ -2725,7 +2780,6 @@ class PythonanywhereCom(RemoteHost):
                                   too, by adding their possible file names to the list - only the found ones will be
                                   included. for example, to include the django database, you could add some possible DB
                                   file names to the list like in ``"MASKS=['static/**/*', 'db.sqlite', 'project.db']"``
-
         """
         prj_desc, _, to_deploy, to_delete = self.deploy_differences(ini_pdv, 'check', version_tag, **optional_flags)
 
@@ -2746,11 +2800,11 @@ class PythonanywhereCom(RemoteHost):
 
         for upg_fil in to_deploy:
             err_str = self.connection.deploy_file(upg_fil, read_file(os_path_join(root, upg_fil), extra_mode='b'))
-            check_if(96, not err_str, err_str)
+            cae.chk(96, not err_str, err_str)
 
         for del_fil in to_delete:
             err_str = self.connection.delete_file_or_folder(del_fil)
-            check_if(96, not err_str, err_str)
+            cae.chk(96, not err_str, err_str)
 
         if to_deploy:
             cae.po(f"  === {len(to_deploy)} files deployed: {_pp(sorted(to_deploy))}")
@@ -2944,8 +2998,8 @@ def clone_children(parent_or_root_pdv: ProjectDevVars, *owner_name_versions: str
     :return:                    cloned children project paths list (for :func_`clone_children` and unit testing).
     """
     project_type = parent_or_root_pdv['project_type']
-    check_if(57, project_type in (PARENT_PRJ, ROOT_PRJ),
-             f"no root|parent project found at the specified project path {parent_or_root_pdv['project_path']}")
+    cae.chk(57, project_type in (PARENT_PRJ, ROOT_PRJ),
+            f"no root|parent project found at the specified project path {parent_or_root_pdv['project_path']}")
 
     project_paths = []
     for own_nam_ver in owner_name_versions:
@@ -3012,8 +3066,6 @@ def commit_project(ini_pdv: ProjectDevVars):
 
     project_path = ini_pdv['project_path']
 
-    _update_frozen_req_files(ini_pdv)
-    _git_add(ini_pdv)
     git_commit(project_path, ini_pdv['project_version'], commit_msg_file=ini_pdv['COMMIT_MSG_FILE_NAME'])
 
     cae.po(f" ==== committed {ini_pdv['project_title']}")
@@ -3083,10 +3135,11 @@ def install_children_editable(ini_pdv: ProjectDevVars, *children_pdv: ProjectDev
 
 @_action(*ANY_PRJ_TYPE, shortcut='editable')
 def install_editable(ini_pdv: ProjectDevVars):
-    """ install a project as editable from the source/project root folder. """
-    project_path = ini_pdv['project_path']
-    sh_exit_if_exec_err(90, f"{PIP_INSTALL_CMD} -e {project_path}",
-                        exit_msg=f"package installation from local {project_path=} failed")
+    """ install the project as editable from the source/project root folder. """
+    with in_prj_dir_venv(project_path := ini_pdv['project_path']):
+        sh_exit_if_exec_err(90, PIP_INSTALL_CMD, extra_args=["--editable", project_path],
+                            exit_msg=f"package installation from local {project_path=} failed")
+
     cae.po(f" ==== installed as editable: {ini_pdv['project_title']}")
 
 
@@ -3160,7 +3213,6 @@ def prepare_commit(ini_pdv: ProjectDevVars, title: str = ""):
     """
     _check_action(ini_pdv, prepare_commit, commit_project)
 
-    _update_frozen_req_files(ini_pdv)
     _git_add(ini_pdv)
     _write_commit_message(ini_pdv, title=title)
 
@@ -3330,7 +3382,7 @@ def show_versions(ini_pdv: ProjectDevVars):
         msg += f" {remote_name}:{output[-1][1:] if output else '-': <9}"
 
     if pip_name := ini_pdv['pip_name']:
-        newest_ver = get_pypi_versions(pip_name, pypi_test=ini_pdv['parent_folder'] == 'TsT')[-1]
+        newest_ver = get_pypi_versions(pip_name, pypi_test=ini_pdv['parent_folder'] == 'TsT')[-1] or '-'
         msg += f" pypi:{newest_ver: <9}"
 
     if ini_pdv['project_type'] == DJANGO_PRJ:
@@ -3339,7 +3391,7 @@ def show_versions(ini_pdv: ProjectDevVars):
         if 'pythonanywhere.com' in web_domain and web_user:     # only if a default web host is defined in env/config
             web_token = _get_host_user_token(ini_pdv, web_domain, host_user=web_user, var_prefix='web')
             connection = PythonanywhereApi(web_domain, web_user, web_token, ini_pdv['project_name'])
-            msg += f" web:{connection.deployed_version(): <9}"
+            msg += f" web:{web_app_version(connection): <9}"
 
     cae.po(msg)
 
@@ -3394,13 +3446,89 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):
         cae.po(f" ==== successfully updated mirror at remote {mask_token(mirror_remote)}")
 
 
+@_action(*ANY_PRJ_TYPE, flags={'MASKS': [], 'EDITABLE': False}, shortcut='upgrade')
+def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):
+    """ upgrade project requirements|dependencies, optionally as editable package.
+
+    :param ini_pdv:             project dev vars of the project to create/update a mirror/replication for.
+    :param optional_flags:      additional/optional command line arguments:
+
+                                * ``EDITABLE``: requirements available as sister packager (under the same project parent
+                                  folder) will be installed/upgraded as editable (via the -e option of `pip`).
+                                * ``MASKS``: list of package name masks/pattern strings to restrict the upgraded
+                                  packages. if not specified then all packages required by the project will be upgraded.
+    """
+    packages = ini_pdv.pdv_val('install_requires')
+    pkg_masks = optional_flags['MASKS']
+    editable = optional_flags['EDITABLE']
+
+    with in_prj_dir_venv(ini_pdv['project_path']):
+        upgraded = []
+        for pkg_name in packages:
+            if not pkg_masks or any(fnmatch(pkg_name, mask) for mask in pkg_masks):
+                pip_args = ["--upgrade"]
+                if editable and os_path_isdir(pgk_path := os_path_join("..", pkg_name)):
+                    pip_args.append("--editable")
+                    pip_args.append(pgk_path)
+                else:
+                    pip_args.append(pkg_name)
+                sh_exit_if_exec_err(91, PIP_INSTALL_CMD, extra_args=pip_args, exit_msg="upgrade_requirements failed")
+                upgraded.append(pip_args[-1])
+
+    mask_msg = f" matching one of {pkg_masks}" if pkg_masks else ""
+    cae.po(f" ==== upgraded {len(upgraded)} packages{mask_msg}: {' '.join(upgraded)}")
+
+
 # ----------------------- main ----------------------------------------------------------------------------------------
+
+
+def init_main():
+    """ initialize main app instance. """
+    global cae          # pylint: disable=global-statement
+    # because ae.core determines the app version with stack_var('__version__') it doesn't find it, alternatively to pass
+    # it via the app_version kwarg to ConsoleApp() the next line could be uncommented:
+    # __version__ = module_attr('aedev.project_manager', '__version__'))
+    cae = ConsoleApp(app_name="pjm", app_version=module_attr('aedev.project_manager', '__version__'),
+                     debug_level=DEBUG_LEVEL_DISABLED)  # DEBUG_LEVEL_VERBOSE is now default in ae.core/ae.console
+
+    cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all available actions)")
+    cae.add_argument('arguments',
+                     help="additional arguments and optional flags, depending on specified action, e.g. all children"
+                          " actions expecting either a list of package/portion names or an expression using one of the"
+                          " preset children sets like all|editable|modified|develop|filterBranch|filterExpression",
+                     nargs='*')
+    cae.add_option('branch', "name of the branch or version-tag to checkout/filter-/work-on", "")
+    cae.add_option('delay', "seconds to pause, e.g. between sub-actions of a children-bulk-action", 12.3, short_opt='w')
+    cae.add_option('docs_domain', f"documentation domain (default={PDV_docs_domain})", None, short_opt=UNSET)
+    cae.add_option('filterExpression', "Python expression evaluated against each children project, to be used as"
+                                       " 'filterExpression' children-set-expression argument", "", short_opt='F')
+    cae.add_option('filterBranch', "branch name matching the children current branch, to be used as"
+                                   " 'filterBranch' children-set-expression argument", "", short_opt='B')
+    cae.add_option('git_log', "enables git command logging for clone_project|fork_project actions", UNSET,
+                   short_opt=UNSET)
+    cae.add_option('more_verbose', "enables a more verbose console output", UNSET, short_opt='v')  # != cae.verbose
+    cae.add_option('namespace_name', "namespace name of a new namespace root or portion (module/package) project", "")
+    cae.add_option('project_name', "project package or portion name", "", short_opt='P')
+    cae.add_option('project_path', "project root directory (default=current working directory)", "")
+    cae.add_option('repo_domain', f"git hosting service domain (default={PDV_repo_domain})", None, short_opt='d')
+    cae.add_option('repo_group', "upstream user|group name at the repository hosting service", None, short_opt='g')
+    cae.add_option('repo_token', "user credential access token of the git hosting service", None, short_opt='t')
+    cae.add_option('repo_user', "user account name at the repository hosting service", None, short_opt='u')
+    cae.add_option('versionIncrementPart', "project version part to increment (0=disable, 1...3=mayor...patch)", 3,
+                   short_opt='i', choices=range(4))
+    cae.add_option('web_domain', "web app deployment platform (default=pythonanywhere.com)", None, short_opt=UNSET)
+    cae.add_option('web_token', "user credential token at the used app deployment platform", None, short_opt=UNSET)
+    cae.add_option('web_user', "user name at the used web app deployment platform", None, short_opt=UNSET)
+    for template_pkg in ["namespace portion's root project"] + TPL_IMPORT_NAMES:
+        tpl_pkg_suf = f" of {template_pkg} template package"                            # pylint: disable=invalid-name
+        cae.add_option(template_path_option(template_pkg), "local path" + tpl_pkg_suf, "", short_opt=UNSET)
+        cae.add_option(template_version_option(template_pkg), "branch/version-tag" + tpl_pkg_suf, "", short_opt=UNSET)
+
+    return cae
 
 
 def prepare_and_run_main():                                                                # pragma: no cover
     """ prepare and run app """
-    cae.run_app()                                                   # parse command line arguments
-
     ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()  # init globals, check action, compile args
     host_api = ini_pdv.pdv_val('host_api')                          # determine optional host API client instance
     action_callable = _act_callable(host_api, act_name)             # determine action function|method
@@ -3410,10 +3538,7 @@ def prepare_and_run_main():                                                     
         cae.show_help()
         if act_specs := _act_specs(act_name):
             cae.po()
-            if len(act_specs) > 1:
-                cae.po(f"found {len(act_specs)} possible {act_name} actions:")
-            else:
-                cae.po("action details:")
+            cae.po(f"found {len(act_specs)} {act_name} actions:" if len(act_specs) > 1 else "action details:")
             for spec in act_specs:
                 _act_help_print(spec, indent=2)                     # show help for action
     else:
@@ -3430,44 +3555,12 @@ def prepare_and_run_main():                                                     
 def main():                                                         # pragma: no cover
     """ main app script """
     try:
+        init_main()                 # initialize ConsoleApp instance with arguments
+        cae.run_app()               # parse command line arguments
         prepare_and_run_main()
     except Exception as main_ex:                                    # pylint: disable=broad-exception-caught
         debug_info = f":{os.linesep}{format_exc()}" if debug_or_verbose() else ""
-        exit_error(99, f"unexpected exception {main_ex} raised{debug_info}")
-
-
-cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all available actions)")
-cae.add_argument('arguments',
-                 help="additional arguments and optional flags, depending on specified action, e.g. all children"
-                      " actions expecting either a list of package/portion names or an expression using one of the"
-                      " preset children sets like all|editable|modified|develop|filterBranch|filterExpression",
-                 nargs='*')
-cae.add_option('branch', "name of the branch or version-tag to checkout/filter-/work-on", "")
-cae.add_option('delay', "seconds to pause, e.g. between sub-actions of a children-bulk-action", 12.3, short_opt='w')
-cae.add_option('docs_domain', f"documentation domain (default={PDV_docs_domain})", None, short_opt=UNSET)
-cae.add_option('force', "force action execution. specify multiple times to ignore multiple errors", '++')
-cae.add_option('filterExpression', "Python expression evaluated against each children project, to be used as"
-                                   " 'filterExpression' children-set-expression argument", "", short_opt='F')
-cae.add_option('filterBranch', "branch name matching the children current branch, to be used as"
-                               " 'filterBranch' children-set-expression argument", "", short_opt='B')
-cae.add_option('git_log', "enables git command logging for clone_project|fork_project actions", UNSET, short_opt=UNSET)
-cae.add_option('more_verbose', "enables a more verbose console output", UNSET, short_opt='v')  # != cae.verbose
-cae.add_option('namespace_name', "namespace name of a new namespace root or portion (module/package) project", "")
-cae.add_option('project_name', "project package or portion name", "", short_opt='P')
-cae.add_option('project_path', "project root directory (default=current working directory)", "")
-cae.add_option('repo_domain', f"git hosting service domain (default={PDV_repo_domain})", None, short_opt='d')
-cae.add_option('repo_group', "upstream user|group name at the repository hosting service", None, short_opt='g')
-cae.add_option('repo_token', "user credential access token of the git hosting service", None, short_opt='t')
-cae.add_option('repo_user', "user account name at the repository hosting service", None, short_opt='u')
-cae.add_option('versionIncrementPart', "project version number part to increment (0=disable, 1...3=mayor...patch)", 3,
-               short_opt='i', choices=range(4))
-cae.add_option('web_domain', "web app deployment platform (default=pythonanywhere.com)", None, short_opt=UNSET)
-cae.add_option('web_token', "user credential token at the used app deployment platform", None, short_opt=UNSET)
-cae.add_option('web_user', "user name at the used web app deployment platform", None, short_opt=UNSET)
-for template_pkg in ["namespace portion's root project"] + TPL_IMPORT_NAMES:
-    tpl_pkg_suf = f" of {template_pkg} template package"                                # pylint: disable=invalid-name
-    cae.add_option(template_path_option(template_pkg), "local path" + tpl_pkg_suf, "", short_opt=UNSET)
-    cae.add_option(template_version_option(template_pkg), "branch/version-tag" + tpl_pkg_suf, "", short_opt=UNSET)
+        cae.shutdown(99, error_message=f"unexpected exception {main_ex} raised{debug_info}")
 
 
 if __name__ == '__main__':                                                                  # pragma: no cover
