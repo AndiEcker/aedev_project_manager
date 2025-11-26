@@ -3066,6 +3066,7 @@ def commit_project(ini_pdv: ProjectDevVars):
 
     project_path = ini_pdv['project_path']
 
+    _git_add(ini_pdv)
     git_commit(project_path, ini_pdv['project_version'], commit_msg_file=ini_pdv['COMMIT_MSG_FILE_NAME'])
 
     cae.po(f" ==== committed {ini_pdv['project_title']}")

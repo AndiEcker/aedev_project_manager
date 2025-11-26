@@ -27,5 +27,5 @@ ae_shell==0.3.9
 ae_template==0.3.2
 ae_pythonanywhere==0.3.3
 aedev_base==0.3.1
-aedev_commands==0.3.1
+aedev_commands==0.3.2
 aedev_project_vars==0.3.1
