@@ -60,6 +60,9 @@ def restore_app_env(sys_argv_app_key_restore):
         if not app_keys:    # else logger_shutdown got called already by unregister_app_instance()
             logger_shutdown()
 
+        if not app_keys:    # else logger_shutdown got called already by _unregister_app_instance()
+            logger_shutdown()
+
 
 @pytest.fixture
 def cons_app(restore_app_env):
