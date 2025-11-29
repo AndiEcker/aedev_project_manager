@@ -1,7 +1,7 @@
 # THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.68
 anybadge
 coverage-badge
-#aedev_project_manager  # including Pillow to test/check integrity and img/loc/snd resources
+aedev_project_manager  # including Pillow to test/check integrity and img/loc/snd resources
 flake8
 mypy
 pylint

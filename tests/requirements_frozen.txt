@@ -1,6 +1,6 @@
 anybadge==1.16.0
 coverage-badge==1.1.2
-aedev_project_manager==0.3.10  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@8a7ff9e06ee4c358dcd399422348dbb14d617991#egg=aedev_project_manager
+aedev_project_manager==0.3.11  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@5fc500478365a6dd9bbbb903bc2ec7e7d6df0516#egg=aedev_project_manager
 flake8==7.3.0
 mypy==1.18.2
 pylint==4.0.3

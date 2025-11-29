@@ -18,11 +18,11 @@ setup_kwargs = {
     'entry_points': {       'console_scripts': [       'pjm = aedev.project_manager.__main__:main',
                                    'project-manager = aedev.project_manager.__main__:main']},
     'extras_require': {       'dev': [       'aedev_project_tpls==0.3.68', 'ae-parse-date==0.3.5', 'anybadge==1.16.0',
-                       'coverage-badge==1.1.2', 'aedev_project_manager==0.3.10', 'flake8==7.3.0', 'mypy==1.18.2',
+                       'coverage-badge==1.1.2', 'aedev_project_manager==0.3.11', 'flake8==7.3.0', 'mypy==1.18.2',
                        'pylint==4.0.3', 'pytest==9.0.1', 'pytest-cov==7.0.0', 'pytest-django==4.11.1',
                        'typing==3.7.4.3', 'types-setuptools==80.9.0.20250822'],
         'docs': [],
-        'tests': [       'anybadge==1.16.0', 'coverage-badge==1.1.2', 'aedev_project_manager==0.3.10', 'flake8==7.3.0',
+        'tests': [       'anybadge==1.16.0', 'coverage-badge==1.1.2', 'aedev_project_manager==0.3.11', 'flake8==7.3.0',
                          'mypy==1.18.2', 'pylint==4.0.3', 'pytest==9.0.1', 'pytest-cov==7.0.0', 'pytest-django==4.11.1',
                          'typing==3.7.4.3', 'types-setuptools==80.9.0.20250822']},
     'install_requires': [       'anybadge==1.16.0', 'coverage==7.12.0', 'coverage-badge==1.1.2', 'flake8==7.3.0', 'mypy==1.18.2',
@@ -66,7 +66,7 @@ setup_kwargs = {
         'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.10',
+    'version': '0.3.11',
     'zip_safe': True,
 }
 

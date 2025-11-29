@@ -2446,11 +2446,16 @@ class GitlabCom(RemoteHost):
         changed = git_uncommitted(project_path)
         cae.chk(17, not changed, f"{owner_project} has {len(changed)} uncommitted files: {changed}")
 
-        errors = ""
         if not self.repo_obj(0, owner_project):
             errors = self.init_new_remote_repo(ini_pdv)
+            if errors:
+                cae.po(f" **** errors in initializing git repository before push to remote {owner_project}:")
+                cae.po(errors)
+                return
         elif err_list := _update_project(ini_pdv, remote_names=remote_urls):
-            errors = _pp(err_list)
+            cae.po(f" **** errors in updating project before pushing it to remote {owner_project}")
+            cae.po(_pp(err_list))
+            return
 
         branch_name = _get_branch(ini_pdv)
 
@@ -2464,13 +2469,15 @@ class GitlabCom(RemoteHost):
         repo_url = _git_push_url(ini_pdv, authenticate=True)
         output = git_push(project_path, repo_url, "--set-upstream", *push_refs)
         if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
-            errors += _pp(output)
-        if errors:
             cae.po(f" **** errors in pushing project to remote {owner_project}")
-            cae.po(errors)
+            cae.po(_pp(output))
             return
-
         if output and debug_or_verbose():
+            cae.po(_pp(output))
+
+        output = git_fetch(project_path, origin_name)   # because pushed to reop_url (w/ token) instead of origin_name
+        if output:
+            cae.po(f" #### errors in fetching from origin after successful push of project to remote {owner_project}")
             cae.po(_pp(output))
 
         cae.po(f" ==== pushed {' '.join(push_refs)} branches/tags to remote project {owner_project}")
