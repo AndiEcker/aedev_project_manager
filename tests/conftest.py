@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.68
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.71
 # pylint: disable=redefined-outer-name, unused-argument; suppress fixtures conflicts (silly pylint)
 """ fixtures for to test this project """
 import os

@@ -4,10 +4,10 @@ templates for outsourced files of Python projects
 
 
 """
-from pprint import pformat
 from typing import Union, Any
 
-from ae.base import TEMPLATES_FOLDER, in_wd, norm_name, norm_path, os_path_isdir, os_path_join  # type: ignore
+from ae.base import (                                                                           # type: ignore
+    TEMPLATES_FOLDER, in_wd, norm_name, norm_path, os_path_isdir, os_path_join, pep8_format)
 from aedev.base import (                                                                        # type: ignore
     PROJECT_VERSION_SEP, CachedTemplates, TemplateProjectsType, TemplateProjectType,
     get_pypi_versions, project_name_version)
@@ -161,16 +161,29 @@ def register_template(import_name: str, requested_options: dict[str, str], cache
 
 
 def setup_kwargs_literal(setup_kwargs: dict[str, Any]) -> str:
-    """ literal string of the setuptools.setup() kwargs dict used in setup.py.
+    """ literal string of the setuptools.setup() kwargs dict, to be used by the setup.py template (aedev.project_tpls).
 
     :param setup_kwargs:        kwargs passed to call of _func:`setuptools.setup` in setup.py.
+                                in order to prevent errors if the template-generated file README.md get created after
+                                setup.py and to have a nicer code formatting in the resulting setup.py file, the value
+                                of the `long_description` item will be replaced by a dynamic-loading expression.
     :return:                    literal of specified setup kwargs formatted for column 1.
+
+    .. note:: the setup.py template has to include/provide the statement: import pathlib.
     """
+    sep = "\n"      # not using os.linesep to prevent formatting discrepancies on different operating systems.
+    pre = sep + " " * 4
     ret = "{"
-    pre = "\n" + " " * 4
+
     for key in sorted(setup_kwargs.keys()):
-        ret += pre + repr(key) + ": " + pformat(setup_kwargs[key], indent=8, width=120, compact=True) + ","
-    return ret + "\n}"
+        ret += pre + repr(key) + ": "
+        if key == 'long_description':  # replace preloaded content of README with dynamic file content load expression
+            ret += "(pathlib.Path(__file__).parent / 'README.md').read_text(encoding='utf-8')"
+        else:
+            ret += pep8_format(setup_kwargs[key], indent_level=1)  # pformat(setup_kwargs[key], indent=8, width=120)
+        ret += ","
+
+    return ret + sep + "}"
 
 
 def _template_options_prefix(import_name: str) -> str:

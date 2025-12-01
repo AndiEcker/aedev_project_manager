@@ -1,15 +1,45 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.68
-#
-# simplified version to deploy only without any integrity checks and artifacts
-#
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.71
 image: python:3.12
 
 
 
 
 
-stages:
-  - deploy
+before_script:
+  - python --version
+  - pip install --upgrade setuptools pip pipx
+  - pip install --upgrade -r requirements_frozen.txt -r tests/requirements_frozen.txt
+
+
+integrity:
+  script:
+    - pipx run --spec aedev_project_manager project-manager -v check-integrity
+  artifacts:
+    paths:
+      - mypy_report/
+      - .pylint/
+      - htmlcov/
+      - .pytest_cache
+
+
+pages:
+  stage: deploy
+  dependencies:
+    - integrity
+  script:
+    - ls -l -R
+    - mkdir -p public/coverage
+    - mv -f -v htmlcov/* public/coverage
+    - mv -f -v .pytest_cache/coverage.txt public/
+    - mv -f -v .pytest_cache/coverage.svg public/
+    - mv -f -v mypy_report/lineprecision.txt public/
+    - mv -f -v mypy_report/mypy.svg public/
+    - mv -f -v .pylint/pylint.svg public/
+    - mv -f -v .pylint/pylint.log public/
+  artifacts:
+    paths:
+      - public
+
 
 pypi_deploy:
   stage: deploy
@@ -24,8 +54,6 @@ pypi_deploy:
     TWINE_PASSWORD: $PYPI_PASSWORD
   before_script:
      - pip install --upgrade pip build twine
-     # removed -r tests/requirements.txt to prevent installation of old/fixed/frozen ae_core/ae_console/...
-     - pip install --upgrade -r requirements.txt
      - python -m build
   script:
     - twine upload --verbose dist/*

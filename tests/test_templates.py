@@ -337,7 +337,12 @@ class TestHelpers:
 
         setup_kwargs = {
             'key1': 'SetupKwargs_Key1_Value',
-            'key2': ['list', 'of', 'test', 'strings'],
+            'key2': [
+                'list',
+                'of',
+                'test',
+                'strings',
+            ],
         }
         setuptools.setup(**setup_kwargs)
         ''')
@@ -352,7 +357,12 @@ class TestHelpers:
         print(f"SetUp {__name__=} {sys.executable=} {sys.argv=} {sys.path=}")
         setup_kwargs = {
             'key1': 'SetupKwargs_Key1_Value',
-            'key2': ['list', 'of', 'test', 'strings'],
+            'key2': [
+                'list',
+                'of',
+                'test',
+                'strings',
+            ],
         }
         setuptools.setup(**setup_kwargs)
         ''')
@@ -560,8 +570,10 @@ class TestHelpers:
         assert lit[1] == "\n"
         assert lit[2:14] == " " * 4 + "'key1': "
         assert lit[14:21] == "'val1',"
-        assert lit[21:40] == "\n" + " " * 4 + "'key2': {'a': "
-        assert lit[-5:-2] == "'},"
+        assert lit[21:36] == "\n" + " " * 4 + "'key2': {\n"
+        assert lit[35:52] == "\n" + " " * 8 + "'a': 1,\n"
+        assert lit[51:70] == "\n" + " " * 8 + "'b': '3',\n"
+        assert lit[-4:-2] == "},"
         assert lit[-2:] == "\n}"
 
     def test_template_path_option(self):
