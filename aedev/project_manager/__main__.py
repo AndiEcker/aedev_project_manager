@@ -78,17 +78,17 @@ from ae.base import (                                                       # ty
     os_path_relpath, os_path_splitext,
     project_main_file, read_file, stack_var, url_failure, write_file,
     write_file as patchable_write_file)
-from ae.files import FileObject                                                             # type: ignore
-from ae.paths import (                                                                      # type: ignore
+from ae.files import FileObject                                                                         # type: ignore
+from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
     copy_file, move_file, path_items, paths_match, relative_file_paths, skip_py_cache_files)
-from ae.dynamicod import try_call, try_eval                                                 # type: ignore
-from ae.literal import Literal                                                              # type: ignore
-from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_PLATFORM     # type: ignore
-from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                              # type: ignore
-from ae.console import ConsoleApp                                                           # type: ignore
-from ae.shell import debug_or_verbose, get_domain_user_var                                  # type: ignore
-from ae.template import (                                                                   # type: ignore
+from ae.dynamicod import try_call, try_eval                                                             # type: ignore
+from ae.literal import Literal                                                                          # type: ignore
+from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_PLATFORM                 # type: ignore
+from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                                          # type: ignore
+from ae.console import ConsoleApp                                                                       # type: ignore
+from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER, debug_or_verbose, get_domain_user_var        # type: ignore
+from ae.template import (                                                                               # type: ignore
     LOCK_EXT, OUTSOURCED_MARKER,
     SKIP_IF_PORTION_DST_NAME_PREFIX, TEMPLATES_FILE_NAME_PREFIXES, TPL_FILE_NAME_PREFIX,
     Replacer,
@@ -157,6 +157,7 @@ REGISTERED_ACTIONS: RegisteredActions = {}                  #: implemented actio
 
 REGISTERED_HOSTS_CLASS_NAMES: dict[str, str] = {}           #: class names of all supported remote host domains
 
+# pylint: disable-next=invalid-name
 cae = cast(ConsoleApp, cast(object, None))    #: main app instance of this pjm tool, initialized by :func:`init_main`
 
 
@@ -1252,14 +1253,16 @@ def _refresh_templates(pdv: ProjectDevVars, logger: Callable = print, **replacer
             patchable_makedirs(dir_path)
         patchable_write_file(file_path, new_content, extra_mode=extra_mode)
 
-    cae.chk(41, not (_errors := pdv.errors()), f"project dev var {_errors=}")  # if pdv['AUTHOR']
+    cae.chk(41, not (errors := pdv.errors()), f"project dev var {errors=}")  # if pdv['AUTHOR']
 
     project_type = pdv['project_type']
     if project_type == NO_PRJ:
         return set()
 
-    _update_frozen_req_files(pdv)   # update any frozen *requirements.txt files (for renew and refresh actions) and
-    _refresh_pdv(pdv)               # update pdv vars to provide actual dependencies versions to the setup.py template
+    errors = _update_frozen_req_files(pdv)  # update frozen *requirements.txt files (for renew and refresh actions)
+    cae.chk(41, not errors, f"frozen requirements files update errors:{_pp(errors)}")
+
+    _refresh_pdv(pdv)                       # update pdv vars w/ required dependencies versions to the setup.py template
 
     namespace_name = pdv['namespace_name']
     project_path = pdv['project_path']
@@ -1603,7 +1606,7 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:
     return f" ==== end of git status of {ini_pdv['project_title']}"
 
 
-def _update_frozen_req_files(pdv: ProjectDevVars):
+def _update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
     req_file_name = pdv['REQ_FILE_NAME']
     req_file_paths = (
         req_file_name,
@@ -1612,20 +1615,33 @@ def _update_frozen_req_files(pdv: ProjectDevVars):
         os_path_join(pdv['TESTS_FOLDER'], req_file_name),
     )
 
+    errors = []
     with in_prj_dir_venv(pdv['project_path']):
         for req_file_path in req_file_paths:
-            _update_frozen_req_file(req_file_path)
+            errors += _update_frozen_req_file(req_file_path, all_packages=req_file_path == pdv['REQ_DEV_FILE_NAME'])
+
+    return errors
 
 
-def _update_frozen_req_file(req_file_path: str):
+def _update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> list[str]:
     if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
-        return
+        return []
 
     out_lines: list[str] = []
-    sh_exit_if_exec_err(73, f"{PIP_CMD} freeze -r {req_file_path}", lines_output=out_lines)
+    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path), lines_output=out_lines)
+
+    errors: list[str] = []
+    if out_lines and out_lines[-1] == STDERR_END_MARKER:
+        line_no = len(out_lines) - 2
+        while out_lines[line_no] != STDERR_BEG_MARKER:
+            errors.insert(0, out_lines[line_no])
+            line_no -= 1
+    if errors:
+        return errors
 
     line_count = len(read_file(req_file_path).split(os.linesep))
-    out_lines = out_lines[:line_count]
+    if not all_packages:
+        out_lines = out_lines[:line_count]
     for line, req in enumerate(out_lines):
         if req.startswith("-e "):
             prj_name = req.rsplit('=', maxsplit=1)[-1]
@@ -1637,8 +1653,12 @@ def _update_frozen_req_file(req_file_path: str):
 
     if OUTSOURCED_MARKER in out_lines[0]:
         out_lines = out_lines[1:]
-    pip_freeze_comment = "## The following requirements were added by pip freeze:"
-    patchable_write_file(frozen_file_path, os.linesep.join(out_lines).replace(pip_freeze_comment, ""))
+    file_content = os.linesep.join(out_lines)
+    if not all_packages:
+        file_content = file_content.replace("## The following requirements were added by pip freeze:", "")
+    patchable_write_file(frozen_file_path, file_content)
+
+    return []
 
 
 # pylint: disable-next=too-many-locals,too-many-branches

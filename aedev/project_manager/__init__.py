@@ -1,6 +1,6 @@
 """
-create and maintain Python projects locally and remotely
-========================================================
+maintain Python projects locally and remotely
+=============================================
 
 this init module provides the project version number, and information on how to change/extend the code base of the
 project-manager (``pjm``) tool.
@@ -22,4 +22,4 @@ the help texts of an action gets compiled automatically from the docstring of th
 """
 
 
-__version__ = '0.3.11'
+__version__ = '0.3.12'

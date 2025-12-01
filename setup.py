@@ -1,72 +1,207 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.68
-""" setup of aedev namespace package portion project_manager: create and maintain Python projects locally and remotely. """
-# noinspection PyUnresolvedReferences
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.71
+""" setup of aedev namespace package portion project_manager: maintain Python projects locally and remotely. """
 import sys
-print(f"SetUp {__name__=} {sys.executable=} {sys.argv=} {sys.path=}")
-
+# noinspection PyUnresolvedReferences
+import pathlib
 # noinspection PyUnresolvedReferences
 import setuptools
+
+
+print("SetUp " + __name__ + ": " + sys.executable + str(sys.argv) + f" {sys.path=}")
 
 setup_kwargs = {
     'author': 'AndiEcker',
     'author_email': 'aecker2@gmail.com',
-    'classifiers': [       'Development Status :: 3 - Alpha', 'Natural Language :: English', 'Operating System :: OS Independent',
-        'Programming Language :: Python', 'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.12', 'Topic :: Software Development :: Libraries :: Python Modules',
-        'Typing :: Typed'],
-    'description': 'aedev namespace package portion project_manager: create and maintain Python projects locally and remotely',
-    'entry_points': {       'console_scripts': [       'pjm = aedev.project_manager.__main__:main',
-                                   'project-manager = aedev.project_manager.__main__:main']},
-    'extras_require': {       'dev': [       'aedev_project_tpls==0.3.68', 'ae-parse-date==0.3.5', 'anybadge==1.16.0',
-                       'coverage-badge==1.1.2', 'aedev_project_manager==0.3.11', 'flake8==7.3.0', 'mypy==1.18.2',
-                       'pylint==4.0.3', 'pytest==9.0.1', 'pytest-cov==7.0.0', 'pytest-django==4.11.1',
-                       'typing==3.7.4.3', 'types-setuptools==80.9.0.20250822'],
+    'classifiers': [
+        'Development Status :: 3 - Alpha',
+        'Natural Language :: English',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.12',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+        'Typing :: Typed',
+    ],
+    'description': 'aedev namespace package portion project_manager: maintain Python projects locally and remotely',
+    'entry_points': {
+        'console_scripts': [
+            'pjm = aedev.project_manager.__main__:main',
+            'project-manager = aedev.project_manager.__main__:main',
+        ],
+    },
+    'extras_require': {
+        'dev': [
+            'aedev_project_tpls==0.3.71',
+            'aedev_aedev==0.3.28',
+            'ae-parse-date==0.3.5',
+            'ae_base==0.3.76',
+            'ae_console==0.3.91',
+            'ae_core==0.3.81',
+            'ae_dynamicod==0.3.15',
+            'ae_files==0.3.25',
+            'ae_literal==0.3.35',
+            'ae_paths==0.3.43',
+            'ae_pythonanywhere==0.3.3',
+            'ae_shell==0.3.9',
+            'ae_template==0.3.2',
+            'ae_templates==0.3.1',
+            'ae_updater==0.3.17',
+            'aedev_app_tpls==0.3.18',
+            'aedev_base==0.3.1',
+            'aedev_commands==0.3.4',
+            'aedev_namespace_root_tpls==0.3.22',
+            'aedev_project_manager==0.3.12',
+            'aedev_project_vars==0.3.2',
+            'anybadge==1.16.0',
+            'argcomplete==3.6.3',
+            'astroid==4.0.2',
+            'certifi==2025.4.26',
+            'cffi==1.17.1',
+            'charset-normalizer==3.4.2',
+            'click==8.3.0',
+            'coverage==7.12.0',
+            'coverage-badge==1.1.2',
+            'cryptography==45.0.4',
+            'Deprecated==1.2.18',
+            'dill==0.4.0',
+            'docutils==0.21.2',
+            'flake8==7.3.0',
+            'id==1.5.0',
+            'idna==3.10',
+            'iniconfig==2.1.0',
+            'isort==6.0.1',
+            'jaraco.classes==3.4.0',
+            'jaraco.context==6.0.1',
+            'jaraco.functools==4.1.0',
+            'jeepney==0.9.0',
+            'keyring==25.6.0',
+            'librt==0.6.3',
+            'markdown-it-py==3.0.0',
+            'mccabe==0.7.0',
+            'mdurl==0.1.2',
+            'more-itertools==10.7.0',
+            'mypy==1.19.0',
+            'mypy_extensions==1.1.0',
+            'nh3==0.2.21',
+            'packaging==25.0',
+            'pathspec==0.12.1',
+            'pillow==12.0.0',
+            'pipx==1.8.0',
+            'platformdirs==4.3.8',
+            'pluggy==1.6.0',
+            'pycodestyle==2.14.0',
+            'pycparser==2.22',
+            'pyflakes==3.4.0',
+            'PyGithub==2.8.1',
+            'Pygments==2.19.1',
+            'pyjnius==1.6.1',
+            'PyJWT==2.10.1',
+            'pylint==4.0.4',
+            'PyNaCl==1.5.0',
+            'pytest==9.0.1',
+            'pytest-cov==7.0.0',
+            'pytest-django==4.11.1',
+            'python-gitlab==7.0.0',
+            'readme_renderer==44.0',
+            'requests==2.32.5',
+            'requests-toolbelt==1.0.0',
+            'rfc3986==2.0.0',
+            'rich==14.0.0',
+            'SecretStorage==3.3.3',
+            'setuptools==80.9.0',
+            'tomlkit==0.13.3',
+            'twine==6.2.0',
+            'types-Pillow==10.2.0.20240822',
+            'types-requests==2.32.4.20250913',
+            'types-setuptools==80.9.0.20250822',
+            'typing==3.7.4.3',
+            'typing_extensions==4.14.0',
+            'urllib3==2.4.0',
+            'userpath==1.9.2',
+            'wheel==0.45.1',
+            'wrapt==1.17.2',
+            'anybadge==1.16.0',
+            'coverage-badge==1.1.2',
+            'flake8==7.3.0',
+            'mypy==1.19.0',
+            'pylint==4.0.4',
+            'pytest==9.0.1',
+            'pytest-cov==7.0.0',
+            'pytest-django==4.11.1',
+            'typing==3.7.4.3',
+            'types-setuptools==80.9.0.20250822',
+        ],
         'docs': [],
-        'tests': [       'anybadge==1.16.0', 'coverage-badge==1.1.2', 'aedev_project_manager==0.3.11', 'flake8==7.3.0',
-                         'mypy==1.18.2', 'pylint==4.0.3', 'pytest==9.0.1', 'pytest-cov==7.0.0', 'pytest-django==4.11.1',
-                         'typing==3.7.4.3', 'types-setuptools==80.9.0.20250822']},
-    'install_requires': [       'anybadge==1.16.0', 'coverage==7.12.0', 'coverage-badge==1.1.2', 'flake8==7.3.0', 'mypy==1.18.2',
-        'packaging==25.0', 'pillow==12.0.0', 'types-Pillow==10.2.0.20240822', 'PyGithub==2.8.1', 'pylint==4.0.3',
-        'pytest==9.0.1', 'pytest-cov==7.0.0', 'python-gitlab==7.0.0', 'requests==2.32.5', 'requests-toolbelt==1.0.0',
-        'setuptools==80.9.0', 'ae_base==0.3.74', 'ae_files==0.3.25', 'ae_paths==0.3.43', 'ae_dynamicod==0.3.15',
-        'ae_literal==0.3.35', 'ae_updater==0.3.17', 'ae_core==0.3.81', 'ae_console==0.3.91', 'ae_shell==0.3.9',
-        'ae_template==0.3.2', 'ae_pythonanywhere==0.3.3', 'aedev_base==0.3.1', 'aedev_commands==0.3.2',
-        'aedev_project_vars==0.3.1'],
-    'keywords': ['configuration', 'development', 'environment', 'productivity'],
+        'tests': [
+            'anybadge==1.16.0',
+            'coverage-badge==1.1.2',
+            'flake8==7.3.0',
+            'mypy==1.19.0',
+            'pylint==4.0.4',
+            'pytest==9.0.1',
+            'pytest-cov==7.0.0',
+            'pytest-django==4.11.1',
+            'typing==3.7.4.3',
+            'types-setuptools==80.9.0.20250822',
+        ],
+    },
+    'install_requires': [
+        'anybadge==1.16.0',
+        'coverage==7.12.0',
+        'coverage-badge==1.1.2',
+        'flake8==7.3.0',
+        'mypy==1.19.0',
+        'packaging==25.0',
+        'pillow==12.0.0',
+        'types-Pillow==10.2.0.20240822',
+        'PyGithub==2.8.1',
+        'pylint==4.0.4',
+        'pytest==9.0.1',
+        'pytest-cov==7.0.0',
+        'python-gitlab==7.0.0',
+        'requests==2.32.5',
+        'requests-toolbelt==1.0.0',
+        'setuptools==80.9.0',
+        'ae_base==0.3.76',
+        'ae_files==0.3.25',
+        'ae_paths==0.3.43',
+        'ae_dynamicod==0.3.15',
+        'ae_literal==0.3.35',
+        'ae_updater==0.3.17',
+        'ae_core==0.3.81',
+        'ae_console==0.3.91',
+        'ae_shell==0.3.9',
+        'ae_template==0.3.2',
+        'ae_pythonanywhere==0.3.3',
+        'aedev_base==0.3.1',
+        'aedev_commands==0.3.4',
+        'aedev_project_vars==0.3.2',
+    ],
+    'keywords': [
+        'configuration',
+        'development',
+        'environment',
+        'productivity',
+    ],
     'license': 'GPL-3.0-or-later',
-    'long_description': ('# project_manager command line tool\n'
- '\n'
- 'simplifies your programming workflow, in order to:\n'
- '\n'
- '    * clone or fork projects from GitLab or GitHub\n'
- '    * push bug fixes and new features of projects to GitLab or GitHub\n'
- '    * request a MR (merge request) (or a PR (pull request) at GitHub)\n'
- '    * publish packages to [PyPI](https://pypi.org) or [PyPI Test](https://test.pypi.org)\n'
- '    * deploy Django apps to [PythonAnywhere](https://pythonanywhere.com)  \n'
- '    * run resource checks (i18n, images, sounds)\n'
- '    * run unit and integration tests (with coverage reports)\n'
- '    * use templates to create and maintain code, resource and configuration files\n'
- '    * bulk refresh/update of mulitple projects, e.g. your namespace portions projects (:pep:`420`)\n'
- '\n'
- 'for more detailed information see the\n'
- '[manual](https://aedev.readthedocs.io/en/latest/man/project_manager.html "project manager manual").\n'
- '\n'
- 'the source code is available at [Gitlab](https://gitlab.com/aedev-group/aedev_project_manager)\n'
- 'maintained by the user group [aedev-group](https://gitlab.com/aedev-group).\n'
- '\n'
- 'this project is implemented in pure Python code and based on some portions of the\n'
- '[__ae__ namespace(Application Environment)](https://ae.readthedocs.io "ae namespace portions on rtd").\n'),
+    'long_description': (pathlib.Path(__file__).parent / 'README.md').read_text(encoding='utf-8'),
     'long_description_content_type': 'text/markdown',
     'name': 'aedev_project_manager',
-    'package_data': {'': []},
-    'packages': ['aedev.project_manager'],
-    'project_urls': {       'Bug Tracker': 'https://gitlab.com/aedev-group/aedev_project_manager/-/issues',
+    'package_data': {
+        '': [],
+    },
+    'packages': [
+        'aedev.project_manager',
+    ],
+    'project_urls': {
+        'Bug Tracker': 'https://gitlab.com/aedev-group/aedev_project_manager/-/issues',
         'Documentation': 'https://aedev.readthedocs.io/en/latest/_autosummary/aedev.project_manager.html',
         'Repository': 'https://gitlab.com/aedev-group/aedev_project_manager',
-        'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html'},
+        'Source': 'https://aedev.readthedocs.io/en/latest/_modules/aedev/project_manager.html',
+    },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.11',
+    'version': '0.3.12',
     'zip_safe': True,
 }
 
