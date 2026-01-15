@@ -6,15 +6,13 @@ to run integration tests (~40 minutes), implemented in this test module:
 * put the credentials of your GitLab maintainer account (itg_mtn_token) into your .env file(s)
 * put the credentials of your GitLab contributor account (itg_ctb_token) into your .env file(s)
 """
-import contextlib
 import os
 import shutil
-import tempfile
 import time
 
 from collections import OrderedDict
 from inspect import getframeinfo
-from typing import cast, Any, Iterable, Optional, Union
+from typing import cast, Any, Iterable, Union
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -29,13 +27,10 @@ from ae.base import (
     project_main_file, read_file, stack_frames, write_file, now_str)
 from ae.paths import path_items
 from ae.core import main_app_instance, temp_context_cleanup
-from ae.console import ConsoleApp
 from ae.shell import debug_or_verbose
 from ae.pythonanywhere import PythonanywhereApi
-from ae.template import (
-    OUTSOURCED_FILE_NAME_PREFIX, OUTSOURCED_MARKER,
-    TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID, TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_PLACEHOLDER_ID_PREFIX,
-    TEMPLATE_PLACEHOLDER_ID_SUFFIX, TPL_FILE_NAME_PREFIX)
+from ae.managed_files import (
+    REFRESHABLE_TEMPLATE_MARKER, REFRESHABLE_TEMPLATE_PATH_PFX)
 from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
@@ -45,30 +40,36 @@ from aedev.commands import (
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
     SHELL_LOG_FILE_NAME_SUFFIX,
     git_add, git_any, git_checkout, git_commit, git_current_branch, git_remotes,
-    git_uncommitted, in_os_env, in_prj_dir_venv, sh_exit_if_git_err, sh_log, sh_logs)
+    git_uncommitted, in_os_env, sh_log, sh_logs)
 from aedev.project_vars import (
-    ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PDV_REQ_DEV_FILE_NAME, PLAYGROUND_PRJ, ROOT_PRJ,
-    increment_version, latest_remote_version, main_file_path, ProjectDevVars)
+    ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PLAYGROUND_PRJ, ROOT_PRJ,
+    latest_remote_version, main_file_path, ProjectDevVars)
 
 from aedev.project_manager.templates import (
-    CACHED_TPL_PROJECTS, TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX,
-    register_template, template_path_option, template_version_option)
+    CACHED_TPL_PROJECTS,
+    register_template, template_path_option)
+from aedev.project_manager.utils import get_mirror_urls, guess_next_action
 
+from tests.constants_and_fixtures import (
+    TEST_TPL_REGISTER,
+    app_pjm, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, init_parent, mocked_app_options,
+    module_repo_path, root_repo_path, temp_parent_path,
+    tst_namespaces_roots, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx, tst_pkg_version,
+    tst_root_prj_name, uncommitted_guess_prefix)
+from tests.test_codeberg import CODEBERG_TOKEN_PART
 
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import (
     ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     GithubCom, GitlabCom,
-    _act_callable, _action, _available_actions, _expected_args,
-    _get_app_option, _get_branch, _get_host_user_name, _get_host_user_token, _get_mirror_remote, _guess_next_action,
+    _act_callable, _action, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
-    _print_pdv, _refresh_templates, _renew_prj_dir, _renew_project, _show_status, _wait,
+    _print_pdv, _renew_prj_dir, _renew_project, _show_status, _wait,
     add_children_file, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
     commit_project, delete_children_file, init_main, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
-    prepare_children_commit, prepare_commit, refresh_children_outsourced, rename_children_file, renew_children,
+    prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children,
     run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
-
 
 INTEGRATION_TESTS = False
 
@@ -88,37 +89,7 @@ def setup_module():
 
     # configure names/types/states/user-roles of all integration test projects (only runnable with maintainer user role)
     if INTEGRATION_TESTS and itg_ctb_token and itg_mtn_token and not on_ci_host():
-        # 1st test prj has to be mtn-cloned ROOT_PRJ to allow update&push of new portion; auto-added to root/dev_req.txt
-        itg_projects[itg_root_prj_name] = {'type': ROOT_PRJ, 'state': 'cloned', 'role': 'mtn'}
-        itg_projects[f'{itg_ns_name}_{MODULE_PRJ}_forked_ctb_v'] = {'type': MODULE_PRJ, 'state': 'forked', 'role': 'ctb'
-                                                                    }
-        pkg_nam_prefix = f'{itg_ns_name}_{norm_name(PACKAGE_PRJ)}'
-        itg_projects[f'{pkg_nam_prefix}_cloned_mtn_v'] = {'type': PACKAGE_PRJ, 'state': 'cloned', 'role': 'mtn'}
-        itg_projects[f'{pkg_nam_prefix}_forked_mtn_v'] = {'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'mtn'}
-        itg_projects[f'{pkg_nam_prefix}_forked_ctb_v'] = {'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'ctb'}
-        for idx, prj_type in enumerate(_ for _ in ANY_PRJ_TYPE if _ != ROOT_PRJ):
-            state = ('cloned', 'forked')[idx % 2]
-            role = ('ctb', 'mtn')[int(idx / 2) % 2]
-            prj_name = norm_name(prj_type) + "_" + state + "_" + role
-            itg_projects[prj_name + "_v"] = {'type': prj_type, 'state': state, 'role': role}
-
-        # setup of the initial|newly-adding integration test projects
-        os.makedirs(itg_parent_path, exist_ok=True)
-        portion_added = False
-        for prj_name in itg_projects:
-            portion_added = _prepare_itg_test_project(prj_name) and prj_name.startswith(itg_ns_name) or portion_added
-
-        if portion_added:  # ensure portion added to ROOT_PRJ dev_requirements.txt will be pushed too
-            if _uncommitted := git_uncommitted(itg_root_prj_path):
-                if _uncommitted != {'dev_requirements.txt'}:
-                    print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
-                root_pdv = ProjectDevVars(main_app_options={'branch': "pjm_itg_tst_portion_added_to_root_" + now_str(),
-                                                            'delay': 3,  # needed by request_merge()/_get_app_option()
-                                                            'versionIncrementPart': 3},  # .. by push/_get_app_option()
-                                          project_path=itg_root_prj_path, repo_token=itg_mtn_token)
-                root_pdv = _renew_project(root_pdv, ROOT_PRJ)
-                _push_to_remote_and_pypi(root_pdv)
-                print(f" !__! successfully pushed the auto-updated {_uncommitted} file(s) of {itg_root_prj_name}")
+        _itg_init()
 
     # log unpatched calls of app.shutdown() and prevent unregister of the main app instance and the template cache
     shutdown_patcher.append(patch('ae.core.AppBase.shutdown', new=_log_shutdown_calls))
@@ -148,10 +119,12 @@ def teardown_module():
         patcher.stop()
     if logged_shutdown_calls:
         errors.append("detected unredirected calls of app.shutdown() in one or more unit tests")
+    assert not errors, f"test module teardown with {len(errors)} {errors=}"
+
+    temp_context_cleanup()      # cleanup temp dir default and git clone context for other/following test modules
+    temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
     print(f"::::: {os_path_basename(__file__)} teardown_module END - {main_app_instance()=} {TEST_TPL_REGISTER=}")
-
-    assert not errors, f"test module teardown with {len(errors)} {errors=}"
 
 
 # mocking :meth:`as.console.ConsoleApp.shutdown` to log calls when patched by func:`patched_shutdown_wrapper` fixture
@@ -180,9 +153,15 @@ esc_parent_path = _path if os_path_isdir(_path := os_path_join(os.getcwd(), ".."
 
 
 @pytest.fixture
-def app_pjm(restore_app_env):
-    """ provide project-manager-ConsoleApp instance that will be unregistered automatically """
-    yield init_main()
+def gitlab_remote():
+    """ provide a connected Gitlab remote repository api """
+    assert itg_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {itg_mtn_token=}"
+    remote_project = GitlabCom()
+    remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
+                                             'repo_domain': itg_domain,
+                                             'repo_token': itg_mtn_token}))
+
+    yield remote_project
 
 
 # integration tests domain, local path, test projects, names|credentials for maintainer/mtn and contributor/ctb roles
@@ -205,12 +184,57 @@ itg_mtn_token = itg_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if itg_mt
 # itg_mtn_email = itg_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL')
 # itg_ctb_root_url = f"https://oauth2:{itg_ctb_token}@{itg_domain}/{itg_ctb_name}"
 # itg_mtn_root_url = f"https://oauth2:{itg_mtn_token}@{itg_domain}/{itg_ns_name}{PDV_REPO_GROUP_SUFFIX}"
+if itg_ctb_token:
+    tst_namespaces_roots.append(itg_root_import_name)
+
 skip_if_no_integration_tests = pytest.mark.skipif('not bool(itg_ctb_token) or not bool(itg_mtn_token)',
                                                   reason="contributor integration tests credentials are not available")
 skip_if_not_maintainer = pytest.mark.skipif('not bool(itg_mtn_token)',
                                             reason=f"missing {itg_domain} maintainer personal-access-token")
 
-# helpers for the initial setup of (initial or new) integration test projects
+# helpers for the preparation of initial/new and already existing integration test projects ---------------------------
+
+
+def _itg_init():
+    # 1st test prj has to be mtn-cloned ROOT_PRJ to allow update&push of new portion; auto-added to root/dev_req.txt
+    itg_projects[itg_root_prj_name] = {
+        'type': ROOT_PRJ, 'state': 'cloned', 'role': 'mtn'}
+    itg_projects[f'{itg_ns_name}_{MODULE_PRJ}_forked_ctb_v'] = {
+        'type': MODULE_PRJ, 'state': 'forked', 'role': 'ctb'
+                                                                }
+    pkg_nam_prefix = f'{itg_ns_name}_{norm_name(PACKAGE_PRJ)}'
+    itg_projects[f'{pkg_nam_prefix}_cloned_mtn_v'] = {
+        'type': PACKAGE_PRJ, 'state': 'cloned', 'role': 'mtn'}
+    itg_projects[f'{pkg_nam_prefix}_forked_mtn_v'] = {
+        'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'mtn'}
+    itg_projects[f'{pkg_nam_prefix}_forked_ctb_v'] = {
+        'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'ctb'}
+    for idx, prj_type in enumerate(_ for _ in ANY_PRJ_TYPE if _ != ROOT_PRJ):
+        state = ('cloned', 'forked')[idx % 2]
+        role = ('ctb', 'mtn')[int(idx / 2) % 2]
+        prj_name = norm_name(prj_type) + "_" + state + "_" + role
+        itg_projects[prj_name + "_v"] = {
+            'type': prj_type, 'state': state, 'role': role}
+
+    init_main()     # init global cae in __main__ for _prepare_itg_test_project()(using action func/meth to prepare)
+
+    # setup of the initial|newly-adding integration test projects
+    os.makedirs(itg_parent_path, exist_ok=True)
+    portion_added = False
+    for prj_name in itg_projects:
+        portion_added = _prepare_itg_test_project(prj_name) and prj_name.startswith(itg_ns_name) or portion_added
+
+    if portion_added:  # ensure portion added to ROOT_PRJ dev_requirements.txt will be pushed too
+        if _uncommitted := git_uncommitted(itg_root_prj_path):
+            if _uncommitted != {'dev_requirements.txt'}:
+                print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
+            root_pdv = ProjectDevVars(main_app_options={'branch': "pjm_itg_tst_portion_added_to_root_" + now_str(),
+                                                        'delay': 3,  # needed by request_merge()/get_app_option()
+                                                        'versionIncrementPart': 3},  # .. by push/get_app_option()
+                                      project_path=itg_root_prj_path, repo_token=itg_mtn_token)
+            root_pdv = _renew_project(root_pdv, ROOT_PRJ)
+            _push_to_remote_and_pypi(root_pdv)
+            print(f" !__! successfully pushed the auto-updated {_uncommitted} file(s) of {itg_root_prj_name}")
 
 
 def _itg_pdv(project_name: str, branch: str = '', user_role: str = '') -> ProjectDevVars:
@@ -251,19 +275,23 @@ def _prepare_itg_test_project(project_name: str) -> bool:
     add_remote = ((_out := git_any("..", 'ls-remote', remote_url)) and _out and _out[0].startswith(EXEC_GIT_ERR_PREFIX))
 
     if add_remote:  # newly added integration test project - create locally and push to remote
-        if os_path_isdir(project_path):  # wipe any rests on local machine from cancelled new/added itg tst preparations
+        if os_path_isdir(project_path):  # wipe any rests on local machine from canceled new/added itg tst preparations
             shutil.rmtree(project_path)
-        adding_role = 'ctb' if ctb_project else 'mtn'
-        pdv = _itg_pdv(project_name, user_role=adding_role)
-        _write_itg_env(project_name, user_role=adding_role)
         desc = f"preparing new {prj_type} project repository {project_name} for pjm integration tests"
-        print(f" .!!. {desc} in {project_path=}, to be pushed onto {remote_url=} under the {adding_role=}")
+    else:
+        desc = f"renewing {prj_type} project repository {project_name} for pjm integration tests"
 
-        pdv.pdv_val('main_app_options')['branch'] = f"{norm_name(desc)}_on_{now_str(sep='_')}"
-        pdv = _renew_project(pdv, prj_type)
-        pdv.pdv_val('main_app_options').pop('branch')
-        _push_to_remote_and_pypi(pdv)
-        shutil.rmtree(project_path)
+    adding_role = 'ctb' if ctb_project else 'mtn'
+    pdv = _itg_pdv(project_name, user_role=adding_role)
+    _write_itg_env(project_name, user_role=adding_role)
+
+    print(f" .!!. {desc} in {project_path=}, to be pushed onto {remote_url=} under the {adding_role=} role")
+
+    pdv.pdv_val('main_app_options')['branch'] = f"{norm_name(desc)}_on_{now_str(sep='_')}"
+    pdv = _renew_project(pdv, prj_type)
+    pdv.pdv_val('main_app_options').pop('branch')
+    _push_to_remote_and_pypi(pdv)
+    shutil.rmtree(project_path)
 
     if prj_state == 'cloned' and os_path_isdir(project_path):
         shutil.rmtree(project_path)
@@ -343,190 +371,6 @@ def paths_of_test_projects(*local_paths: str, filter_state: str = '', filter_rol
     return *local_paths, *remote_paths
 
 
-# ---prepare unfinished/empty/changed namespace module/portion names&versions for unit tests (only on the local machine)
-
-tst_ns_name = 'nsn'
-tst_ns_por_pfx = 'tst_por_'                 # portion name prefix for changed_repo_path/empty_repo_path/module_repo_path
-tst_imp_pfx = tst_ns_name + '.' + tst_ns_por_pfx
-tst_pkg_pfx = tst_ns_name + '_' + tst_ns_por_pfx
-tst_pkg_version = increment_version(PDV_NULL_VERSION)
-tst_nxt_pgk_ver = increment_version(tst_pkg_version)
-
-tst_root_prj_name = tst_ns_name + '_' + tst_ns_name
-tst_namespaces_roots = [tst_ns_name + '.' + tst_ns_name]
-if itg_ctb_token:
-    tst_namespaces_roots.append(itg_root_import_name)
-TEST_TPL_REGISTER = {}      # map of the 3 template registers used by the tests, initialized in setup_module()
-
-
-@pytest.fixture
-def mocked_app_options():
-    """ mock ConsoleApp option/config-var-setter/getter and option value requests via _get_app_option/debug_or_verbose.
-
-    main ConsoleApp instance argument parsing gets prevented by monkey-patching, e.g., of main_app.get_option().
-    also direct access to pdv['main_app_options'] gets mocked by this fixture; useful to fix side effects
-    of mocked child-pdv when option values should only be specified for the parent.
-
-    to let ae.shell.debug_or_verbose() also behave like the value specified by the mocked option 'more_verbose',
-    it will also get patched accordingly.
-    """
-    def _app_option(_pdv: ProjectDevVars, opt_nam: str) -> Optional[Any]:
-        if opt_nam in mocked_options:
-            return mocked_options[opt_nam]
-        return _get_app_option(_pdv, opt_nam)
-
-    def _dbg_or_verbose():
-        return mocked_options.get('more_verbose', False)
-
-    main_app = cast(ConsoleApp, main_app_instance())
-    ori_get_arg = main_app.get_argument
-    ori_get_opt = main_app.get_option
-
-    mocked_options: dict[str, Any] = {}
-    mocked_options.update({template_path_option(import_name): ""
-                           for import_name in tst_namespaces_roots + TPL_IMPORT_NAMES})
-    mocked_options.update({template_version_option(import_name): ""
-                           for import_name in tst_namespaces_roots + TPL_IMPORT_NAMES})
-
-    main_app.get_argument = main_app.get_option = lambda opt: mocked_options.get(opt, None)
-
-    with (patch('aedev.project_manager.__main__._get_app_option', new=_app_option),
-          patch('ae.core.main_app_instance', return_value=main_app),
-          patch('aedev.project_manager.__main__.debug_or_verbose', new=_dbg_or_verbose),
-          patch('ae.shell.debug_or_verbose', new=_dbg_or_verbose),
-          ):
-        yield mocked_options
-
-    mocked_options.clear()
-    main_app.get_argument = ori_get_arg
-    main_app.get_option = ori_get_opt
-
-
-@contextlib.contextmanager
-def init_parent():
-    with tempfile.TemporaryDirectory() as temp_path:
-        path = os_path_join(temp_path, DEF_PROJECT_PARENT_FOLDER)
-        os.makedirs(path)
-        yield path
-
-
-@pytest.fixture
-def temp_parent_path():
-    with init_parent() as path:
-        yield path
-
-
-@contextlib.contextmanager
-def _init_repo(pkg_name: str):
-    with init_parent() as parent_path:
-        project_path = os_path_join(parent_path, pkg_name)
-        write_file(os_path_join(project_path, ".gitignore"), read_file(".gitignore"), make_dirs=True)
-        with in_prj_dir_venv(project_path):
-            # exit_on_err=False needed in all calls of sh_exit_if_exec_err() to prevent get_option call from _chk_if
-            sh_exit_if_git_err(963, "git init", exit_on_err=False)
-            sh_exit_if_git_err(963, "git config", extra_args=("user.email", "test@test.tst"), exit_on_err=False)
-            sh_exit_if_git_err(963, "git config", extra_args=("user.name", "TestUserName"), exit_on_err=False)
-            sh_exit_if_git_err(963, "git checkout", extra_args=("-b", DEF_MAIN_BRANCH))
-            sh_exit_if_git_err(963, "git commit", extra_args=("-v", "--allow-empty", "-m", "unit tst repo init"))
-        yield project_path
-
-
-@pytest.fixture
-def changed_repo_path():
-    """ provide a git repository with uncommitted changes, yielding the project's temporary working tree root path. """
-    with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'changed') as project_path:
-        with in_prj_dir_venv(project_path):
-            write_file(os_path_join(project_path, 'deleteD.x'), "--will be deleted")
-            write_file(os_path_join(project_path, 'ChangeD.y'), "# will be changed")
-            sh_exit_if_git_err(969, "git add", extra_args=["-A"], exit_on_err=False)
-            sh_exit_if_git_err(969, "git commit", extra_args=["-m", "git commit message"], exit_on_err=False)
-
-            write_file(os_path_join(project_path, 'addEd.ooo'), "# added/staged to repo")
-            os.remove(os_path_join(project_path, 'deleteD.x'))
-            write_file(os_path_join(project_path, 'ChangeD.y'), "# got changed")
-
-        yield project_path
-
-
-@pytest.fixture
-def empty_repo_path():
-    """ provide an empty git repository, yielding the path of the project's temporary working tree root. """
-    with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'empty') as project_path:
-        yield project_path
-
-
-@pytest.fixture
-def gitlab_remote():
-    """ provide a connected Gitlab remote repository api """
-    assert itg_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {itg_mtn_token=}"
-    remote_project = GitlabCom()
-    remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
-                                             'repo_domain': itg_domain,
-                                             'repo_token': itg_mtn_token}))
-
-    yield remote_project
-
-
-def _ensure_tst_ns_portion_version_file(project_path: str) -> str:
-    project_name = os_path_basename(project_path)
-    if project_name.startswith(tst_ns_name + "_"):
-        portion_suffix = project_name.rsplit('_', maxsplit=1)[-1]
-        version_file_sub_path = os_path_join(tst_ns_name, tst_ns_por_pfx + portion_suffix + PY_EXT)
-        version_file_path = os_path_join(project_path, version_file_sub_path)
-        if not os_path_isfile(version_file_path):
-            write_file(version_file_path,
-                       f"\"\"\" {tst_ns_name} namespace {portion_suffix} tst portion \"\"\"{os.linesep}{os.linesep}"
-                       f"__version__ = '{tst_pkg_version}'{os.linesep}",
-                       make_dirs=True)
-        return version_file_sub_path
-    return ""
-
-
-@pytest.fixture
-def module_repo_path():
-    """ minimal/empty test namespace module project. """
-    with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'module') as project_path:
-        _ensure_tst_ns_portion_version_file(project_path)
-        yield project_path
-
-
-@pytest.fixture
-def root_repo_path():
-    """ minimal/empty test namespace root project. """
-    with _init_repo(tst_root_prj_name) as project_path:
-        with in_prj_dir_venv(project_path):
-            write_file(os_path_join(tst_ns_name, tst_ns_name, PY_INIT),
-                       f"\"\"\" {tst_ns_name} namespace root docstr \"\"\"{os.linesep}{os.linesep}"
-                       f"__version__ = '333.69.96'{os.linesep}", 
-                       make_dirs=True)
-        yield project_path
-
-
-# helpers to find unwanted side effects on the environment
-# def is_env_dirty() -> bool:
-#     found = False
-#     for var_name, var_val in os.environ.items():
-#         if var_name.startswith(ENV_VAR_NAME_PREFIX):
-#             print(f"¿¿¿¿¿¿{var_name} == {var_val!r}")
-#             found = True
-#         elif var_name.startswith('AE_OPTIONS_'):
-#             print(f"¿¿¿¿¿¿{var_name} == {var_val!r}")
-#             found = True
-#
-#     return found
-#
-# @pytest.fixture(autouse=True)
-# def auto_use_fixture(request):
-#     # if is_env_dirty():
-#     #     print(f"=!=!=!BEG env polluted by test method {request.node.name}")
-#     yield
-#     if is_env_dirty():
-#         print(f"=!=!=!END env polluted by test method {request.node.name}")
-
-
-uncommitted_guess_prefix = f"¡detected main_branch='{DEF_MAIN_BRANCH}' with added/changed/uncommitted files"
-
-
 def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path, module_repo_path):
     assert REGISTERED_ACTIONS
     assert REGISTERED_HOSTS_CLASS_NAMES
@@ -540,7 +384,7 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
         pdv = ProjectDevVars(project_path=prj_path)
         assert latest_remote_version(pdv) == "0.3.1", f"failed for {prj_path=}"
 
-        prj_state = _guess_next_action(pdv)
+        prj_state = guess_next_action(pdv)
         if prj_path == parent_without_git_folder:
             assert prj_state.startswith("¡no git repository found"), f"failed for {prj_path=}"
         elif prj_path in (changed_repo_path, empty_repo_path):
@@ -554,7 +398,7 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
         assert Version(latest_remote_version(pdv)) > Version(pdv['NULL_VERSION']), f"failed for {prj_path=}"
         assert Version(latest_remote_version(pdv, increment_part=0)) == Version(pdv['project_version']), f"{prj_path=}"
 
-        assert _guess_next_action(pdv) == 'renew_project', f"failed for {prj_path=}"
+        assert guess_next_action(pdv) == 'renew_project', f"failed for {prj_path=}"
 
     print("``````test setup checks finished")
 
@@ -564,8 +408,8 @@ class TestActionsGitLab:
     def test_show_remote1(self, app_pjm, capsys, gitlab_remote, temp_parent_path):
         prj_grp = 'ae-group'
         prj_nam = 'ae_base'
-        with (patch('aedev.project_manager.__main__._get_host_group', return_value=prj_grp),
-              patch('aedev.project_manager.__main__._get_host_domain', return_value=""), ):
+        with (patch('aedev.project_manager.utils.get_host_group', return_value=prj_grp),
+              patch('aedev.project_manager.utils.get_host_domain', return_value=""), ):
 
             gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
 
@@ -595,8 +439,8 @@ class TestActionsGitLab:
     def test_show_remote(self, capsys, app_pjm, gitlab_remote, temp_parent_path):
         prj_grp = 'ae-group'
         prj_nam = 'ae_base'
-        with (patch('aedev.project_manager.__main__._get_host_group', return_value=prj_grp),
-              patch('aedev.project_manager.__main__._get_host_domain', return_value=""), ):
+        with (patch('aedev.project_manager.utils.get_host_group', return_value=prj_grp),
+              patch('aedev.project_manager.utils.get_host_domain', return_value=""), ):
 
             gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
 
@@ -656,7 +500,7 @@ class TestActionsGitLab:
         verbose = debug_or_verbose()
         err_prefix = "detected main_branch='develop' with added/changed/uncommitted files: "
         for project_path in paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path):
-            _ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
+            ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
 
             gitlab_remote.show_status(ProjectDevVars(project_path=project_path))
 
@@ -680,7 +524,7 @@ class TestActionsGitLab:
         verbose = debug_or_verbose()
         err_prefix = "unstaged files found! run git add, or delete them: "
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
-            _ensure_tst_ns_portion_version_file(project_path)
+            ensure_tst_ns_portion_version_file(project_path)
             assert git_checkout(project_path, new_branch="feature_branch_to_prevent_check_action_errors") == ""
             pdv = ProjectDevVars(project_path=project_path)
 
@@ -705,7 +549,7 @@ class TestActionsGitLab:
                                    module_repo_path):
         verbose = debug_or_verbose()
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
-            _ensure_tst_ns_portion_version_file(project_path)
+            ensure_tst_ns_portion_version_file(project_path)
             git_checkout(project_path, new_branch="feature_branch_to_prevent_check_action_errors")
             git_add(project_path)
             pdv = ProjectDevVars(project_path=project_path)
@@ -731,23 +575,26 @@ class TestActionsLocal:
         file_src_path = os_path_join(module_repo_path, file_name)
         write_file(file_src_path, file_content)
         file_dst_path = os_path_join(module_repo_path, tst_ns_name, file_name)
-        tpl_name = OUTSOURCED_FILE_NAME_PREFIX + "add_tpl_file.xyz"
+        tpl_name = REFRESHABLE_TEMPLATE_PATH_PFX + "add_tpl_file.xyz"
         tpl_content = "tpl content"
         tpl_src_path = os_path_join(module_repo_path, tpl_name)
         write_file(tpl_src_path, tpl_content)
-        tpl_dst_path = os_path_join(module_repo_path, tst_ns_name, tpl_name[len(OUTSOURCED_FILE_NAME_PREFIX):])
+        tpl_dst_path = os_path_join(module_repo_path, tst_ns_name, tpl_name[len(REFRESHABLE_TEMPLATE_PATH_PFX):])
         mod_pdv = ProjectDevVars(project_path=module_repo_path)
 
         assert not add_children_file(mod_pdv, "not_existing_file.xxx", tst_ns_name, mod_pdv)
 
         new_pdv = ProjectDevVars(project_path=empty_repo_path)
         new_dst_path = os_path_join(empty_repo_path, tst_ns_name, file_name)
+
         assert not add_children_file(new_pdv, file_src_path, tst_ns_name, new_pdv)  # fail because no tst_ns_name dir
 
         os.makedirs(os_path_join(empty_repo_path, tst_ns_name))
         assert not os_path_isfile(new_dst_path)
         mod_pdv['project_type'] = ROOT_PRJ
+
         assert add_children_file(mod_pdv, file_src_path, tst_ns_name, new_pdv)
+
         assert os_path_isfile(file_dst_path)
         assert file_content == read_file(file_dst_path)
         assert os_path_isfile(new_dst_path)
@@ -766,7 +613,7 @@ class TestActionsLocal:
 
         assert os_path_isfile(tpl_dst_path)
         assert tpl_content in read_file(tpl_dst_path)
-        assert OUTSOURCED_MARKER in read_file(tpl_dst_path)
+        assert REFRESHABLE_TEMPLATE_MARKER in read_file(tpl_dst_path)
 
     def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
                                       module_repo_path, patched_shutdown_wrapper):
@@ -1083,7 +930,7 @@ class TestActionsLocal:
         for chi_path in test_projects:
             uncommitted[chi_path] = git_uncommitted(chi_path)
 
-            chi_version_files[chi_path] = _ensure_tst_ns_portion_version_file(chi_path)   # needed for changed/empty
+            chi_version_files[chi_path] = ensure_tst_ns_portion_version_file(chi_path)   # needed for changed/empty
             git_checkout(chi_path, new_branch="new_branch_for_test_prepare_children_commit")
             git_add(chi_path)
 
@@ -1112,7 +959,7 @@ class TestActionsLocal:
         mocked_app_options['more_verbose'] = True
         title = "commit msg title with {project_version} placeholder"
         for prj_path in (changed_repo_path, empty_repo_path, module_repo_path):
-            _ensure_tst_ns_portion_version_file(prj_path)   # needed for changed/empty
+            ensure_tst_ns_portion_version_file(prj_path)   # needed for changed/empty
             git_checkout(prj_path, new_branch="new_branch_for_test_prepare_commit")
             git_add(prj_path)
             assert not os_path_isfile(os_path_join(prj_path, COMMIT_MSG_FILE_NAME))
@@ -1132,7 +979,7 @@ class TestActionsLocal:
         tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
         assert not os_path_isdir(tst_dir)
 
-        refresh_children_outsourced(par_pdv, chi_pdv)
+        refresh_children_managed(par_pdv, chi_pdv)
 
         assert os_path_isdir(tst_dir)
 
@@ -1173,12 +1020,11 @@ class TestActionsLocal:
         with patch('aedev.commands.git_fetch', return_value=['mocked git fetch error']):
             renew_children(par_pdv, chi_pdv)
 
-    def test_renew_project(self, app_pjm, mocked_app_options, module_repo_path):
-        mocked_app_options['versionIncrementPart'] = 3
+    def test_renew_project_stays_on_1st_version(self, app_pjm, module_repo_path):
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
         assert code_file_version(version_file_path) == tst_pkg_version
 
-        renew_project(ProjectDevVars(project_path=module_repo_path))
+        renew_project(ProjectDevVars(main_app_options={'versionIncrementPart': 3}, project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == tst_pkg_version   # not incrementing because no remote repo
 
@@ -1248,8 +1094,9 @@ class TestActionsLocal:
         """
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
-            # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/{namespace_name}-group-mirror/{project_name}.git
-            update_mirror(pdv, _get_mirror_remote(pdv))
+            for mirror_url in get_mirror_urls(pdv):
+                # https://${USERNAME}:${TOKEN}@${DOMAIN}/{namespace_name}-group-mirror/{project_name}.git
+                update_mirror(pdv, mirror_url)
 
         output = capsys.readouterr().out
         assert 'aedev-group-mirror' in output
@@ -1259,10 +1106,26 @@ class TestActionsLocal:
         assert " ==== " in output
 
     @skip_if_not_maintainer
-    def test_update_mirror_pjm_onto_github_user(self, capsys, app_pjm):
+    def test_update_mirror_pjm_redirect_onto_codeberg_user(self, capsys, app_pjm):
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
-            remote = _get_mirror_remote(pdv).replace('aedev-group-mirror', itg_mtn_name)
+            remote = get_mirror_urls(pdv)[0].replace('aedev-group-mirror', itg_mtn_name)
+            # https://${CODEBERG_USERNAME}:${CODEBERG_TOKEN}@codeberg.org/${PDV_AUTHOR}/{project_name}.git
+            assert CODEBERG_TOKEN_PART in remote    # update CODEBERG_TOKEN_PART in test_codeberg.py after token renewal
+            update_mirror(pdv, remote)
+
+        output = capsys.readouterr().out
+        assert itg_mtn_name in output
+        assert 'codeberg.org' in output
+        assert pdv['project_name'] in output
+        assert CODEBERG_TOKEN_PART not in output
+        assert " ==== " in output
+
+    @skip_if_not_maintainer
+    def test_update_mirror_pjm_redirect_onto_github_user(self, capsys, app_pjm):
+        pdv = ProjectDevVars()
+        with in_os_env():   # to load GITHUB_TOKEN credential from .env files
+            remote = get_mirror_urls(pdv)[1].replace('aedev-group-mirror', itg_mtn_name)
             # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${PDV_AUTHOR}/{project_name}.git
             update_mirror(pdv, remote)
 
@@ -1404,328 +1267,6 @@ class TestHelpersLocal:
         with pytest.raises(KeyError):
             _init_act_args_check(ProjectDevVars(), {}, "", [], {})
 
-    def test_expected_args(self):
-        spe = {'arg_names': (('varA_arg1', 'varA_arg2'), ('varB_arg1', 'varB_arg2', 'varB_arg3'))}
-        assert _expected_args(spe) == "varA_arg1 varA_arg2 -or- varB_arg1 varB_arg2 varB_arg3"
-
-        spe = {'arg_names': (('a', 'b'), ('c', ), ('d', ))}
-        assert _expected_args(spe) == "a b -or- c -or- d"
-
-        spe = {'arg_names': (('a', 'b'), ('c', ), ('d', )), 'flags': {'FLAG': False}}
-        assert _expected_args(spe).startswith("a b -or- c -or- d")
-        assert "FLAG=False" in _expected_args(spe)
-
-        spe = {'flags': {'FLAG': False}}
-        assert "FLAG=False" in _expected_args(spe)
-
-    def test_get_branch(self, app_pjm, mocked_app_options, module_repo_path):
-        branch = "tst_branch_name"
-        mocked_app_options['branch'] = branch
-        pdv = ProjectDevVars(project_path=os_path_dirname(module_repo_path))
-
-        assert _get_branch(pdv) == branch
-
-        mocked_app_options['branch'] = ""
-        with patch('aedev.project_manager.__main__.git_current_branch', return_value=branch):
-            assert _get_branch(pdv) == branch
-
-    def test_get_host_user_name(self, app_pjm, mocked_app_options, module_repo_path, monkeypatch):
-        # monkeypatch.delenv('PDV_AUTHOR', raising=False)
-        # monkeypatch.delenv('AE_OPTIONS_REPO_USER', raising=False)
-        # monkeypatch.delenv('AE_OPTIONS_REPO_USER_AT_GITLAB_COM', raising=False)
-        project_path = module_repo_path
-        parent_path = os_path_dirname(project_path)
-        tst_domain = 'tst_do.main.com'
-        t_domain2 = 'test.domain2.tst'
-
-        with in_wd(project_path):   # prevent reading from .env in project_manager root or src parent
-            usr_nam = tst_ns_name + PDV_REPO_GROUP_SUFFIX   # default user name for namespace module / module_repo_path
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "NotGitLabToIgnoreLocEnvs") == usr_nam
-
-            # tests ordered by priority; first test with the lowest priority: get .env variable w/o domain in parent dir
-
-            usr_nam = "usr_nam_via_group_name_command_line_option"
-            mocked_app_options['repo_group'] = usr_nam
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_user"
-            usr_nam = 'usr_nam_via_PDV_var_in_parent_.env'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_user"
-            usr_nam = 'usr_nam_via_PDV_var_in_.env'
-            write_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_user"
-            usr_nam = 'usr_nam_via_PDV_var_in_os.environ'
-            monkeypatch.setenv(var_nam, usr_nam)
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), t_domain2) == usr_nam
-
-            var_nam = "AE_OPTIONS_REPO_USER"
-            usr_nam = 'usr_nam_via_parent_.env_and_without_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-
-            var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(tst_domain).upper()}"
-            usr_nam = 'usr_nam_via_parent_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-
-            var_nam = "AE_OPTIONS_REPO_USER"
-            usr_nam = 'usr_nam_via_.env_and_without_domain'
-            write_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-
-            var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(tst_domain).upper()}"
-            usr_nam = 'usr_nam_via_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-
-            var_nam = "AE_OPTIONS_REPO_USER"
-            usr_nam = 'usr_nam_via_environ_and_without_domain'
-            monkeypatch.setenv(var_nam, usr_nam)
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-
-            var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(tst_domain).upper()}"
-            usr_nam = 'usr_nam_via_environ_and_with_domain'
-            monkeypatch.setenv(var_nam, usr_nam)
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-
-            var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(t_domain2).upper()}"
-            usr_nam = 'usr_nam_via_.env_and_with_domain_set_via_command_line_option'
-            mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), "") == usr_nam
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), t_domain2) == usr_nam
-
-            usr_nam = "usr_nam_via_command_line_option"
-            mocked_app_options['repo_user'] = usr_nam
-
-            assert _get_host_user_name(ProjectDevVars(project_path=project_path), tst_domain) == usr_nam
-
-    def test_get_host_user_token(self, app_pjm, empty_repo_path, mocked_app_options, monkeypatch):
-        # these tests would fail ONLY if run via "pjm check" because the tokens get loaded from .env by pjm
-        for env_var in os.environ:
-            if "REPO_TOKEN" in env_var.upper():  # AE_OPTIONS... or PDV_repo_token
-                print(f"   ## temp. unload of variable {env_var} for unit test")
-                monkeypatch.delenv(env_var)
-
-        parent_path = os_path_dirname(empty_repo_path)
-        tst_domain = 't.s.t_do.main.com'
-        t_domain2 = 't.s.t.domain2.t.st'
-        user_name = 'TstUserName'
-
-        with in_wd(empty_repo_path):  # prevent reading from .env in ProjectDevVars([project_path="."]) instantiation
-            usr_tok = ""  # user token default is an empty string
-
-            assert _get_host_user_token(ProjectDevVars(), "NotGitLabToIgnoreLocEnvs") == usr_tok
-
-            # tests ordered by priority; first test with the lowest priority: get .env variable w/o domain in parent dir
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_token"
-            usr_tok = 'usr_tok_via_PDV_var_in_parent_.env'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_token"
-            usr_tok = 'usr_tok_via_PDV_var_in_.env'
-            write_file(".env", f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-
-            var_nam = f"{ENV_VAR_NAME_PREFIX}repo_token"
-            usr_tok = 'usr_tok_via_PDV_var_in_os.environ'
-            monkeypatch.setenv(var_nam, usr_tok)
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-            assert _get_host_user_token(ProjectDevVars(), t_domain2) == usr_tok
-
-            var_nam = "AE_OPTIONS_REPO_TOKEN"
-            usr_tok = 'usr_tok_via_parent_.env_and_without_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}"
-            usr_tok = 'usr_tok_via_parent_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}_{user_name.upper()}"
-            usr_tok = 'usr_tok_via_parent_.env_and_with_domain_and_user'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain, host_user=user_name) == usr_tok
-
-            var_nam = "AE_OPTIONS_REPO_TOKEN"
-            usr_tok = 'usr_tok_via_.env_and_without_domain'
-            write_file(".env", f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}"
-            usr_tok = 'usr_tok_via_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}_{user_name.upper()}"
-            usr_tok = 'usr_tok_via_.env_and_with_domain_and_user'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain, host_user=user_name) == usr_tok
-
-            var_nam = "AE_OPTIONS_REPO_TOKEN"
-            usr_tok = 'usr_tok_via_environ_and_without_domain'
-            monkeypatch.setenv(var_nam, usr_tok)
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}"
-            usr_tok = 'usr_tok_via_environ_and_with_domain'
-            monkeypatch.setenv(var_nam, usr_tok)
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}_{user_name.upper()}"
-            usr_tok = 'usr_tok_via_environ_and_with_domain_and_user'
-            monkeypatch.setenv(var_nam, usr_tok)
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain, host_user=user_name) == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(t_domain2).upper()}"
-            usr_tok = 'usr_tok_via_.env_and_with_domain_set_via_command_line_option'
-            mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), "") == usr_tok
-            assert _get_host_user_token(ProjectDevVars(), t_domain2) == usr_tok
-
-            var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(t_domain2).upper()}_{user_name.upper()}"
-            usr_tok = 'usr_tok_via_.env_and_with_domain_set_via_command_line_option_and_with_user'
-            mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
-
-            assert _get_host_user_token(ProjectDevVars(), "", host_user=user_name) == usr_tok
-            assert _get_host_user_token(ProjectDevVars(), t_domain2, host_user=user_name) == usr_tok
-
-            usr_tok = "usr_tok_via_command_line_option"
-            mocked_app_options['repo_token'] = usr_tok
-
-            assert _get_host_user_token(ProjectDevVars(), tst_domain) == usr_tok
-
-        token = "t_s_t__usr_token"
-        pdv = ProjectDevVars(project_path=empty_repo_path)
-
-        mocked_app_options['repo_token'] = token
-        assert _get_host_user_token(pdv, "") == token
-        assert _get_host_user_token(pdv, "", host_user="not_configured_user_name") == token
-
-        with patch('aedev.project_manager.__main__._get_host_group', return_value=token):
-            assert _get_host_user_token(pdv, "domain.xxx") == token
-            assert _get_host_user_token(pdv, "not_configured_domain", host_user="not_configured_user_name") == token
-
-    def test_guess_next_action_on_local_machine_only(self, empty_repo_path):
-        git_checkout(empty_repo_path, "--detach")
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret.startswith("¡detached HEAD")
-
-        git_checkout(empty_repo_path, DEF_MAIN_BRANCH)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret.startswith("¡empty or invalid project version")
-
-        _ensure_tst_ns_portion_version_file(empty_repo_path)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret.startswith(uncommitted_guess_prefix)
-
-        new_branch = 'new_feature_branch_name_testing_guest_next_action' + now_str(sep="_")
-        git_checkout(empty_repo_path, new_branch=new_branch)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret.startswith(f"¡unstaged files found")
-
-        git_add(empty_repo_path)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret == 'prepare_commit'
-
-        write_file(os_path_join(empty_repo_path, COMMIT_MSG_FILE_NAME), "msg-title without project_version placeholder")
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret == 'prepare_commit'
-
-        write_file(os_path_join(empty_repo_path, COMMIT_MSG_FILE_NAME), "msg-title V {project_version}")
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret == 'commit_project'
-
-        git_commit(empty_repo_path, tst_pkg_version)
-        git_checkout(empty_repo_path, DEF_MAIN_BRANCH)
-        _ensure_tst_ns_portion_version_file(empty_repo_path)
-        git_add(empty_repo_path)
-        git_commit(empty_repo_path, tst_pkg_version)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret == 'renew_project'
-
-        # NOT TESTABLE because ret.startswith("¡detached HEAD") if .git gets renamed
-        # os.rename(os_path_join(empty_repo_path, ".git"), os_path_join(empty_repo_path, '_renamed_git_folder'))
-        #
-        # ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-        #
-        # assert ret.startswith("¡no git workflow initiated")
-        # assert "start a new project" in ret
-        #
-        # os.rename(os_path_join(empty_repo_path, '_renamed_git_folder'), os_path_join(empty_repo_path, ".git"))
-
-        git_checkout(empty_repo_path, new_branch)
-
-        ret = _guess_next_action(ProjectDevVars(project_path=empty_repo_path))
-
-        assert ret == 'push_project'
-
-    def test_guess_next_action_fix_empty_on_local_machine_only(self, empty_repo_path):
-        assert _guess_next_action(ProjectDevVars(project_path=empty_repo_path)).startswith("¡")
-
-        _ensure_tst_ns_portion_version_file(empty_repo_path)
-        git_checkout(empty_repo_path, new_branch='new_feature_branch_name_testing_guest_next_action' + now_str(sep="_"))
-        write_file(os_path_join(empty_repo_path, COMMIT_MSG_FILE_NAME), "msg-title V {project_version}")
-        git_add(empty_repo_path)
-
-        assert _guess_next_action(ProjectDevVars(project_path=empty_repo_path)) == 'commit_project'
-
     def test_init_act_exec_args_check_deploy(self, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['action'] = 'check_deploy'
         mocked_app_options['arguments'] = ['WORKTREE', 'ALL', 'MASKS=["file_mask1", "file_mask2"]']
@@ -1789,18 +1330,20 @@ class TestHelpersLocal:
             par_pdv['main_app_options'] = {'filterBranch': filtered_branch}
             assert _init_children_pdv_args(par_pdv, ['filterBranch']) == [ch2_pdv]
 
-    def test_init_children_pdv_args_exit(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
+    def test_init_children_pdv_args_exit(self, app_pjm, patched_shutdown_wrapper):
         ini_pdv = ProjectDevVars(**{'children_project_vars': {}, 'namespace_name': "nn"})
 
-        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [])) == 1    # missing/empty args
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [])) == 0    # noExit: missing/empty args
 
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["undefined_project_nam"])) == 0  # noErr
 
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [ARG_ALL])) == 0
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 1  # missing branch
 
-        mocked_app_options['filterBranch'] = "branch_name_to_filter"
+        ini_pdv['main_app_options'] = {'filterBranch': "branch_name_to_filter"}
 
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [ARG_ALL])) == 1
+        assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 0
 
     def test_init_children_pdv_args_expression(self, temp_parent_path):
         par_pdv = ProjectDevVars(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
@@ -1916,155 +1459,6 @@ class TestHelpersLocal:
     def test_print_pdv(self, app_pjm):
         _print_pdv(ProjectDevVars(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
         # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
-
-    def test_refresh_templates_empty_folder(self, tmp_path):
-        assert not _refresh_templates(ProjectDevVars(project_path=str(tmp_path)))
-
-    def test_refresh_templates_new_module_prj(self, module_repo_path):
-        assert _refresh_templates(ProjectDevVars(project_path=module_repo_path))
-
-    def test_refresh_templates_no_prj(self, empty_repo_path, changed_repo_path):
-        assert not _refresh_templates(ProjectDevVars(project_path=empty_repo_path))
-        assert not _refresh_templates(ProjectDevVars(project_path=changed_repo_path))
-
-    def test_refresh_templates_test_registered(self, tmp_path):
-        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
-        namespace = "nsn"
-        project_name = f"{namespace}_pkg_name"
-        project_path = norm_path(os_path_join(parent_dir, project_name))
-        prj_tpls = [
-            {'import_name': namespace + '.' + namespace,
-             'tpl_path': os_path_join(parent_dir, namespace + '_' + namespace, namespace, namespace, TEMPLATES_FOLDER),
-             'version': '1.1.1',
-             'register_message': "manually setup for unit testing"},
-            {'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
-             'tpl_path': os_path_join(parent_dir, 'aedev_package_tpls', 'aedev', 'package_tpls', TEMPLATES_FOLDER),
-             'version': '3.3.3',
-             'register_message': "manually setup for unit testing"},
-            {'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
-             'tpl_path': os_path_join(parent_dir, 'aedev_project_tpls', 'aedev', 'project_tpls', TEMPLATES_FOLDER),
-             'version': '9.9.9',
-             'register_message': "manually setup for unit testing"},
-        ]
-        pdv = ProjectDevVars(**{'namespace_name': namespace, 'project_path': project_path, 'project_type': PACKAGE_PRJ,
-                                'project_templates': []})
-        _renew_prj_dir(pdv)
-
-        assert not _refresh_templates(pdv)
-
-        deep_sub_dir = os_path_join('deeper', 'even_deeper')
-        file_for_all = 'file_for_all.ext'
-        tpl_file_for_all = OUTSOURCED_FILE_NAME_PREFIX + TPL_FILE_NAME_PREFIX + file_for_all
-        for tpl_reg in prj_tpls:
-            tpl_path = os_path_join(tpl_reg['tpl_path'], deep_sub_dir)
-            write_file(os_path_join(tpl_path, tpl_file_for_all), tpl_reg['tpl_path'], make_dirs=True)
-        tpl_file = os_path_join(project_path, deep_sub_dir, file_for_all)
-
-        # 2nd test with template in all templates (root prj has the highest priority)
-        pdv = ProjectDevVars(**{'namespace_name': namespace, 'project_path': project_path,
-                                'project_type': PACKAGE_PRJ,
-                                'TEMPLATES_FOLDER': TEMPLATES_FOLDER, 'project_templates': prj_tpls})
-
-        assert _refresh_templates(pdv) == {norm_path(tpl_file)}
-
-        assert os_path_isfile(tpl_file)
-        content = read_file(tpl_file)
-        assert prj_tpls[0]['tpl_path'] in content
-        assert OUTSOURCED_MARKER in content
-
-    def test_refresh_templates_file_include_content(self, tmp_path):
-        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
-        tpl_pkg_path = norm_path(os_path_join(parent_dir, 'tst_tpls', TEMPLATES_FOLDER))
-        tpl_file_name = "including_content.txt"
-        tpl_file_path = os_path_join(tpl_pkg_path, OUTSOURCED_FILE_NAME_PREFIX + TPL_FILE_NAME_PREFIX + tpl_file_name)
-        ver = '9.6.9999'
-        project_templates = [{'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
-                              'tpl_path': tpl_pkg_path,
-                              'version': ver,
-                              'register_message': "manually setup for unit testing"}]
-        included_file_name = norm_path(os_path_join(parent_dir, "inc.tst.file"))
-        included_file_content = "replacement string"
-        project_name = f"prj_name"
-        project_path = os_path_join(parent_dir, project_name)
-        patched_file_name = os_path_join(project_path, tpl_file_name)
-        os.makedirs(project_path)
-        os.makedirs(tpl_pkg_path)
-
-        tpl = f"{TEMPLATE_PLACEHOLDER_ID_PREFIX}{TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID}"
-        tpl += f"{TEMPLATE_PLACEHOLDER_ID_SUFFIX}{included_file_name}{TEMPLATE_PLACEHOLDER_ARGS_SUFFIX}"
-        write_file(tpl_file_path, tpl)
-        write_file(included_file_name, included_file_content)
-
-        with in_wd(project_path):
-            patched = _refresh_templates(ProjectDevVars(project_type=MODULE_PRJ, project_templates=project_templates))
-
-        assert patched == {norm_path(patched_file_name)}
-
-        content = read_file(patched_file_name)
-        assert included_file_content in content
-        assert ver in content
-        assert "TEMPLATE_PLACEHOLDER_ID_PREFIX" not in content
-        assert TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID not in content
-        assert "TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID" not in content
-        assert TEMPLATE_PLACEHOLDER_ID_SUFFIX not in content
-        assert "TEMPLATE_PLACEHOLDER_ID_SUFFIX" not in content
-        assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
-        assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
-
-    def test_refresh_templates_file_include_default_and_with_pdv_vars(self, app_pjm, mocked_app_options, monkeypatch,
-                                                                      tmp_path):
-        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
-        namespace_name = "tns"
-        portion_name = 'destination_portion_name'
-        project_path = os_path_join(parent_dir, f'{namespace_name}_{portion_name}')
-        package_path = os_path_join(project_path, namespace_name)
-        patched_file = "including_content.txt"
-        patched_path = os_path_join(project_path, patched_file)
-
-        tpl_imp_name = namespace_name + '.' + namespace_name
-        tpl_pkg_path = norm_path(os_path_join(
-            parent_dir, norm_name(tpl_imp_name), namespace_name, namespace_name, TEMPLATES_FOLDER))
-        tpl_file_path = os_path_join(tpl_pkg_path, OUTSOURCED_FILE_NAME_PREFIX + TPL_FILE_NAME_PREFIX + patched_file)
-
-        default = "include file default string"
-        version = '6.699.987'
-
-        mocked_app_options[template_version_option(tpl_imp_name)] = version
-        mocked_app_options['namespace_name'] = namespace_name    # or ""
-        os.makedirs(package_path)
-        write_file(os_path_join(project_path, PDV_REQ_DEV_FILE_NAME), norm_name(tpl_imp_name))
-        write_file(os_path_join(package_path, portion_name + PY_EXT), "__version__ = '9.6.3'")
-
-        os.makedirs(os_path_dirname(tpl_file_path))
-        tpl = "{TEMPLATE_PLACEHOLDER_ID_PREFIX}{TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID}"
-        tpl += "{TEMPLATE_PLACEHOLDER_ID_SUFFIX}"
-        tpl += f"not_existing_included_file_name.ext,{default}"
-        tpl += "{TEMPLATE_PLACEHOLDER_ARGS_SUFFIX}"
-        write_file(tpl_file_path, tpl)
-
-        monkeypatch.setitem(CACHED_TPL_PROJECTS, tpl_imp_name + PROJECT_VERSION_SEP + version,
-                            {'import_name': tpl_imp_name, 'tpl_path': tpl_pkg_path, 'version': version,
-                             'register_message': "manually setup for unit testing"})
-
-        pdv = ProjectDevVars(project_path=project_path)
-
-        patched_file_paths = _refresh_templates(pdv)
-
-        assert 'project_templates' in pdv
-        assert os_path_isfile(patched_path)
-        assert norm_path(patched_path) in patched_file_paths
-
-        content = read_file(patched_path)
-        assert default in content
-        assert tpl_imp_name in content
-        assert version in content
-        assert "TEMPLATE_PLACEHOLDER_ID_PREFIX" not in content
-        assert TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID not in content
-        assert "TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID" not in content
-        assert TEMPLATE_PLACEHOLDER_ID_SUFFIX not in content
-        assert "TEMPLATE_PLACEHOLDER_ID_SUFFIX" not in content
-        assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
-        assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
 
     def test_renew_prj_dir(self, app_pjm, mocked_app_options, tmp_path):
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
@@ -2205,7 +1599,7 @@ class TestHelpersRemote:
             project_name = os_path_basename(project_path)
             git_checkout(project_path, "--detach")
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret.startswith("¡detached HEAD")
 
@@ -2215,44 +1609,44 @@ class TestHelpersRemote:
             ver_fil_content = read_file(version_file)
             write_file(version_file, ver_fil_content.replace(VERSION_PREFIX, "any_var = " + VERSION_QUOTE))
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret.startswith("¡empty or invalid project version")
 
             write_file(version_file, ver_fil_content)
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret == 'renew_project'   # committed version_file restored, working tree is clean / all committed
 
             write_file(version_file, ver_fil_content + "# test_guess_next_action() added new line\n")
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret.startswith(uncommitted_guess_prefix)
 
             new_branch = 'new_feature_branch_name_testing_guest_next_action' + now_str(sep="_")
             git_checkout(project_path, new_branch=new_branch)
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret.startswith("¡unstaged files found")
 
             git_add(project_path)
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret == 'prepare_commit'
 
             write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "msg without project_version placeholder")
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret == 'prepare_commit'
 
             write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "test_guest_next_action V {project_version}")
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret == 'commit_project'
 
@@ -2261,14 +1655,14 @@ class TestHelpersRemote:
             git_add(project_path)
             git_commit(project_path, ProjectDevVars(project_path=project_path)['project_version'])
 
-            ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+            ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
             assert ret == 'renew_project'
 
             if project_name not in itg_projects:  # exclude itg projects to keep ini/next renew action for further tests
                 git_checkout(project_path, new_branch)
 
-                ret = _guess_next_action(ProjectDevVars(project_path=project_path))
+                ret = guess_next_action(ProjectDevVars(project_path=project_path))
 
                 assert ret.startswith(f"¡current branch '{new_branch}' not on remote")
 
@@ -2324,7 +1718,7 @@ class TestHelpersRemote:
         err_prefix = "detected main_branch='develop' with added/changed/uncommitted files: "
 
         for project_path in test_projects:
-            _ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
+            ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
 
             _show_status(ProjectDevVars(project_path=project_path))
 
@@ -2348,7 +1742,7 @@ class TestHelpersRemote:
         pdv['children_project_vars'] = {}
         pdv['namespace_name'] = tst_ns_name
         pdv['project_type'] = ROOT_PRJ
-        _ensure_tst_ns_portion_version_file(empty_repo_path)
+        ensure_tst_ns_portion_version_file(empty_repo_path)
         assert git_checkout(empty_repo_path, new_branch="tst_branch") == ""
 
         _show_status(pdv)
@@ -2429,14 +1823,14 @@ class TestIntegration:
 
             pdv = _itg_pdv(project_name, branch=f'test_full_git_workflow_{now_str(sep="_")}')
             old_ver = pdv['project_version']
-            pdv['host_api'] = host_api = _remote_connect(pdv, "workflow")  # _guess_next_action() need pdv['host_api']
+            pdv['host_api'] = host_api = _remote_connect(pdv, "workflow")  # guess_next_action() need pdv['host_api']
 
             pdv = _renew_project(pdv, project_type)
 
             new_ver = pdv['project_version']
             assert pdv.pdv_val('main_app_options').pop('branch')
             assert new_ver == latest_remote_version(pdv)
-            assert _guess_next_action(pdv) == 'prepare_commit'
+            assert guess_next_action(pdv) == 'prepare_commit'
 
             write_file(main_file_path(project_path, project_type, namespace_name=pdv['namespace_name']),
                        f"# full git workflow integration test version: {old_ver} -> {new_ver}\n",
@@ -2447,21 +1841,21 @@ class TestIntegration:
             assert os_path_isfile(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
             assert "{project_version}" in read_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
             assert git_uncommitted(project_path)
-            assert _guess_next_action(pdv) == 'commit_project'
+            assert guess_next_action(pdv) == 'commit_project'
 
             commit_project(pdv)
 
             assert "{project_version}" not in read_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
             assert not git_uncommitted(project_path)
-            assert _guess_next_action(pdv) == 'push_project'
+            assert guess_next_action(pdv) == 'push_project'
 
             host_api.push_project(pdv)
 
-            assert _guess_next_action(pdv) == 'request_merge'
+            assert guess_next_action(pdv) == 'request_merge'
 
             host_api.request_merge(pdv)
 
-            assert _guess_next_action(pdv) == 'release_project'
+            assert guess_next_action(pdv) == 'release_project'
 
             if project_role == 'ctb' and project_state == 'forked':  # switch to mtn role to merge MR & for PyPI release
                 pdv['repo_user'] = itg_mtn_name
@@ -2471,7 +1865,7 @@ class TestIntegration:
             if project_state == 'forked':
                 host_api.merge_pushed_project(pdv)
 
-            assert _guess_next_action(pdv) == 'release_project'
+            assert guess_next_action(pdv) == 'release_project'
 
             host_api.release_project(pdv, 'LATEST')
 

@@ -24,7 +24,7 @@ ae_updater
 ae_core
 ae_console
 ae_shell
-ae_template
+ae_managed_files
 ae_pythonanywhere
 aedev_base
 aedev_commands
