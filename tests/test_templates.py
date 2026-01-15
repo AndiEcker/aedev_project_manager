@@ -4,16 +4,17 @@ import textwrap
 
 import pytest
 
+from aedev.project_manager.templates import PATH_PREFIXES_PARSERS
 from tests.conftest import skip_gitlab_ci
 
 from ae.base import (
     DEF_PROJECT_PARENT_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER,
-    norm_name, norm_path, os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
+    in_wd, norm_name, norm_path, os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     read_file, write_file)
 from ae.core import main_app_instance, temp_context_cleanup, temp_context_folders
-from ae.template import (
-    OUTSOURCED_FILE_NAME_PREFIX, OUTSOURCED_MARKER, SKIP_IF_PORTION_DST_NAME_PREFIX, SKIP_PRJ_TYPE_FILE_NAME_PREFIX,
-    TPL_FILE_NAME_PREFIX, TEMPLATE_PLACEHOLDER_ID_PREFIX, TEMPLATE_PLACEHOLDER_ID_SUFFIX,
+from ae.managed_files import (
+    PATH_PREFIXES_ARGS_SEP, REFRESHABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER,
+    F_STRINGS_PATH_PFX, TEMPLATE_PLACEHOLDER_ID_PREFIX, TEMPLATE_PLACEHOLDER_ID_SUFFIX,
     TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID,
     deploy_template, patch_string)
 from aedev.base import (
@@ -21,9 +22,15 @@ from aedev.base import (
 from aedev.commands import GIT_CLONE_CACHE_CONTEXT, GIT_VERSION_TAG_PREFIX
 from aedev.project_vars import PDV_REQ_DEV_FILE_NAME, ProjectDevVars
 
+# noinspection PyProtectedMember
+from aedev.project_manager.__main__ import _renew_prj_dir
+
+from constants_and_fixtures import app_pjm, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path
+
 from aedev.project_manager.templates import (
-    CACHED_TPL_PROJECTS, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    clone_template_project, project_templates, register_template,
+    CACHED_TPL_PROJECTS, SKIP_IF_PORTION_PREFIX, SKIP_PRJ_TYPE_PREFIX,
+    TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
+    check_templates, clone_template_project, project_templates, register_template,
     setup_kwargs_literal, template_path_option, template_version_option)
 
 
@@ -31,7 +38,7 @@ def teardown_module():
     """ pytest test module teardown to clear registered template projects and to check if main app gets used. """
     print(f"##### {os_path_basename(__file__)} teardown_module BEG - {CACHED_TPL_PROJECTS=} {main_app_instance()=}")
 
-    CACHED_TPL_PROJECTS.clear()         # remove registered template projects from ae.template module
+    CACHED_TPL_PROJECTS.clear()         # remove registered template projects from project_manager.templates.py module
     temp_context_cleanup()
     temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
@@ -39,16 +46,16 @@ def teardown_module():
 
 
 @pytest.fixture
-def clean_temp_dirs():
+def cleanup_git_clone_cache():
     assert not temp_context_folders(GIT_CLONE_CACHE_CONTEXT)
     yield
     temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
 
-def test_declaration_of_template_vars():
-    assert isinstance(OUTSOURCED_FILE_NAME_PREFIX, str)
-    assert isinstance(OUTSOURCED_MARKER, str)
-    assert isinstance(TPL_FILE_NAME_PREFIX, str)
+def test_declaration_of_template_vars(cleanup_git_clone_cache):
+    assert isinstance(REFRESHABLE_TEMPLATE_MARKER, str)
+    assert isinstance(REFRESHABLE_TEMPLATE_PATH_PFX, str)
+    assert isinstance(F_STRINGS_PATH_PFX, str)
     assert isinstance(TEMPLATE_PLACEHOLDER_ID_PREFIX, str)
     assert isinstance(TEMPLATE_PLACEHOLDER_ID_SUFFIX, str)
     assert isinstance(TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, str)
@@ -270,47 +277,213 @@ class TestHelpers:
         assert f"{nsn}_{module_name}" in pdv.pdv_val('children_project_vars')
         assert 'portions_import_names' not in pdv
 
-    def test_clone_template_project(self, clean_temp_dirs, cons_app):
+    def test_check_templates_empty_folder(self, app_pjm, tmp_path):
+        assert check_templates(app_pjm, ProjectDevVars(project_path=str(tmp_path))) is None
+
+    def test_check_templates_new_module_prj(self, app_pjm, cleanup_git_clone_cache, module_repo_path):
+        assert check_templates(app_pjm, ProjectDevVars(project_path=module_repo_path))
+
+    def test_check_templates_no_prj(self, app_pjm, cleanup_git_clone_cache, empty_repo_path, changed_repo_path):
+        assert not check_templates(app_pjm, ProjectDevVars(project_path=empty_repo_path))
+        assert not check_templates(app_pjm, ProjectDevVars(project_path=changed_repo_path))
+
+    def test_check_templates_test_registered(self, cleanup_git_clone_cache, cons_app, tmp_path):
+        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
+        namespace = "nsn"
+        project_name = f"{namespace}_pkg_name"
+        project_path = norm_path(os_path_join(parent_dir, project_name))
+        prj_tpls = [
+            {'import_name': namespace + '.' + namespace,
+             'tpl_path': os_path_join(parent_dir, namespace + '_' + namespace, namespace, namespace, TEMPLATES_FOLDER),
+             'version': '1.1.1',
+             'register_message': "manually setup for unit testing"},
+            {'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
+             'tpl_path': os_path_join(parent_dir, 'aedev_package_tpls', 'aedev', 'package_tpls', TEMPLATES_FOLDER),
+             'version': '3.3.3',
+             'register_message': "manually setup for unit testing"},
+            {'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
+             'tpl_path': os_path_join(parent_dir, 'aedev_project_tpls', 'aedev', 'project_tpls', TEMPLATES_FOLDER),
+             'version': '9.9.9',
+             'register_message': "manually setup for unit testing"},
+        ]
+        pdv = ProjectDevVars(**{'namespace_name': namespace, 'project_path': project_path, 'project_type': PACKAGE_PRJ,
+                                'project_templates': []})
+        _renew_prj_dir(pdv)
+
+        with in_wd(project_path):
+            assert check_templates(cons_app, pdv) is not None
+
+        # 2nd test with template in all template projects (namespace-root template project has the highest priority)
+        deep_sub_dir = os_path_join('deeper', 'even_deeper')
+        file_for_all = 'file_for_all.ext'
+        tpl_file_for_all = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + file_for_all
+        for tpl_reg in prj_tpls:
+            tpl_path = os_path_join(tpl_reg['tpl_path'], deep_sub_dir)
+            write_file(os_path_join(tpl_path, tpl_file_for_all), tpl_reg['tpl_path'], make_dirs=True)
+        tpl_file = os_path_join(project_path, deep_sub_dir, file_for_all)
+        pdv = ProjectDevVars(**{'namespace_name': namespace, 'project_path': project_path, 'project_type': PACKAGE_PRJ,
+                                'project_templates': prj_tpls})
+
+        with in_wd(project_path):
+            tmg = check_templates(cons_app, pdv)
+            assert set(tmg.deploy_files.keys()) == {norm_path(tpl_file)}
+            assert not os_path_isfile(tpl_file)
+            tmg.deploy()
+            assert os_path_isfile(tpl_file)
+            content = read_file(tpl_file)
+        assert prj_tpls[0]['tpl_path'] in content
+        assert REFRESHABLE_TEMPLATE_MARKER in content
+
+    def test_check_templates_file_include_content(self, app_pjm, cleanup_git_clone_cache, tmp_path):
+        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
+        tpl_pkg_path = norm_path(os_path_join(parent_dir, 'tst_tpls', TEMPLATES_FOLDER))
+        tpl_file_name = "including_content.txt"
+        tpl_file_path = os_path_join(tpl_pkg_path, REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + tpl_file_name)
+        ver = '9.6.9999'
+        prj_templates = [{'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
+                          'tpl_path': tpl_pkg_path,
+                          'version': ver,
+                          'register_message': "manually setup for unit testing"}]
+        included_file_name = norm_path(os_path_join(parent_dir, "inc.tst.file"))
+        included_file_content = "replacement string"
+        project_name = f"prj_name"
+        project_path = os_path_join(parent_dir, project_name)
+        patched_file_name = os_path_join(project_path, tpl_file_name)
+        os.makedirs(project_path)
+        os.makedirs(tpl_pkg_path)
+
+        tpl = f"{TEMPLATE_PLACEHOLDER_ID_PREFIX}{TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID}"
+        tpl += f"{TEMPLATE_PLACEHOLDER_ID_SUFFIX}{included_file_name}{TEMPLATE_PLACEHOLDER_ARGS_SUFFIX}"
+        write_file(tpl_file_path, tpl)
+        write_file(included_file_name, included_file_content)
+
+        with in_wd(project_path):
+            tmg = check_templates(app_pjm, ProjectDevVars(project_type=MODULE_PRJ, project_templates=prj_templates))
+            assert not os_path_isfile(patched_file_name)
+            tmg.deploy()
+            assert os_path_isfile(patched_file_name)
+
+        assert set(tmg.deploy_files.keys()) == {norm_path(patched_file_name)}
+
+        content = read_file(patched_file_name)
+        assert included_file_content in content
+        assert ver in content
+        assert "TEMPLATE_PLACEHOLDER_ID_PREFIX" not in content
+        assert TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID not in content
+        assert "TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID" not in content
+        assert TEMPLATE_PLACEHOLDER_ID_SUFFIX not in content
+        assert "TEMPLATE_PLACEHOLDER_ID_SUFFIX" not in content
+        assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
+        assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
+
+    def test_check_templates_file_include_default_with_pdv(self, app_pjm, cleanup_git_clone_cache, mocked_app_options,
+                                                           monkeypatch, tmp_path):
+        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
+        namespace_name = "tns"
+        portion_name = 'destination_portion_name'
+        project_path = os_path_join(parent_dir, f'{namespace_name}_{portion_name}')
+        package_path = os_path_join(project_path, namespace_name)
+        patched_file = "including_content.txt"
+        patched_path = os_path_join(project_path, patched_file)
+
+        tpl_imp_name = namespace_name + '.' + namespace_name
+        tpl_pkg_path = norm_path(os_path_join(
+            parent_dir, norm_name(tpl_imp_name), namespace_name, namespace_name, TEMPLATES_FOLDER))
+        tpl_file_path = os_path_join(tpl_pkg_path, REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + patched_file)
+
+        default = "include file default string"
+        version = '6.699.987'
+
+        mocked_app_options[template_version_option(tpl_imp_name)] = version
+        mocked_app_options['namespace_name'] = namespace_name    # or ""
+        os.makedirs(package_path)
+        write_file(os_path_join(project_path, PDV_REQ_DEV_FILE_NAME), norm_name(tpl_imp_name))
+        write_file(os_path_join(package_path, portion_name + PY_EXT), "__version__ = '9.6.3'")
+
+        os.makedirs(os_path_dirname(tpl_file_path))
+        tpl = "{TEMPLATE_PLACEHOLDER_ID_PREFIX}{TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID}"
+        tpl += "{TEMPLATE_PLACEHOLDER_ID_SUFFIX}"
+        tpl += f"not_existing_included_file_name.ext,{default}"
+        tpl += "{TEMPLATE_PLACEHOLDER_ARGS_SUFFIX}"
+        write_file(tpl_file_path, tpl)
+
+        monkeypatch.setitem(CACHED_TPL_PROJECTS, tpl_imp_name + PROJECT_VERSION_SEP + version,
+                            {'import_name': tpl_imp_name, 'tpl_path': tpl_pkg_path, 'version': version,
+                             'register_message': "manually setup for unit testing"})
+
+        pdv = ProjectDevVars(project_path=project_path)
+
+        with in_wd(project_path):
+            tmg = check_templates(app_pjm, pdv)
+
+        assert 'project_templates' in pdv
+        assert not os_path_isfile(patched_path)
+        assert norm_path(patched_path) in set(tmg.deploy_files.keys())
+
+        with in_wd(project_path):
+            tmg.deploy()
+
+        assert os_path_isfile(patched_path)
+
+        content = read_file(patched_path)
+        assert default in content
+        assert tpl_imp_name in content
+        assert version in content
+        assert "TEMPLATE_PLACEHOLDER_ID_PREFIX" not in content
+        assert TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID not in content
+        assert "TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID" not in content
+        assert TEMPLATE_PLACEHOLDER_ID_SUFFIX not in content
+        assert "TEMPLATE_PLACEHOLDER_ID_SUFFIX" not in content
+        assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
+        assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
+
+    def test_clone_template_project(self, cleanup_git_clone_cache, cons_app):
         tpl_path = clone_template_project('aedev.project_tpls', GIT_VERSION_TAG_PREFIX + '0.3.36')
         assert tpl_path
         assert os_path_isdir(tpl_path)
         assert os_path_basename(tpl_path) == TEMPLATES_FOLDER
 
-    def test_clone_template_project_for_apps(self, clean_temp_dirs, cons_app):
+    def test_clone_template_project_for_apps(self, cleanup_git_clone_cache, cons_app):
         tpl_path = clone_template_project('aedev.app_tpls', GIT_VERSION_TAG_PREFIX + '0.3.16')
         assert tpl_path
         assert os_path_isdir(tpl_path)
         assert os_path_basename(tpl_path) == TEMPLATES_FOLDER
 
-    def test_deploy_template_sfp_prefix_remove_and_spt_in_sub_dir(self, tmp_path):
+    def test_deploy_template_sfp_path_pfx_remove_and_spt_in_sub_dir(self, cleanup_git_clone_cache, tmp_path):
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         src_dir = os_path_join(parent_dir, 'tpl_src_prj_dir')
         tpl_dir = os_path_join(src_dir, TEMPLATES_FOLDER)
         sub_dir_folder = 'sub_dir'
         tpl_sub_dir = os_path_join(tpl_dir, sub_dir_folder)
-        prefixes = SKIP_IF_PORTION_DST_NAME_PREFIX + SKIP_PRJ_TYPE_FILE_NAME_PREFIX
-        file_name = prefixes + ROOT_PRJ + "_template_file_name.xyz"
+        file_name = "template_file_name.xyz"
+
         src_file = os_path_join(tpl_sub_dir, file_name)
         content = "template file content"
-        dst_dir = os_path_join(parent_dir, 'dst')
-        new_pdv = {'project_path': dst_dir, 'project_type': ROOT_PRJ}
-        dst_files = set()
         write_file(src_file, content, make_dirs=True)
+
+        dst_dir = os_path_join(parent_dir, 'dst')
+        new_pdv = {'namespace_name': "", 'project_path': dst_dir, 'project_type': ROOT_PRJ}
         os.makedirs(dst_dir)
+        prefixes = SKIP_IF_PORTION_PREFIX + SKIP_PRJ_TYPE_PREFIX + ROOT_PRJ + PATH_PREFIXES_ARGS_SEP
+        dst_path = os_path_join(sub_dir_folder, prefixes + file_name)
 
-        assert not deploy_template(src_file, sub_dir_folder, "", new_pdv, dst_files=dst_files)
+        with in_wd(dst_dir):
+            dst_file_path = deploy_template(src_file, dst_path=dst_path, patcher="tst_patcher",
+                                            prefixes_parsers=PATH_PREFIXES_PARSERS, tpl_vars=new_pdv)
 
-        assert not dst_files        # skipped deploy
+        assert dst_file_path == ""        # skipped deploy
 
         new_pdv['project_type'] = MODULE_PRJ
 
-        assert deploy_template(src_file, sub_dir_folder, "", new_pdv, dst_files=dst_files)
+        with in_wd(dst_dir):
+            dst_file_path = deploy_template(src_file, dst_path=dst_path, patcher="tst_patcher",
+                                            prefixes_parsers=PATH_PREFIXES_PARSERS, tpl_vars=new_pdv)
 
-        assert dst_files            # not skipped deploy
-        dst_file = os_path_join(dst_dir, sub_dir_folder, file_name[len(prefixes) + len(ROOT_PRJ) + 1:])
+        assert dst_file_path            # not skipped deploy
+        dst_file = os_path_join(dst_dir, sub_dir_folder, file_name)
         assert os_path_isfile(dst_file)
+        assert norm_path(dst_file) == norm_path(dst_file_path)
         assert read_file(dst_file) == content
-        assert norm_path(dst_file) in dst_files
 
     def test_patch_string_setup_template(self):
         setup_tpl = textwrap.dedent('''\
@@ -367,8 +540,8 @@ class TestHelpers:
         setuptools.setup(**setup_kwargs)
         ''')
 
-    def test_project_templates_new_dev_req(self, clean_temp_dirs, cons_app):
-        assert not CACHED_TPL_PROJECTS      # first reference to this cache in this test module - should be empty
+    def test_project_templates_new_dev_req(self, cleanup_git_clone_cache, cons_app):
+        old_tpls = CACHED_TPL_PROJECTS.copy()
         root_prj_imp_name = 'ae.ae'
         reg_tpls = CACHED_TPL_PROJECTS.copy()
         dev_reqs = []
@@ -379,7 +552,7 @@ class TestHelpers:
         assert 'aedev.module_tpls' + PROJECT_VERSION_SEP + "" in reg_tpls
         assert 'aedev.project_tpls' + PROJECT_VERSION_SEP + prj_tpls[1]['version'] in reg_tpls
 
-        assert len(prj_tpls) == 2   # ae namespace root and tpl_project
+        assert len(prj_tpls) == 2   # ae namespace root and project_tpls
         assert prj_tpls[0]['import_name'] == root_prj_imp_name
         assert prj_tpls[0]['version'] != ""   # latest PyPI version
         assert prj_tpls[0] == reg_tpls[root_prj_imp_name + PROJECT_VERSION_SEP + prj_tpls[0]['version']]
@@ -387,7 +560,7 @@ class TestHelpers:
         assert prj_tpls[1]['version'] != ""   # latest PyPI version
         assert prj_tpls[1] == reg_tpls['aedev.project_tpls' + PROJECT_VERSION_SEP + prj_tpls[1]['version']]
 
-        assert len(reg_tpls) == 3
+        assert len(reg_tpls) == len(old_tpls) + 1  # + ae_ae namespace root
         reg_tpl = reg_tpls[root_prj_imp_name + PROJECT_VERSION_SEP + prj_tpls[0]['version']]
         assert reg_tpl['import_name'] == root_prj_imp_name
         assert reg_tpl['version'] == prj_tpls[0]['version']
@@ -408,46 +581,34 @@ class TestHelpers:
         assert norm_name(root_prj_imp_name) + PROJECT_VERSION_SEP + prj_tpls[0]['version'] in dev_reqs
         assert norm_name('aedev.project_tpls') + PROJECT_VERSION_SEP + prj_tpls[1]['version'] in dev_reqs
 
-        assert not CACHED_TPL_PROJECTS
+        assert CACHED_TPL_PROJECTS == old_tpls
 
-    def test_project_templates_dev_req_lock(self, clean_temp_dirs, cons_app):
+    def test_project_templates_dev_req_lock(self, cleanup_git_clone_cache, cons_app):
         dev_reqs = ('any_non_tpl_prj', )
         req_copy = tuple(dev_reqs)
+        old_tpls = CACHED_TPL_PROJECTS.copy()
         reg_tpls = CACHED_TPL_PROJECTS.copy()
 
         prj_tpls = project_templates(MODULE_PRJ, 'ae', {}, reg_tpls, dev_reqs)
 
         assert len(prj_tpls) == 2
         assert dev_reqs == req_copy
-        assert len(reg_tpls) == len(CACHED_TPL_PROJECTS) + 3  # ae namespace root, module_tpls and project_tpls
-        assert not CACHED_TPL_PROJECTS
+        assert len(reg_tpls) == len(CACHED_TPL_PROJECTS) + 1  # + ae namespace root
+        assert CACHED_TPL_PROJECTS == old_tpls
 
-    def test_project_templates_dev_req_extendable(self, clean_temp_dirs, cons_app):
+    def test_project_templates_dev_req_extendable(self, cleanup_git_clone_cache, cons_app):
         dev_reqs = ['any_non_tpl_prj']
         req_copy = dev_reqs.copy()
         reg_tpls = CACHED_TPL_PROJECTS.copy()
-        assert not reg_tpls and not CACHED_TPL_PROJECTS
+        assert reg_tpls
 
         prj_tpls = project_templates(MODULE_PRJ, 'aedev', {}, reg_tpls, dev_reqs)
 
         assert len(prj_tpls) == 2
-        assert len(dev_reqs) == len(req_copy) + 2                   # added aedev and project_tpls
-        assert len(reg_tpls) == len(CACHED_TPL_PROJECTS) + 3    # .. and module_tpls without version
-        assert not CACHED_TPL_PROJECTS
+        assert len(dev_reqs) == len(req_copy) + 2                   # added aedev.aedev root and aedev.project_tpls
+        assert len(reg_tpls) == len(CACHED_TPL_PROJECTS) + 1        # added aedev.aedev root
 
-        try:
-            # cleanup because git_clone would fail because of non-empty temp destination dir/folder
-            temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
-            prj_tpls = project_templates(MODULE_PRJ, 'aedev', {}, CACHED_TPL_PROJECTS, dev_reqs)
-
-            assert len(prj_tpls) == 2
-            assert len(reg_tpls) == len(CACHED_TPL_PROJECTS)
-            assert reg_tpls != CACHED_TPL_PROJECTS  # only temp dir paths are new/changed
-            assert len(dev_reqs) == len(req_copy) + 2
-        finally:
-            CACHED_TPL_PROJECTS.clear()
-
-    def test_register_template_aedev_root(self, clean_temp_dirs, cons_app):
+    def test_register_template_aedev_root(self, cleanup_git_clone_cache, cons_app):
         nsn = "aedev"
         tpl_imp_name = nsn + "." + nsn
         pkg_name = norm_name(tpl_imp_name)
@@ -478,10 +639,8 @@ class TestHelpers:
         assert reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message'] != ""
         assert version in reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message']
 
-        assert not CACHED_TPL_PROJECTS
-
     @skip_gitlab_ci
-    def test_register_template_aedev_root_local(self, clean_temp_dirs):
+    def test_register_template_aedev_root_local(self, cleanup_git_clone_cache):
         nsn = "aedev"
         tpl_imp_name = nsn + "." + nsn
         pkg_name = norm_name(tpl_imp_name)
@@ -513,7 +672,7 @@ class TestHelpers:
         assert reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message'] != ""
         assert version in reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message']
 
-    def test_register_template_aedev_root_version(self, clean_temp_dirs, cons_app):
+    def test_register_template_aedev_root_version(self, cleanup_git_clone_cache, cons_app):
         nsn = "aedev"
         version = "0.3.24"
         tpl_imp_name = nsn + "." + nsn
@@ -546,7 +705,7 @@ class TestHelpers:
         assert reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message'] != ""
         assert version in reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message']
 
-    def test_register_template_not_existing(self, clean_temp_dirs):
+    def test_register_template_not_existing(self, cleanup_git_clone_cache):
         tpl_imp_name = "not.existing_package_tpls_imp_name"
         dev_requires = []
         prj_tpls = []

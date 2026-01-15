@@ -1,10 +1,10 @@
 anybadge==1.16.0
 coverage-badge==1.1.2
 flake8==7.3.0
-mypy==1.19.0
+mypy==1.19.1
 pylint==4.0.4
-pytest==9.0.1
+pytest==9.0.2
 pytest-cov==7.0.0
 pytest-django==4.11.1
 typing==3.7.4.3
-types-setuptools==80.9.0.20250822
+types-setuptools==80.9.0.20251223

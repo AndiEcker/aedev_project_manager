@@ -1,22 +1,31 @@
 """
-templates for outsourced files of Python projects
-=================================================
+templates for managed files of Python projects
+==============================================
 
 
 """
-from typing import Union, Any
+from difflib import context_diff, diff_bytes, ndiff, unified_diff
+from functools import partial
+from typing import Any, Union, cast
 
-from ae.base import (                                                                           # type: ignore
-    TEMPLATES_FOLDER, in_wd, norm_name, norm_path, os_path_isdir, os_path_join, pep8_format)
-from aedev.base import (                                                                        # type: ignore
-    PROJECT_VERSION_SEP, CachedTemplates, TemplateProjectsType, TemplateProjectType,
+from ae.base import (                                                                                   # type: ignore
+    TEMPLATES_FOLDER,
+    in_wd, norm_name, norm_path, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, pep8_format)
+from ae.console import ConsoleApp                                                                       # type: ignore
+from ae.managed_files import (                                                                          # type: ignore
+    DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
+    ManagedFile, TemplateMngr, TemplateFiles)
+from ae.paths import path_items                                                                         # type: ignore
+from ae.shell import debug_or_verbose                                                                   # type: ignore
+from aedev.base import (                                                                                # type: ignore
+    ANY_PRJ_TYPE, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, CachedTemplates, TemplateProjectsType, TemplateProjectType,
     get_pypi_versions, project_name_version)
-from aedev.commands import (                                                                    # type: ignore
+from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_clone, sh_exit_if_git_err)
+from aedev.project_vars import ProjectDevVars, frozen_req_file_path                                     # type: ignore
 
-
-__version__ = '0.3.1'
+from aedev.project_manager.utils import PPF, get_app_option, ppp
 
 
 # global helpers  -----------------------------------------------------------------------------------------------------
@@ -26,10 +35,15 @@ globally here to be used as argument value for :paramref:`project_templates.cach
 :paramref:`register_template.cached_templates`.
 """
 MOVE_TPL_TO_PKG_PATH_NAME_PREFIX = 'de_mtp_'
-""" template file/folder name prefix, to move the templates to the package path (instead of the project path);
-has to be specified after :data:`SKIP_IF_PORTION_DST_NAME_PREFIX` (if both prefixes are needed). declared in this
-portion for completeness, but not directly used. for external use: caller of :func:`deploy_template` has to remove this
-prefix from destination file name (adapting the :paramref:`destination path argument <deploy_template.dst_path`).
+""" template path prefix, to move the templates (instead of the project path, underneath of it) to the package path. """
+SKIP_IF_PORTION_PREFIX = 'de_sfp_'
+""" template file/path prefix to skip deployment of template to namespace portion. will be removed from destination
+file name by :func:`deploy_template`, but the check if the destination project is a namespace portion has to be done
+externally, by not calling the :func:`deploy_template` function for templates with this prefix.
+"""
+SKIP_PRJ_TYPE_PREFIX = 'de_spt_'
+""" file name prefix followed by a project type id arg (see *_PRJ constants). file creation/update from template will be
+skipped if it the project type id in the template file name matches the destination project type.
 """
 
 TPL_IMPORT_NAME_PREFIX = 'aedev.'                       #: package/import name prefix of project type template packages
@@ -37,6 +51,135 @@ TPL_IMPORT_NAME_SUFFIX = '_tpls'                        #: package/import name s
 
 TPL_PATH_OPTION_SUFFIX = '_project_path'                #: option name suffix to specify template project root folder
 TPL_VERSION_OPTION_SUFFIX = '_project_version'          #: option name suffix to specify template package version
+
+TPL_IMPORT_NAMES = ([TPL_IMPORT_NAME_PREFIX + norm_name(_) + TPL_IMPORT_NAME_SUFFIX for _ in ANY_PRJ_TYPE] +
+                    [TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX])
+""" import names of the generic project-type-related (aedev) template projects """
+
+
+# pylint: disable=too-many-locals,too-many-branches,too-many-statements
+def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False) -> TemplateMngr | None:
+    """ check the project files that are outdated or missing from the registered namespace/project templates.
+
+    :param cae:                 ConsoleApp instance.
+    :param pdv:                 project env/dev variables dict of the destination project to patch/refresh,
+                                providing values for (1) f-string template replacements, and (2) to control the template
+                                registering, patching, and deployment.
+    :param fail_on_outdated:    pass True to quit app if there are missing/outdated managed files (skip-able with -f).
+    :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
+                                and synced from templates. e.g. to retrieve a set of the destination project file paths
+                                that would be created/updated use set(<this return value>.deploy_files.keys()).
+
+    .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
+    """
+    cae.chk(41, not (errors := pdv.errors()), f"project dev var {errors=}")  # if pdv['AUTHOR']
+
+    project_type = pdv['project_type']
+    if project_type == NO_PRJ:
+        return None
+
+    namespace_name = pdv['namespace_name']
+    project_path = pdv['project_path']
+    pdv['pypi_versions'] = get_pypi_versions(pdv['pip_name'], pypi_test=pdv['parent_folder'] == 'TsT')
+
+    dev_requires = pdv.pdv_val('dev_requires')
+    dev_req_path = os_path_join(project_path, pdv['REQ_DEV_FILE_NAME'])
+    add_dev_req = (not dev_requires and not os_path_isfile(dev_req_path)
+                   and not os_path_isfile(dev_req_path + DEPLOY_LOCK_EXT))
+    if 'project_templates' not in pdv:
+        project_tpls = pdv['project_templates'] = project_templates(
+            project_type, namespace_name, _get_app_tpl_options(cae, pdv), CACHED_TPL_PROJECTS,
+            dev_requires if add_dev_req else tuple(dev_requires), version_tag_prefix=pdv['VERSION_TAG_PREFIX'])
+        for tpl_prj in project_tpls:
+            cae.dpo(tpl_prj['register_message'])
+    else:
+        project_tpls = pdv.pdv_val('project_templates')
+
+    verbose = debug_or_verbose()
+    if verbose:
+        if project_tpls:
+            msg = f"  --- {pdv['project_title']} uses {len(project_tpls)} template project(s): "
+            if cae.debug:
+                cae.po(msg)
+                cae.po(f"      {PPF(project_tpls)}")
+            else:
+                cae.po(msg + " ".join(_['import_name'] + PROJECT_VERSION_SEP + _['version'] for _ in project_tpls))
+        cae.vpo(f"   -- all {len(CACHED_TPL_PROJECTS)} registered/cached template projects:")
+        cae.vpo(f"      {PPF(CACHED_TPL_PROJECTS)}")
+        if add_dev_req:
+            cae.vpo(f"   -- added {len(dev_requires)} template projects to {dev_req_path}: {PPF(dev_requires)}")
+        else:
+            drt = [_ for _ in dev_requires
+                   if _.startswith(norm_name(TPL_IMPORT_NAME_PREFIX)) and _.find(TPL_IMPORT_NAME_SUFFIX) != -1
+                   or _.startswith(namespace_name + '_' + namespace_name)]
+            cae.vpo(f"   -- {dev_req_path} activating {len(drt)} template projects: {PPF(drt)}")
+
+    get_files = partial(path_items, selector=os_path_isfile)
+    tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and relative sub-paths
+    for tpl_prj in project_tpls:
+        tpl_path = tpl_prj['tpl_path']
+        patcher = f"by the project {tpl_prj['import_name']} {pdv['VERSION_TAG_PREFIX']}{tpl_prj['version']}"
+        for tpl_file_path in get_files(os_path_join(tpl_path, "**/.*")) + get_files(os_path_join(tpl_path, "**/*")):
+            tpl_files.append((patcher, tpl_file_path, os_path_relpath(tpl_file_path, tpl_path)))
+
+    tpl_vars = pdv.copy()
+    tpl_vars['frozen_req_file_path'] = frozen_req_file_path
+    tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
+    tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates
+
+    man = TemplateMngr(tpl_files, PATH_PREFIXES_PARSERS, tpl_vars)
+
+    tpls: list[TemplateProjectType] = pdv.pdv_val('project_templates')
+    tpl_cnt = len(tpls)
+    cae.dpo(f"   -- checked {tpl_cnt} of {len(CACHED_TPL_PROJECTS)} registered/cached template projects: "
+            + (PPF(tpls) if cae.verbose else " ".join(_['import_name'] + " v" + _['version'] for _ in tpls)))
+
+    missing = man.missing_files
+    outdated = man.outdated_files
+    if missing or outdated:
+        if missing:
+            cae.po(f"   -- {len(missing)} managed files missing: "
+                   + (PPF(missing) if cae.debug else " ".join(missing)))
+        if outdated:
+            cae.po(f"   -- {len(outdated)} managed files outdated: " +
+                   (PPF(outdated) if cae.debug else " ".join(fn for fn, *_ in outdated)))
+        for file_name, new_content, old_content in outdated:
+            cae.po(f"    - {file_name}  ------------")
+            if isinstance(new_content, bytes) or isinstance(old_content, bytes):    # old_content check for mypy
+                dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]
+            else:
+                new_lines = new_content.splitlines(keepends=True)
+                old_lines = old_content.splitlines(keepends=True)
+                if verbose:
+                    if cae.verbose:
+                        dif = list(ndiff(old_lines, new_lines))
+                    else:
+                        dif = list(context_diff(old_lines, new_lines))
+                else:
+                    if cae.debug:
+                        dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
+                    else:
+                        dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
+            cae.po("      " + "      ".join(dif), end="")
+
+        cae.po()
+        cae.chk(44, not fail_on_outdated, f"template check failed: {len(missing)=} {len(outdated)=}"
+                                          f"; update managed files via the actions 'refresh' or 'renew'")
+
+    elif checked := man.checked_files:
+        cae.po(f"  === {len(checked)} managed files from {tpl_cnt} template projects are up-to-date"
+               + (": " + (ppp(checked) if cae.verbose else " ".join(checked))
+                  if verbose else ""))
+
+    elif verbose:
+        cae.po(f"   == all {len(man.managed_files)} managed files of {tpl_cnt} associated template projects skipped!")
+
+    if cae.debug:
+        cae.po(f"   == template sync log of {len(man.managed_files)} managed files from {tpl_cnt} templates projects")
+        for log_line in man.log_lines(verbose=cae.verbose):
+            cae.po(log_line)
+
+    return man
 
 
 def clone_template_project(import_name: str, version_tag: str, repo_root: str = "") -> str:
@@ -65,6 +208,51 @@ def clone_template_project(import_name: str, version_tag: str, repo_root: str = 
         path = "" if output and output[0].startswith(EXEC_GIT_ERR_PREFIX) else os_path_join(path, *sub_dir_parts)
 
     return path
+
+
+def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]:
+    req_ver = {_o: cast(str, get_app_option(pdv, _o)) for _o in cae.cfg_options
+               if _o.endswith(TPL_PATH_OPTION_SUFFIX) or _o.endswith(TPL_VERSION_OPTION_SUFFIX)} \
+            if 'main_app_options' in pdv else {}
+    return req_ver
+
+
+def path_pfx_place_into_package_path(managed_file: ManagedFile):
+    """ path prefix callee for the :data:`MOVE_TPL_TO_PKG_PATH_NAME_PREFIX` prefix.
+
+    :param managed_file:        ManagedFile instance.
+    """
+    ctx_vars = managed_file.manager.context_vars
+    pkg_path = os_path_relpath(ctx_vars['package_path'], ctx_vars['project_path'])
+    if pkg_path != '.':
+        managed_file.extend_dst_file_path(pkg_path)
+
+
+def path_pfx_skip_if_project_type(managed_file: ManagedFile, project_type: str):
+    """ path prefix callback for the :data:`SKIP_PRJ_TYPE_PREFIX` prefix.
+
+    :param managed_file:        ManagedFile instance.
+    :param project_type:        project type prefix arg.
+    """
+    if project_type == managed_file.manager.context_vars['project_type']:
+        managed_file.skip(f"destination-project-type ({project_type=})")
+
+
+def path_pfx_skip_if_portion(managed_file: ManagedFile):
+    """ path prefix callee for the :data:`SKIP_IF_PORTION_PREFIX` prefix.
+
+    :param managed_file:        ManagedFile instance.
+    """
+    ctx_vars = managed_file.manager.context_vars
+    if bool(ctx_vars['namespace_name']) and ctx_vars['project_type'] != ROOT_PRJ:
+        managed_file.skip("destination-project-is-namespace-portion-skip")
+
+
+PATH_PREFIXES_PARSERS = dict(DEFAULT_PATH_PREFIXES_PARSERS, **{
+    MOVE_TPL_TO_PKG_PATH_NAME_PREFIX: (0, path_pfx_place_into_package_path),
+    SKIP_PRJ_TYPE_PREFIX: (1, path_pfx_skip_if_project_type),
+    SKIP_IF_PORTION_PREFIX: (0, path_pfx_skip_if_portion),
+})
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments
