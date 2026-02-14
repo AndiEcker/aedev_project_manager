@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.71
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.75
 image: python:3.12
 
 
@@ -7,7 +7,7 @@ image: python:3.12
 
 before_script:
   - python --version
-  - pip install --upgrade setuptools pip pipx
+  - pip install --upgrade "setuptools<82" pip pipx
   - pip install --upgrade -r requirements_frozen.txt -r tests/requirements_frozen.txt
 
 

@@ -80,7 +80,7 @@ def children_project_names(ini_pdv: ProjectDevVars, names: Sequence[str], chi_va
     :param ini_pdv:             project dev variables of a root project or projects parent folder.
     :param names:               names of the
     :param chi_vars:            children project dev variables to double-check and to determine returned list order.
-    :return:                    children package names list (ordered in the same order than the specified child pdvs).
+    :return:                    children package names list (ordered in the same order as the specified child pdvs).
     """
     if ini_pdv['project_type'] == ROOT_PRJ:
         assert ini_pdv['namespace_name'], "namespace is not set for ROOT_PRJ"
@@ -252,7 +252,7 @@ def get_mirror_urls(pdv: ProjectDevVars) -> list[str]:
 
     :param pdv:                 project dev vars of the project to determine the mirrors remote-names/urls for.
     :return:                    list of remote-names/urls of the configured mirror urls. the urls that are
-                                evaluated to an empty string are not included in this returned list. a empty
+                                evaluated to an empty string are not included in this returned list. an empty
                                 list will be returned if there are no mirrors configured for the specified project.
     """
     remote_expression = os.environ.get('PJM_MIRROR_REMOTE_EXPRESSIONS')
@@ -379,6 +379,14 @@ def ppp(output: Iterable[str]) -> str:
     return sep + sep.join(str(_) for _ in (output.items() if isinstance(output, dict) else output))
 
 
+def refresh_pdv(pdv: ProjectDevVars):
+    """ refresh pdv in-place to reflect the current state of the project working tree.
+
+    :param pdv:
+    """
+    pdv.update(ProjectDevVars(project_path=pdv['project_path'], namespace_name=pdv['namespace_name']))
+
+
 def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
     """ update the four possible frozen requirements files of a project.
 
@@ -399,7 +407,7 @@ def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
             errors += update_frozen_req_file(req_file_path, all_packages=req_file_path == pdv['REQ_DEV_FILE_NAME'])
 
     # update pdv['dev_requires'] with new (frozen) requirements w/o error checking like done by _refresh_pdv/_get_pdv()
-    pdv.update(ProjectDevVars(project_path=pdv['project_path'], namespace_name=pdv['namespace_name']))
+    refresh_pdv(pdv)
 
     return errors
 

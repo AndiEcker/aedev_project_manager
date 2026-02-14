@@ -18,19 +18,21 @@ from ae.managed_files import (
     TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID,
     deploy_template, patch_string)
 from aedev.base import (
-    PROJECT_VERSION_SEP, MODULE_PRJ, PACKAGE_PRJ, PARENT_PRJ, ROOT_PRJ, project_name_version)
+    PROJECT_VERSION_SEP, MODULE_PRJ, PACKAGE_PRJ, PARENT_PRJ, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
+    project_name_version)
 from aedev.commands import GIT_CLONE_CACHE_CONTEXT, GIT_VERSION_TAG_PREFIX
-from aedev.project_vars import PDV_REQ_DEV_FILE_NAME, ProjectDevVars
+from aedev.project_vars import PDV_REQ_DEV_FILE_NAME, ProjectDevVars, frozen_req_file_path
 
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import _renew_prj_dir
 
 from constants_and_fixtures import app_pjm, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path
 
+# noinspection PyProtectedMember
 from aedev.project_manager.templates import (
     CACHED_TPL_PROJECTS, SKIP_IF_PORTION_PREFIX, SKIP_PRJ_TYPE_PREFIX,
     TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    check_templates, clone_template_project, project_templates, register_template,
+    _get_template_vars, check_templates, clone_template_project, project_templates, register_template,
     setup_kwargs_literal, template_path_option, template_version_option)
 
 
@@ -52,6 +54,7 @@ def cleanup_git_clone_cache():
     temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
 
+# noinspection PyUnusedLocal
 def test_declaration_of_template_vars(cleanup_git_clone_cache):
     assert isinstance(REFRESHABLE_TEMPLATE_MARKER, str)
     assert isinstance(REFRESHABLE_TEMPLATE_PATH_PFX, str)
@@ -63,6 +66,14 @@ def test_declaration_of_template_vars(cleanup_git_clone_cache):
 
 
 class TestHelpers:
+    def test__get_template_vars(self):
+        tpl_vars = _get_template_vars(ProjectDevVars())
+
+        assert tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] == TEST_PROJECTS_PARENT_FOLDER   # .gitlab-ci.yml pf project_tpls
+        assert tpl_vars['frozen_req_file_path'] is frozen_req_file_path                 # .gitlab-ci.yml of project_tpls
+        assert tpl_vars['setup_kwargs_literal'] == setup_kwargs_literal                 # in setup.py of project_tpls
+        assert '_add_base_globals' in tpl_vars
+
     def test_app_options_namespace_module(self, cons_app, tmp_path):
         nsn = 'abc'
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)

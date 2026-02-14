@@ -3,28 +3,24 @@
 to run integration tests (~40 minutes), implemented in this test module:
 * set the variable INTEGRATION_TESTS, declared at the top of this module, to True
 * request a maintainer and contributor account in the test project group https://gitlab.com/aetst-group
-* put the credentials of your GitLab maintainer account (itg_mtn_token) into your .env file(s)
-* put the credentials of your GitLab contributor account (itg_ctb_token) into your .env file(s)
+* put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
+* put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
 """
 import os
-import shutil
-import time
 
 from collections import OrderedDict
-from inspect import getframeinfo
-from typing import cast, Any, Iterable, Union
+from typing import cast
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from conftest import skip_gitlab_ci
-from packaging.version import Version
+from conftest import logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
 from ae.base import (
     BUILD_CONFIG_FILE, DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
-    in_wd, load_env_var_defaults, norm_name, norm_path, on_ci_host,
+    in_wd, norm_name, norm_path, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
-    project_main_file, read_file, stack_frames, write_file, now_str)
+    project_main_file, read_file, write_file)
 from ae.paths import path_items
 from ae.core import main_app_instance, temp_context_cleanup
 from ae.shell import debug_or_verbose
@@ -35,340 +31,77 @@ from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
     PIP_INSTALL_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
-    code_file_version, get_pypi_versions)
+    code_file_version)
 from aedev.commands import (
-    EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
-    SHELL_LOG_FILE_NAME_SUFFIX,
-    git_add, git_any, git_checkout, git_commit, git_current_branch, git_remotes,
-    git_uncommitted, in_os_env, sh_log, sh_logs)
+    GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
+    git_add, git_checkout, git_current_branch, git_remotes,
+    git_uncommitted, in_os_env)
 from aedev.project_vars import (
-    ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, PDV_REPO_GROUP_SUFFIX, PLAYGROUND_PRJ, ROOT_PRJ,
+    PDV_NULL_VERSION, PLAYGROUND_PRJ, ROOT_PRJ,
     latest_remote_version, main_file_path, ProjectDevVars)
 
-from aedev.project_manager.templates import (
-    CACHED_TPL_PROJECTS,
-    register_template, template_path_option)
+from aedev.project_manager.templates import CACHED_TPL_PROJECTS, register_template
 from aedev.project_manager.utils import get_mirror_urls, guess_next_action
 
 from tests.constants_and_fixtures import (
-    TEST_TPL_REGISTER,
-    app_pjm, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, init_parent, mocked_app_options,
-    module_repo_path, root_repo_path, temp_parent_path,
-    tst_namespaces_roots, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx, tst_pkg_version,
+    tst_tpls_register,
+    app_pjm, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, gitlab_remote, init_parent,
+    tst_mtn_name, tst_mtn_token, mocked_app_options, module_repo_path,
+    root_repo_path, skip_if_not_maintainer,
+    temp_parent_path, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx, tst_pkg_version,
     tst_root_prj_name, uncommitted_guess_prefix)
 from tests.test_codeberg import CODEBERG_TOKEN_PART
 
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import (
     ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
-    GithubCom, GitlabCom,
+    GitlabCom,
     _act_callable, _action, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
     _print_pdv, _renew_prj_dir, _renew_project, _show_status, _wait,
     add_children_file, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
-    commit_project, delete_children_file, init_main, install_children_editable, install_editable,
+    commit_project, delete_children_file, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
     prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children,
     run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
-
-INTEGRATION_TESTS = False
 
 
 def setup_module():
     """ clone template projects to speedup tests, printing warning messages if the tested module is not set up. """
     print()
-    print(f"::::: {os_path_basename(__file__)} setup_module BEG - {main_app_instance()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} setup_module BEG - {main_app_instance()=} {tst_tpls_register=}")
 
     # for import_name in tst_namespaces_roots + TPL_IMPORT_NAMES:
     for import_name in TPL_IMPORT_NAMES:
         register_template(import_name, {}, CACHED_TPL_PROJECTS, (), [])
 
-    write_file(norm_path(os_path_join("~", 'git' + SHELL_LOG_FILE_NAME_SUFFIX)),
-               f"\n\n{now_str(sep='-')}\n# pjm test suite enabled global git log\n",
-               extra_mode='a')
+    logging_unpatched_shutdown_setup()
 
-    # configure names/types/states/user-roles of all integration test projects (only runnable with maintainer user role)
-    if INTEGRATION_TESTS and itg_ctb_token and itg_mtn_token and not on_ci_host():
-        _itg_init()
-
-    # log unpatched calls of app.shutdown() and prevent unregister of the main app instance and the template cache
-    shutdown_patcher.append(patch('ae.core.AppBase.shutdown', new=_log_shutdown_calls))
-    shutdown_patcher.append(patch('ae.console.ConsoleApp.shutdown', new=_log_shutdown_calls))
-    for patcher in shutdown_patcher:
-        patcher.start()
-
-    print(f"::::: {os_path_basename(__file__)} setup_module END - {main_app_instance()=} {TEST_TPL_REGISTER=}")
+    print(f"::::: {os_path_basename(__file__)} setup_module END - {main_app_instance()=} {tst_tpls_register=}")
 
 
 def teardown_module():
     """ check if the tested module is still set up correctly at the end of this test module. """
     print()
-    print(f"::::: {os_path_basename(__file__)} teardown_module BEG - {main_app_instance()=} {TEST_TPL_REGISTER=}")
-    errors = []
+    print(f"::::: {os_path_basename(__file__)} teardown_module BEG - {main_app_instance()=} {tst_tpls_register=}")
+
+    if errors := logging_unpatched_shutdown_teardown():
+        assert not errors, f"project-manager unit test module teardown reported {len(errors)} {errors=}"
 
     CACHED_TPL_PROJECTS.clear()                     # prevent side effects if other module unit tests running after
-
-    temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)   # remove temp cache of cloned tst_repo and template projects
-    temp_context_cleanup()
-
-    for err, msg, trace in logged_shutdown_calls:
-        print(f" **** detected unpatched call of shutdown() with {err=} and {msg=}")
-        for call_stack_entry in trace:
-            print(f"    * {call_stack_entry}")
-    for patcher in shutdown_patcher:
-        patcher.stop()
-    if logged_shutdown_calls:
-        errors.append("detected unredirected calls of app.shutdown() in one or more unit tests")
-    assert not errors, f"test module teardown with {len(errors)} {errors=}"
 
     temp_context_cleanup()      # cleanup temp dir default and git clone context for other/following test modules
     temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
-    print(f"::::: {os_path_basename(__file__)} teardown_module END - {main_app_instance()=} {TEST_TPL_REGISTER=}")
-
-
-# mocking :meth:`as.console.ConsoleApp.shutdown` to log calls when patched by func:`patched_shutdown_wrapper` fixture
-shutdown_patcher = []
-logged_shutdown_calls = []
-
-
-def _log_shutdown_calls(main_app: Any, exit_code: int, error_message: str = ""):
-    """ AppBase|ConsoleApp.shutdown()-mock to prevent unregister of main-app|template-projects to log them in tests. """
-    print()
-    print(f"***** app.shutdown() called with {exit_code=} and {error_message=}; {main_app=}; stack:")
-    trace = []
-    for fra in stack_frames():
-        inf = getframeinfo(fra)
-        line = f"      File \"{inf.filename}\", line {inf.lineno}, in func={inf.function}: {inf.code_context}"
-        print(line)     # print out stack trace line in the format so that PyCharm will create a link to the code line
-        trace.append(line)
-        if inf.function.startswith("test_"):
-            break
-    print()
-    logged_shutdown_calls.append((exit_code, error_message, trace))  # to be printed again by teardown_module()
+    print(f"::::: {os_path_basename(__file__)} teardown_module END - {main_app_instance()=} {tst_tpls_register=}")
 
 
 # determine if the esc (external source code) parent folder exists on the local machine
 esc_parent_path = _path if os_path_isdir(_path := os_path_join(os.getcwd(), "..", "..", 'esc')) else ""
 
 
-@pytest.fixture
-def gitlab_remote():
-    """ provide a connected Gitlab remote repository api """
-    assert itg_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {itg_mtn_token=}"
-    remote_project = GitlabCom()
-    remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
-                                             'repo_domain': itg_domain,
-                                             'repo_token': itg_mtn_token}))
-
-    yield remote_project
-
-
-# integration tests domain, local path, test projects, names|credentials for maintainer/mtn and contributor/ctb roles
-itg_domain = 'gitlab.com'
-itg_parent_path = norm_path(os_path_join('~', 'TsT'))
-itg_ns_name = 'aetst'
-itg_root_import_name = f'{itg_ns_name}.{itg_ns_name}'
-itg_root_prj_name = f'{itg_ns_name}_{itg_ns_name}'
-itg_root_prj_path = os_path_join(itg_parent_path, itg_root_prj_name)
-itg_projects: dict[str, dict[str, str]] = {}  # 'type'=project_type 'state'='cloned'|'forked' 'role'='mtn'|'ctb'
-
-# get contributor|ctb & maintainer|mtn credential/token (in env|config variables), needed to enable integration tests)
-itg_ext_env = os.environ.copy()
-load_env_var_defaults(".", itg_ext_env)  # use local machine pjm project user to get maintainer&contributor name/mail
-itg_ctb_name = itg_ext_env.get('TEST_CONTRIBUTOR_NAME')
-itg_ctb_token = itg_ext_env.get('TEST_CONTRIBUTOR_TOKEN')
-# itg_ctb_email = itg_ext_env.get('TEST_CONTRIBUTOR_EMAIL')
-itg_mtn_name = itg_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
-itg_mtn_token = itg_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if itg_mtn_name != itg_ctb_name else ""
-# itg_mtn_email = itg_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL')
-# itg_ctb_root_url = f"https://oauth2:{itg_ctb_token}@{itg_domain}/{itg_ctb_name}"
-# itg_mtn_root_url = f"https://oauth2:{itg_mtn_token}@{itg_domain}/{itg_ns_name}{PDV_REPO_GROUP_SUFFIX}"
-if itg_ctb_token:
-    tst_namespaces_roots.append(itg_root_import_name)
-
-skip_if_no_integration_tests = pytest.mark.skipif('not bool(itg_ctb_token) or not bool(itg_mtn_token)',
+skip_if_no_integration_tests = pytest.mark.skipif('not bool(tst_ctb_token) or not bool(tst_mtn_token)',
                                                   reason="contributor integration tests credentials are not available")
-skip_if_not_maintainer = pytest.mark.skipif('not bool(itg_mtn_token)',
-                                            reason=f"missing {itg_domain} maintainer personal-access-token")
-
-# helpers for the preparation of initial/new and already existing integration test projects ---------------------------
-
-
-def _itg_init():
-    # 1st test prj has to be mtn-cloned ROOT_PRJ to allow update&push of new portion; auto-added to root/dev_req.txt
-    itg_projects[itg_root_prj_name] = {
-        'type': ROOT_PRJ, 'state': 'cloned', 'role': 'mtn'}
-    itg_projects[f'{itg_ns_name}_{MODULE_PRJ}_forked_ctb_v'] = {
-        'type': MODULE_PRJ, 'state': 'forked', 'role': 'ctb'
-                                                                }
-    pkg_nam_prefix = f'{itg_ns_name}_{norm_name(PACKAGE_PRJ)}'
-    itg_projects[f'{pkg_nam_prefix}_cloned_mtn_v'] = {
-        'type': PACKAGE_PRJ, 'state': 'cloned', 'role': 'mtn'}
-    itg_projects[f'{pkg_nam_prefix}_forked_mtn_v'] = {
-        'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'mtn'}
-    itg_projects[f'{pkg_nam_prefix}_forked_ctb_v'] = {
-        'type': PACKAGE_PRJ, 'state': 'forked', 'role': 'ctb'}
-    for idx, prj_type in enumerate(_ for _ in ANY_PRJ_TYPE if _ != ROOT_PRJ):
-        state = ('cloned', 'forked')[idx % 2]
-        role = ('ctb', 'mtn')[int(idx / 2) % 2]
-        prj_name = norm_name(prj_type) + "_" + state + "_" + role
-        itg_projects[prj_name + "_v"] = {
-            'type': prj_type, 'state': state, 'role': role}
-
-    init_main()     # init global cae in __main__ for _prepare_itg_test_project()(using action func/meth to prepare)
-
-    # setup of the initial|newly-adding integration test projects
-    os.makedirs(itg_parent_path, exist_ok=True)
-    portion_added = False
-    for prj_name in itg_projects:
-        portion_added = _prepare_itg_test_project(prj_name) and prj_name.startswith(itg_ns_name) or portion_added
-
-    if portion_added:  # ensure portion added to ROOT_PRJ dev_requirements.txt will be pushed too
-        if _uncommitted := git_uncommitted(itg_root_prj_path):
-            if _uncommitted != {'dev_requirements.txt'}:
-                print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
-            root_pdv = ProjectDevVars(main_app_options={'branch': "pjm_itg_tst_portion_added_to_root_" + now_str(),
-                                                        'delay': 3,  # needed by request_merge()/get_app_option()
-                                                        'versionIncrementPart': 3},  # .. by push/get_app_option()
-                                      project_path=itg_root_prj_path, repo_token=itg_mtn_token)
-            root_pdv = _renew_project(root_pdv, ROOT_PRJ)
-            _push_to_remote_and_pypi(root_pdv)
-            print(f" !__! successfully pushed the auto-updated {_uncommitted} file(s) of {itg_root_prj_name}")
-
-
-def _itg_pdv(project_name: str, branch: str = '', user_role: str = '') -> ProjectDevVars:
-    role = user_role or itg_projects[project_name]['role']
-
-    pdv_kwargs: dict[str, Any] = {'main_app_options': {'delay': 0.03, 'git_log': True, 'versionIncrementPart': 3},
-                                  'project_path': os_path_join(itg_parent_path, project_name),
-                                  'project_type': itg_projects[project_name]['type'],
-                                  'AUTHOR': itg_mtn_name if role == 'mtn' else itg_ctb_name,
-                                  'repo_user': itg_mtn_name if role == 'mtn' else itg_ctb_name,
-                                  'repo_token': itg_mtn_token if role == 'mtn' else itg_ctb_token}
-
-    if branch:
-        pdv_kwargs['main_app_options']['branch'] = branch
-
-    if project_name.startswith(itg_ns_name + "_"):
-        pdv_kwargs['namespace_name'] = itg_ns_name
-        pdv_kwargs['main_app_options'][template_path_option(itg_root_import_name)] = itg_root_prj_path
-    elif role == 'ctb' and itg_projects[project_name]['state'] == 'cloned':
-        pdv_kwargs['repo_group'] = itg_ctb_name
-        pdv_kwargs['pip_name'] = ""
-    else:
-        pdv_kwargs['repo_group'] = itg_ns_name + PDV_REPO_GROUP_SUFFIX
-
-    return ProjectDevVars(**pdv_kwargs)
-
-
-def _prepare_itg_test_project(project_name: str) -> bool:
-    """ prepare integration test project on local machine and on remote (if not exits). """
-    project_path = os_path_join(itg_parent_path, project_name)
-    prj_type = itg_projects[project_name]['type']
-    prj_state = itg_projects[project_name]['state']
-    prj_role = itg_projects[project_name]['role']
-    ctb_project = prj_role == 'ctb' and prj_state == 'cloned'
-    grp_name = itg_ctb_name if ctb_project else f"{itg_ns_name}{PDV_REPO_GROUP_SUFFIX}"
-    remote_url = f"https://{itg_domain}/{grp_name}/{project_name}.git"
-
-    add_remote = ((_out := git_any("..", 'ls-remote', remote_url)) and _out and _out[0].startswith(EXEC_GIT_ERR_PREFIX))
-
-    if add_remote:  # newly added integration test project - create locally and push to remote
-        if os_path_isdir(project_path):  # wipe any rests on local machine from canceled new/added itg tst preparations
-            shutil.rmtree(project_path)
-        desc = f"preparing new {prj_type} project repository {project_name} for pjm integration tests"
-    else:
-        desc = f"renewing {prj_type} project repository {project_name} for pjm integration tests"
-
-    adding_role = 'ctb' if ctb_project else 'mtn'
-    pdv = _itg_pdv(project_name, user_role=adding_role)
-    _write_itg_env(project_name, user_role=adding_role)
-
-    print(f" .!!. {desc} in {project_path=}, to be pushed onto {remote_url=} under the {adding_role=} role")
-
-    pdv.pdv_val('main_app_options')['branch'] = f"{norm_name(desc)}_on_{now_str(sep='_')}"
-    pdv = _renew_project(pdv, prj_type)
-    pdv.pdv_val('main_app_options').pop('branch')
-    _push_to_remote_and_pypi(pdv)
-    shutil.rmtree(project_path)
-
-    if prj_state == 'cloned' and os_path_isdir(project_path):
-        shutil.rmtree(project_path)
-    pdv = _itg_pdv(project_name)
-    if prj_state == 'cloned':
-        clone_project(pdv, project_name)
-    else:
-        pdv['host_api'] = host_api = _remote_connect(pdv, "fork")
-        host_api.fork_project(pdv, itg_ns_name + PDV_REPO_GROUP_SUFFIX + '/' + project_name)
-    _write_itg_env(project_name)
-
-    print(f" !!!! prepared {pdv['project_desc']} in {project_path=}" + (f" and at {remote_url=}" if add_remote else ""))
-
-    return add_remote
-
-
-def _push_to_remote_and_pypi(pdv: ProjectDevVars):
-    project_path, project_name = pdv['project_path'], pdv['project_name']
-
-    git_add(project_path)
-    prepare_commit(pdv, f"{project_name} created/extended by integration test preparation. V {{project_version}}")
-    commit_project(pdv)
-
-    pdv['host_api'] = host_api = _remote_connect(pdv, "push-new-itg-project")
-    host_api.push_project(pdv)
-    host_api.request_merge(pdv)
-    host_api.release_project(pdv, 'LATEST')
-
-    if pdv['pip_name']:
-        retries = 69  # waiting/checking/retrying maximal ~= 6 minutes (test.pypi.org is slow)
-        while retries and get_pypi_versions(pdv['pip_name'], pypi_test=True)[-1] != pdv['project_version']:
-            print(f"  ... waiting for the test.pypi.org release of the added {project_name} test project; {retries=}")
-            time.sleep(6)
-            retries -= 1
-
-    print(f"  ^^  {project_path} committed and pushed to origin{' and PyPI' if pdv['pip_name'] else ''}")
-
-
-def _remote_connect(pdv: ProjectDevVars, action: str) -> Union[GithubCom, GitlabCom]:
-    host_api: Union[GithubCom, GitlabCom] = globals()[REGISTERED_HOSTS_CLASS_NAMES[itg_domain]]()
-    pdv['host_api'] = host_api  # pdv['host_api'] is needed by _check_action()
-    assert host_api.connect(pdv), f" **** could not connect to remote host {itg_domain} to {action} itg repo"
-    return host_api
-
-
-def _write_itg_env(project_name: str, user_role: str = ''):
-    prj_path = os_path_join(itg_parent_path, project_name)
-    prj_role = itg_projects[project_name]['role']
-    is_maintainer = (user_role or prj_role) == 'mtn'
-
-    var_names_values = (
-        (ENV_VAR_NAME_PREFIX + 'AUTHOR', itg_mtn_name if is_maintainer else itg_ctb_name),
-        # (ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL', itg_mtn_email if is_mtn else itg_ctb_email),
-        (ENV_VAR_NAME_PREFIX + 'repo_user', itg_mtn_name if is_maintainer else itg_ctb_name),
-        (ENV_VAR_NAME_PREFIX + 'repo_token', itg_mtn_token if is_maintainer else itg_ctb_token),
-    )
-    if prj_role == 'ctb' and itg_projects[project_name]['state'] == 'cloned':
-        var_names_values += ((ENV_VAR_NAME_PREFIX + 'repo_group', itg_ctb_name),
-                             (ENV_VAR_NAME_PREFIX + 'pip_name', '""'))
-    elif not project_name.startswith(itg_ns_name + "_"):  # is namespace root/portion project
-        var_names_values += ((ENV_VAR_NAME_PREFIX + 'repo_group', f'{itg_ns_name}{PDV_REPO_GROUP_SUFFIX}'), )
-
-    write_file(os_path_join(prj_path, '.env'),
-               f"# auto-generated for {prj_role} user by pjm-test_project_manager integration tests" + os.linesep +
-               os.linesep.join(nam + "=" + val for nam, val in var_names_values) + os.linesep,
-               make_dirs=True)
-
-    sh_log(f"# {project_name=} integration test enabled/extended git log; user role: {user_role or prj_role}",
-           log_file_paths=sh_logs(log_enable_dir=prj_path, log_name_prefix='git'))
-
-
-def paths_of_test_projects(*local_paths: str, filter_state: str = '', filter_role: str = '') -> Iterable[str]:
-    remote_paths = [os_path_join(itg_parent_path, _prj_name) for _prj_name, _info in itg_projects.items()
-                    if (filter_state == '' or _info['state'] == filter_state)
-                    and (filter_role == '' or _info['role'] == filter_role)]
-
-    return *local_paths, *remote_paths
 
 
 def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path, module_repo_path):
@@ -376,8 +109,6 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
     assert REGISTERED_HOSTS_CLASS_NAMES
     assert TPL_IMPORT_NAMES
     assert CACHED_TPL_PROJECTS
-
-    assert not os_path_isfile(os_path_join(itg_parent_path, '.env'))  # ensure gap to prevent bleeding credentials/.envs
 
     parent_without_git_folder = os_path_dirname(empty_repo_path)
     for prj_path in (parent_without_git_folder, changed_repo_path, empty_repo_path, module_repo_path):
@@ -391,14 +122,6 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
             assert prj_state.startswith("¡empty or invalid project version"), f"failed for {prj_path=}"
         else:
             assert prj_state.startswith(uncommitted_guess_prefix), f"failed for {prj_path=}"
-
-    for prj_path in paths_of_test_projects():
-        pdv = ProjectDevVars(project_path=prj_path)
-
-        assert Version(latest_remote_version(pdv)) > Version(pdv['NULL_VERSION']), f"failed for {prj_path=}"
-        assert Version(latest_remote_version(pdv, increment_part=0)) == Version(pdv['project_version']), f"{prj_path=}"
-
-        assert guess_next_action(pdv) == 'renew_project', f"failed for {prj_path=}"
 
     print("``````test setup checks finished")
 
@@ -420,7 +143,7 @@ class TestActionsGitLab:
 
     def test_clean_releases(self, app_pjm, gitlab_remote, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
-        mocked_app_options['repo_token'] = itg_mtn_token
+        mocked_app_options['repo_token'] = tst_mtn_token
         mocked_app_options['more_verbose'] = True
 
         gitlab_remote.clean_releases(ProjectDevVars(project_path=module_repo_path))
@@ -478,7 +201,7 @@ class TestActionsGitLab:
     def test_show_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote, module_repo_path):
         verbose = debug_or_verbose()
         err_prefix = "empty or invalid project version"
-        for project_path in paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path):
+        for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
 
             gitlab_remote.show_status(ProjectDevVars(project_path=project_path))
 
@@ -499,7 +222,7 @@ class TestActionsGitLab:
                                      module_repo_path):
         verbose = debug_or_verbose()
         err_prefix = "detected main_branch='develop' with added/changed/uncommitted files: "
-        for project_path in paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path):
+        for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
             ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
 
             gitlab_remote.show_status(ProjectDevVars(project_path=project_path))
@@ -883,7 +606,7 @@ class TestActionsLocal:
 
         assert new_pdv['project_type'] == ROOT_PRJ
         assert os_path_isdir(project_path)
-        ver_file_path = main_file_path(project_path, ROOT_PRJ, namespace_name=tst_ns_name)
+        ver_file_path = main_file_path(cast(str, project_path), ROOT_PRJ, namespace_name=tst_ns_name)
         assert os_path_isfile(ver_file_path)
         assert os_path_basename(ver_file_path) == PY_INIT
         assert code_file_version(ver_file_path) == "0.3.1"
@@ -973,7 +696,7 @@ class TestActionsLocal:
             assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).split(os.linesep)[0]
 
     @skip_gitlab_ci
-    def test_refresh_children_outsourced(self, module_repo_path):
+    def test_refresh_children_managed(self, module_repo_path):
         par_pdv = ProjectDevVars(projecT_path=os_path_dirname(module_repo_path))
         chi_pdv = ProjectDevVars(project_path=module_repo_path)
         tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
@@ -1109,13 +832,13 @@ class TestActionsLocal:
     def test_update_mirror_pjm_redirect_onto_codeberg_user(self, capsys, app_pjm):
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
-            remote = get_mirror_urls(pdv)[0].replace('aedev-group-mirror', itg_mtn_name)
+            remote = get_mirror_urls(pdv)[0].replace('aedev-group-mirror', tst_mtn_name)
             # https://${CODEBERG_USERNAME}:${CODEBERG_TOKEN}@codeberg.org/${PDV_AUTHOR}/{project_name}.git
             assert CODEBERG_TOKEN_PART in remote    # update CODEBERG_TOKEN_PART in test_codeberg.py after token renewal
             update_mirror(pdv, remote)
 
         output = capsys.readouterr().out
-        assert itg_mtn_name in output
+        assert tst_mtn_name in output
         assert 'codeberg.org' in output
         assert pdv['project_name'] in output
         assert CODEBERG_TOKEN_PART not in output
@@ -1125,12 +848,12 @@ class TestActionsLocal:
     def test_update_mirror_pjm_redirect_onto_github_user(self, capsys, app_pjm):
         pdv = ProjectDevVars()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
-            remote = get_mirror_urls(pdv)[1].replace('aedev-group-mirror', itg_mtn_name)
+            remote = get_mirror_urls(pdv)[1].replace('aedev-group-mirror', tst_mtn_name)
             # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${PDV_AUTHOR}/{project_name}.git
             update_mirror(pdv, remote)
 
         output = capsys.readouterr().out
-        assert itg_mtn_name in output
+        assert tst_mtn_name in output
         assert 'github.com' in output
         assert pdv['project_name'] in output
         assert 'ghp_' not in output   # only the first 3 chars of token ('ghp') will be there
@@ -1146,7 +869,7 @@ class TestActionsLocal:
         labeled 'Allowed to force push' to 'On' or click the 'Unprotect' (yellow/red button) button.
         """
         pdv = ProjectDevVars()
-        auth = itg_mtn_name + ":" + itg_mtn_token + "@"
+        auth = tst_mtn_name + ":" + tst_mtn_token + "@"
         group = 'aedev-group-mirror'
         url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + group + "/" + pdv['project_name'] + '.git'
 
@@ -1157,14 +880,14 @@ class TestActionsLocal:
         assert pdv['repo_domain'] in output
         assert pdv['project_name'] in output
         assert auth not in output
-        assert itg_mtn_token not in output
+        assert tst_mtn_token not in output
         assert " ==== " in output
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_onto_gitlab_user(self, app_pjm, capsys):
         pdv = ProjectDevVars()
-        auth = itg_mtn_name + ":" + itg_mtn_token + "@"
-        user = itg_mtn_name
+        auth = tst_mtn_name + ":" + tst_mtn_token + "@"
+        user = tst_mtn_name
         url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + user + "/" + pdv['project_name'] + '.git'
 
         update_mirror(pdv, url)
@@ -1174,7 +897,7 @@ class TestActionsLocal:
         assert pdv['repo_domain'] in output
         assert pdv['project_name'] in output
         assert auth not in output
-        assert itg_mtn_token not in output
+        assert tst_mtn_token not in output
         assert " ==== " in output
 
 
@@ -1594,78 +1317,6 @@ class TestHelpersLocal:
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token
 class TestHelpersRemote:
     """ test helper functions that need internet access, some of them need also authentication. """
-    def test_guess_next_action(self):
-        for project_path in paths_of_test_projects():
-            project_name = os_path_basename(project_path)
-            git_checkout(project_path, "--detach")
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret.startswith("¡detached HEAD")
-
-            git_checkout(project_path, DEF_MAIN_BRANCH)
-            version_file = main_file_path(project_path, itg_projects[project_name]['type'],
-                                          namespace_name=itg_ns_name if project_name.startswith(itg_ns_name) else "")
-            ver_fil_content = read_file(version_file)
-            write_file(version_file, ver_fil_content.replace(VERSION_PREFIX, "any_var = " + VERSION_QUOTE))
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret.startswith("¡empty or invalid project version")
-
-            write_file(version_file, ver_fil_content)
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret == 'renew_project'   # committed version_file restored, working tree is clean / all committed
-
-            write_file(version_file, ver_fil_content + "# test_guess_next_action() added new line\n")
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret.startswith(uncommitted_guess_prefix)
-
-            new_branch = 'new_feature_branch_name_testing_guest_next_action' + now_str(sep="_")
-            git_checkout(project_path, new_branch=new_branch)
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret.startswith("¡unstaged files found")
-
-            git_add(project_path)
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret == 'prepare_commit'
-
-            write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "msg without project_version placeholder")
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret == 'prepare_commit'
-
-            write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "test_guest_next_action V {project_version}")
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret == 'commit_project'
-
-            git_commit(project_path, tst_pkg_version)
-            git_checkout(project_path, DEF_MAIN_BRANCH)
-            git_add(project_path)
-            git_commit(project_path, ProjectDevVars(project_path=project_path)['project_version'])
-
-            ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-            assert ret == 'renew_project'
-
-            if project_name not in itg_projects:  # exclude itg projects to keep ini/next renew action for further tests
-                git_checkout(project_path, new_branch)
-
-                ret = guess_next_action(ProjectDevVars(project_path=project_path))
-
-                assert ret.startswith(f"¡current branch '{new_branch}' not on remote")
-
     @skip_if_not_maintainer
     def test_init_act_exec_args_show_remote(self, capsys, app_pjm, mocked_app_options):
         mocked_app_options['action'] = 'show_remote'
@@ -1687,7 +1338,7 @@ class TestHelpersRemote:
         assert isinstance(ini_pdv.pdv_val('host_api'), GitlabCom)
         assert ini_pdv['repo_token'] == mocked_app_options['repo_token']
 
-        mocked_app_options['repo_token'] = itg_mtn_token   # use token from local .env file
+        mocked_app_options['repo_token'] = tst_mtn_token   # use token from local .env file
 
         ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
 
@@ -1713,7 +1364,7 @@ class TestHelpersRemote:
     def test_show_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
                          module_repo_path):
         mocked_app_options['more_verbose'] = False
-        test_projects = paths_of_test_projects(changed_repo_path, empty_repo_path, module_repo_path)
+        test_projects = (changed_repo_path, empty_repo_path, module_repo_path)
 
         err_prefix = "detected main_branch='develop' with added/changed/uncommitted files: "
 
@@ -1807,76 +1458,6 @@ class TestHelpersRemote:
         connection = MockedPythonanywhereApi()    # migrated web_app_version() from ae.pythonanywhere.deployed_version()
 
         assert web_app_version(cast(PythonanywhereApi, cast(object, connection))) == '3.6.9'
-
-
-@skip_gitlab_ci
-@skip_if_no_integration_tests
-@skip_if_not_maintainer
-class TestIntegration:
-    def test_full_git_workflow(self):
-        for project_path in paths_of_test_projects():
-            assert os_path_isdir(project_path)
-            project_name = os_path_basename(project_path)
-            project_type = itg_projects[project_name]['type']
-            project_role = itg_projects[project_name]['role']
-            project_state = itg_projects[project_name]['state']
-
-            pdv = _itg_pdv(project_name, branch=f'test_full_git_workflow_{now_str(sep="_")}')
-            old_ver = pdv['project_version']
-            pdv['host_api'] = host_api = _remote_connect(pdv, "workflow")  # guess_next_action() need pdv['host_api']
-
-            pdv = _renew_project(pdv, project_type)
-
-            new_ver = pdv['project_version']
-            assert pdv.pdv_val('main_app_options').pop('branch')
-            assert new_ver == latest_remote_version(pdv)
-            assert guess_next_action(pdv) == 'prepare_commit'
-
-            write_file(main_file_path(project_path, project_type, namespace_name=pdv['namespace_name']),
-                       f"# full git workflow integration test version: {old_ver} -> {new_ver}\n",
-                       extra_mode='a')
-
-            prepare_commit(pdv)
-
-            assert os_path_isfile(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
-            assert "{project_version}" in read_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
-            assert git_uncommitted(project_path)
-            assert guess_next_action(pdv) == 'commit_project'
-
-            commit_project(pdv)
-
-            assert "{project_version}" not in read_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME))
-            assert not git_uncommitted(project_path)
-            assert guess_next_action(pdv) == 'push_project'
-
-            host_api.push_project(pdv)
-
-            assert guess_next_action(pdv) == 'request_merge'
-
-            host_api.request_merge(pdv)
-
-            assert guess_next_action(pdv) == 'release_project'
-
-            if project_role == 'ctb' and project_state == 'forked':  # switch to mtn role to merge MR & for PyPI release
-                pdv['repo_user'] = itg_mtn_name
-                pdv['repo_token'] = itg_mtn_token
-                pdv['host_api'] = host_api = _remote_connect(pdv, "mtn_workflow")
-
-            if project_state == 'forked':
-                host_api.merge_pushed_project(pdv)
-
-            assert guess_next_action(pdv) == 'release_project'
-
-            host_api.release_project(pdv, 'LATEST')
-
-            if pdv['pip_name']:  # empty-pip_name/no-releases for 'ctb'&'cloned', because not having PYPI_PASSWORD in CI
-                retries = 69  # int(189.0 / pdv.pdv_val('main_app_options')['delay'])  # retrying/waiting ~3 minutes
-                while retries and (cur_ver := get_pypi_versions(pdv['pip_name'], pypi_test=True)[-1]) != new_ver:
-                    time.sleep(3)   # _wait(pdv)      # be patient because test.pypi.org is even slower than pypi.org
-                    print(f" . .  {retries=} left for PyPI release of {pdv['pip_name']} {new_ver} ({cur_ver=}")
-                    retries -= 1
-                print(f"!!!!!!{project_name=} full_git_workflow release-check to test.pypi.org with {retries=} left")
-                assert retries > 0, f"for {project_name=}"
 
 
 def test_teardown_cleanup_check_hook():

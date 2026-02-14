@@ -44,6 +44,7 @@ to the Pythonanywhere webserver.
 import ast
 import datetime
 import glob
+import json
 import os
 import re
 import shutil
@@ -57,6 +58,9 @@ from traceback import format_exc
 from typing import TYPE_CHECKING, Any, Callable, Container, Optional, Union, cast
 from unittest.mock import patch
 from urllib.parse import urlparse
+
+
+from anybadge import Badge                                                                  # type: ignore
 
 from github import Auth, Github, GithubException, UnknownObjectException
 from github.AuthenticatedUser import AuthenticatedUser
@@ -92,7 +96,7 @@ from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER, deploy_template       
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
     ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
+    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER, VERSION_PREFIX, VERSION_QUOTE,
     code_version, get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME,
@@ -222,6 +226,7 @@ def _check_action(pdv: ProjectDevVars, *acceptable_actions: Callable):
 
 
 def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:
+    # noinspection PyUnnecessaryCast
     increment_part = cast(int, get_app_option(pdv, 'versionIncrementPart'))
     project_path = pdv['project_path']
     local_ver = pdv['project_version']
@@ -447,7 +452,6 @@ def _check_resources(pdv: ProjectDevVars):
 def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-many-locals,too-many-statements
     mll = 120   # maximal length of code lines
     namespace_name = pdv['namespace_name']
-    project_name = pdv['project_name']
     project_path = pdv['project_path']
     project_type = pdv['project_type']
     project_packages = pdv.pdv_val('project_packages')
@@ -481,8 +485,7 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
         # no-implicit-reexport, strict-equality, warn-redundant-casts [*], warn-return-any, warn-unused-configs,
         # warn-unused-ignores [*], """
         sh_exit_if_exec_err(61, "mypy", extra_args=extra_args)
-        sh_exit_if_exec_err(61, "anybadge",
-                            extra_args=("--label=MyPy", "--value=passed", "--file=mypy_report/mypy.svg", "-o"))
+        Badge("MyPy", "passed").write_badge("mypy_report/mypy.svg", overwrite=True)
 
         os.makedirs(".pylint", exist_ok=True)
         out: list[str] = []
@@ -498,16 +501,16 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
         cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
         write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
         score = matcher.group(1) if matcher else "<undetermined>"
-        sh_exit_if_exec_err(62, "anybadge",
-                            extra_args=("-o", "--label=Pylint", "--file=.pylint/pylint.svg",  f"--value={score}",
-                                        "2=red", "4=orange", "8=yellow", "10=green"))
+        badge = Badge("Pylint", score, thresholds={6: 'orange', 9: 'yellow', 10: 'green'}, default_color='red')
+        badge.write_badge(".pylint/pylint.svg", overwrite=True)
         cae.po(f"  === pylint score: {score}")
 
-        sub_dir = ".pytest_cache"
-        cov_db = ".coverage"
+        os.makedirs(".pytest_cache", exist_ok=True)
         extra_args = [f"--ignore-glob=**/{_}/*" for _ in excludes] \
             + [f"--cov={_}" for _ in namespace_name and [namespace_name] or root_packages or ["."]] \
-            + ["--cov-report=html", "-v"] + options + [pdv['TESTS_FOLDER'] + "/"]
+            + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"] \
+            + options \
+            + [pdv['TESTS_FOLDER'] + "/"]
         if not namespace_name or project_type != PACKAGE_PRJ:
             # --doctest-glob="...*.py" does not work for .py files (only collectable via --doctest-modules).
             # doctest fails on namespace packages even with --doctest-ignore-import-errors (modules are ok).
@@ -515,23 +518,16 @@ def _check_types_linting_tests(pdv: ProjectDevVars):    # pylint: disable=too-ma
             # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
             extra_args = ["--doctest-modules"] + extra_args + path_args
         sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
-        db_ok = os_path_isfile(cov_db)
-        cae.chk(47, db_ok, f"coverage db file ({cov_db}) not created for tests or doctests in {path_args}")
-        os.makedirs(sub_dir, exist_ok=True)
-        if db_ok:           # prevent FileNotFoundError exception to allow ignorable fail on forced check run
-            os.rename(cov_db, os_path_join(sub_dir, cov_db))
-
-        os.chdir(sub_dir)   # KIS: move .coverage and create coverage.txt/coverage.svg in the .pytest_cache sub-dir
-        out = []            # IO fixed: .coverage/COV_CORE_DATAFILE in cwd, txt->stdout
-        sh_exit_if_exec_err(48, "coverage report --omit=" + ",".join("*/" + _ + "/*" for _ in excludes),
-                            lines_output=out)
-        write_file("coverage.txt", os.linesep.join(out))
-        sh_exit_if_exec_err(49, "coverage-badge -o coverage.svg -f")
-        cov_rep_file = f"{project_path}/htmlcov/{project_name}_py.html"
-        if not os_path_isfile(cov_rep_file):
-            cov_rep_file = f"{project_path}/htmlcov/index.html"
-        cae.po(f"  === pytest coverage: {out[-1][-4:]} - check detailed report in file:///{cov_rep_file}")
-        os.chdir("..")
+        try:
+            perc = json.loads(read_file(".pytest_cache/coverage.json"))['totals']['percent_covered_display']
+        except (FileNotFoundError, KeyError, ValueError, Exception) as ex:   # pylint: disable=broad-exception-caught
+            perc = f"<undetermined> {ex=}"
+        badge = Badge("coverage", perc, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
+        badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
+        # anybadge alternativ: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
+        # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
+        # write_file("coverage.svg", urlopen(cov_badge_url).read(), extra_mode="b")
+        cae.po(f"  === pytest coverage: {out[-1][-4:]} - check report in file:///{project_path}/htmlcov/index.html")
 
 
 def _check_version(version_number: str, prefix_to_check: str = "") -> str:
@@ -925,7 +921,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
     _renew_prj_dir(ini_pdv)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
 
-    inc_part = cast(int, get_app_option(ini_pdv, 'versionIncrementPart'))
+    inc_part = get_app_option(ini_pdv, 'versionIncrementPart')
     project_version = latest_remote_version(ini_pdv, increment_part=inc_part)
     errors = replace_file_version(ini_pdv['version_file'], version=project_version, increment_part=0)
     cae.chk(15, not bool(errors), errors)
@@ -1190,6 +1186,7 @@ def _update_project(ini_pdv: ProjectDevVars, remote_names: Container[str] = (), 
 
 
 def _wait(pdv: ProjectDevVars):
+    # noinspection PyUnnecessaryCast
     wait_seconds = float(cast(Union[str, int, float], get_app_option(pdv, 'delay')))
     cae.po(f"    . waiting {wait_seconds} seconds")
     time.sleep(wait_seconds)
@@ -1336,6 +1333,7 @@ class GithubCom(RemoteHost):
 
         auth_user = self.connection.get_user()  # get_user(user_or_org)->NamedUser-obj, not having create_repo() method
         if user_or_org_name.lower() == auth_user.login.lower():
+            # noinspection PyUnnecessaryCast
             return cast(AuthenticatedUser, auth_user)
 
         try:
@@ -1411,6 +1409,7 @@ class GithubCom(RemoteHost):
         if prj is None or not self.connection:
             cae.po(f" **** user account/repository {fork_repo_path} not available")
         else:
+            # noinspection PyUnnecessaryCast
             cast(AuthenticatedUser, self.connection.get_user()).create_fork(prj)
             cae.po(f" ==== forked {ini_pdv['project_title']} on {domain}")
 
@@ -1432,6 +1431,7 @@ class GithubCom(RemoteHost):
         new_repo = False
         push_refs = []
         if not self.repo_obj(0, "", owner_project) and self.connection:
+            # noinspection PyUnnecessaryCast
             usr_obj = cast(AuthenticatedUser, self.connection.get_user())
             usr_obj.create_repo(project_name)   # if not, then git push throws the error "Repository not found"
             new_repo = True
@@ -1735,9 +1735,10 @@ class GitlabCom(RemoteHost):
         all_branches = git_branches(project_path)
         cae.po(f"    - found {len(all_branches)} branches to check for to be deleted: {all_branches}")
 
-        pypi_test = ini_pdv['parent_folder'] == 'TsT'
+        pypi_test = ini_pdv['parent_folder'] == TEST_PROJECTS_PARENT_FOLDER
         pypi_releases = get_pypi_versions(pip_name, pypi_test=pypi_test)
-        cae.chk(34, bool(pypi_releases), f"no {'TsT' if pypi_test else ''}PyPI releases found (check pip installation)")
+        cae.chk(34, bool(pypi_releases), f"no {TEST_PROJECTS_PARENT_FOLDER if pypi_test else ''}PyPI releases found"
+                                         " (check pip installation)")
         cae.po(f"    - found {len(pypi_releases)} PyPI release versions protected from to be deleted: {pypi_releases}")
 
         deleted = []
@@ -2504,7 +2505,7 @@ def clone_project(ini_pdv: ProjectDevVars, owner_name_version: str) -> str:
     """
     project_path = ini_pdv['project_path']
     parent_path = project_path if ini_pdv['project_type'] == PARENT_PRJ else os_path_dirname(project_path)
-    req_branch = cast(str, get_app_option(ini_pdv, 'branch')) or ""
+    req_branch = get_app_option(ini_pdv, 'branch') or ""
     project_owner, project_name, project_version = project_owner_name_version(
         owner_name_version, owner_default=ini_pdv['repo_group'], namespace_default=ini_pdv['namespace_name'])
     branch_or_version = ini_pdv['VERSION_TAG_PREFIX'] + project_version if project_version else req_branch
@@ -2865,9 +2866,9 @@ def show_versions(ini_pdv: ProjectDevVars):     # pylint: disable=too-many-local
         msg += f" {remote_name}:{output[-1][1:] if output else '-': <9}"
 
     if pip_name := ini_pdv['pip_name']:
-        pypi_test = ini_pdv['parent_folder'] == 'TsT'
+        pypi_test = ini_pdv['parent_folder'] == TEST_PROJECTS_PARENT_FOLDER
         newest_ver = get_pypi_versions(pip_name, pypi_test=pypi_test)[-1] or '-'
-        msg += f" pypi{'TsT' if pypi_test else ''}:{newest_ver: <9}"
+        msg += f" pypi{TEST_PROJECTS_PARENT_FOLDER if pypi_test else ''}:{newest_ver: <9}"
 
     if ini_pdv['project_type'] == DJANGO_PRJ:
         web_domain = ini_pdv['web_domain']
@@ -2880,6 +2881,7 @@ def show_versions(ini_pdv: ProjectDevVars):     # pylint: disable=too-many-local
     cae.po(msg)
 
 
+# pylint: disable=too-many-branches
 @_action(*ANY_PRJ_TYPE, arg_names=(('mirror-url-or-remote-name', ), ), shortcut='mirror')
 def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):
     """ create or update a mirror of the actual repo onto the specified remote/host.
@@ -2981,7 +2983,7 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):
 # ----------------------- main ----------------------------------------------------------------------------------------
 
 
-def init_main():
+def init_main() -> ConsoleApp:
     """ initialize main app instance. """
     global cae          # pylint: disable=global-statement
     # because ae.core determines the app version with stack_var('__version__') it doesn't find it, alternatively to pass
