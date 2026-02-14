@@ -5,16 +5,15 @@ coverage-badge
 flake8
 mypy
 packaging
-Pillow          # for _check_resources()
+Pillow              # for _check_resources()
 types-Pillow
 PyGithub
 pylint
 pytest
-pytest-cov
+pytest-cov          # installs also the coverage package
 python-gitlab
 requests
 requests-toolbelt   # needed by PyGithub
-setuptools
 ae_base
 ae_files
 ae_paths

@@ -37,9 +37,8 @@ class TestHelpers:
             assert ensure_repo("user_or_group_name", "repo_name", "token") != ""
 
     def test_ensure_repo_fails_with_exception(self):
-        def _post(url, *_args, **_kwargs):
-            raise Exception()
-
+        # def _post(_url, *_args, **_kwargs):
+        #    raise Exception()
         with patch('requests.post', return_value=Mock(text='tst_err_msg')):
             assert ensure_repo("user_or_group_name", "repo_name", "token") != ""
             assert 'tst_err_msg' in ensure_repo("user_or_group_name", "repo_name", "token")

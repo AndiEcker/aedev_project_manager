@@ -14,16 +14,19 @@ from ae.base import (                                                           
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.managed_files import (                                                                          # type: ignore
     DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
-    ManagedFile, TemplateMngr, TemplateFiles)
+    ContextVars, ManagedFile, TemplateMngr, TemplateFiles)
 from ae.paths import path_items                                                                         # type: ignore
 from ae.shell import debug_or_verbose                                                                   # type: ignore
 from aedev.base import (                                                                                # type: ignore
-    ANY_PRJ_TYPE, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, CachedTemplates, TemplateProjectsType, TemplateProjectType,
+    ANY_PRJ_TYPE, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
+    CachedTemplates, TemplateProjectsType,
     get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_clone, sh_exit_if_git_err)
-from aedev.project_vars import ProjectDevVars, frozen_req_file_path                                     # type: ignore
+from aedev.project_vars import (                                                                        # type: ignore
+    PDV_repo_domain, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL,
+    ProjectDevVars, frozen_req_file_path)
 
 from aedev.project_manager.utils import PPF, get_app_option, ppp
 
@@ -57,35 +60,15 @@ TPL_IMPORT_NAMES = ([TPL_IMPORT_NAME_PREFIX + norm_name(_) + TPL_IMPORT_NAME_SUF
 """ import names of the generic project-type-related (aedev) template projects """
 
 
-# pylint: disable=too-many-locals,too-many-branches,too-many-statements
-def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False) -> TemplateMngr | None:
-    """ check the project files that are outdated or missing from the registered namespace/project templates.
-
-    :param cae:                 ConsoleApp instance.
-    :param pdv:                 project env/dev variables dict of the destination project to patch/refresh,
-                                providing values for (1) f-string template replacements, and (2) to control the template
-                                registering, patching, and deployment.
-    :param fail_on_outdated:    pass True to quit app if there are missing/outdated managed files (skip-able with -f).
-    :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
-                                and synced from templates. e.g. to retrieve a set of the destination project file paths
-                                that would be created/updated use set(<this return value>.deploy_files.keys()).
-
-    .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
-    """
-    cae.chk(41, not (errors := pdv.errors()), f"project dev var {errors=}")  # if pdv['AUTHOR']
-
-    project_type = pdv['project_type']
-    if project_type == NO_PRJ:
-        return None
-
+def _get_and_log_project_templates(cae: ConsoleApp, pdv: ProjectDevVars) -> TemplateProjectsType:
     namespace_name = pdv['namespace_name']
     project_path = pdv['project_path']
-    pdv['pypi_versions'] = get_pypi_versions(pdv['pip_name'], pypi_test=pdv['parent_folder'] == 'TsT')
-
+    project_type = pdv['project_type']
     dev_requires = pdv.pdv_val('dev_requires')
     dev_req_path = os_path_join(project_path, pdv['REQ_DEV_FILE_NAME'])
     add_dev_req = (not dev_requires and not os_path_isfile(dev_req_path)
                    and not os_path_isfile(dev_req_path + DEPLOY_LOCK_EXT))
+
     if 'project_templates' not in pdv:
         project_tpls = pdv['project_templates'] = project_templates(
             project_type, namespace_name, _get_app_tpl_options(cae, pdv), CACHED_TPL_PROJECTS,
@@ -114,28 +97,34 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
                    or _.startswith(namespace_name + '_' + namespace_name)]
             cae.vpo(f"   -- {dev_req_path} activating {len(drt)} template projects: {PPF(drt)}")
 
+    return project_tpls
+
+
+def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: str) -> TemplateFiles:
     get_files = partial(path_items, selector=os_path_isfile)
     tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and relative sub-paths
     for tpl_prj in project_tpls:
         tpl_path = tpl_prj['tpl_path']
-        patcher = f"by the project {tpl_prj['import_name']} {pdv['VERSION_TAG_PREFIX']}{tpl_prj['version']}"
+        patcher = f"by the project {tpl_prj['import_name']} {version_tag_prefix}{tpl_prj['version']}"
         for tpl_file_path in get_files(os_path_join(tpl_path, "**/.*")) + get_files(os_path_join(tpl_path, "**/*")):
             tpl_files.append((patcher, tpl_file_path, os_path_relpath(tpl_file_path, tpl_path)))
+    return tpl_files
 
+
+def _get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     tpl_vars = pdv.copy()
+    tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
     tpl_vars['frozen_req_file_path'] = frozen_req_file_path
     tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
     tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates
+    return tpl_vars
 
-    man = TemplateMngr(tpl_files, PATH_PREFIXES_PARSERS, tpl_vars)
 
-    tpls: list[TemplateProjectType] = pdv.pdv_val('project_templates')
-    tpl_cnt = len(tpls)
-    cae.dpo(f"   -- checked {tpl_cnt} of {len(CACHED_TPL_PROJECTS)} registered/cached template projects: "
-            + (PPF(tpls) if cae.verbose else " ".join(_['import_name'] + " v" + _['version'] for _ in tpls)))
-
+# pylint: disable=too-many-branches
+def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on_outdated: bool = False):
     missing = man.missing_files
     outdated = man.outdated_files
+    verbose = debug_or_verbose()
     if missing or outdated:
         if missing:
             cae.po(f"   -- {len(missing)} managed files missing: "
@@ -167,36 +156,66 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
                                           f"; update managed files via the actions 'refresh' or 'renew'")
 
     elif checked := man.checked_files:
-        cae.po(f"  === {len(checked)} managed files from {tpl_cnt} template projects are up-to-date"
+        cae.po(f"  === {len(checked)} {subject} are up-to-date"
                + (": " + (ppp(checked) if cae.verbose else " ".join(checked))
                   if verbose else ""))
 
     elif verbose:
-        cae.po(f"   == all {len(man.managed_files)} managed files of {tpl_cnt} associated template projects skipped!")
+        cae.po(f"   == all {len(man.managed_files)} {subject} skipped!")
 
     if cae.debug:
-        cae.po(f"   == template sync log of {len(man.managed_files)} managed files from {tpl_cnt} templates projects")
+        cae.po(f"   == template sync log of {len(man.managed_files)} {subject}")
         for log_line in man.log_lines(verbose=cae.verbose):
             cae.po(log_line)
+
+
+def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False) -> TemplateMngr | None:
+    """ check the project files that are outdated or missing from the registered namespace/project templates.
+
+    :param cae:                 ConsoleApp instance.
+    :param pdv:                 project env/dev variables dict of the destination project to patch/refresh,
+                                providing values for (1) f-string template replacements, and (2) to control the template
+                                registering, patching, and deployment.
+    :param fail_on_outdated:    pass True to quit app if there are missing/outdated managed files (skip-able with -f).
+    :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
+                                and synced from templates. e.g. to retrieve a set of the destination project file paths
+                                that would be created/updated use set(<this return value>.deploy_files.keys()).
+
+    .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
+    """
+    cae.chk(41, not (errors := pdv.errors()), f"project dev var {errors=}")  # if pdv['AUTHOR']
+
+    project_type = pdv['project_type']
+    if project_type == NO_PRJ:
+        return None
+
+    pdv['pypi_versions'] = get_pypi_versions(pdv['pip_name'],
+                                             pypi_test=pdv['parent_folder'] == TEST_PROJECTS_PARENT_FOLDER)
+
+    prj_tpls = _get_and_log_project_templates(cae, pdv)
+    tpl_cnt = len(prj_tpls)
+    tpl_files = _get_template_files(prj_tpls, pdv['VERSION_TAG_PREFIX'])
+    tpl_vars = _get_template_vars(pdv)
+
+    man = TemplateMngr(tpl_files, PATH_PREFIXES_PARSERS, tpl_vars)
+
+    cae.dpo(f"   -- checked {tpl_cnt} of {len(CACHED_TPL_PROJECTS)} registered/cached template projects: "
+            + (PPF(prj_tpls) if cae.verbose else " ".join(_['import_name'] + " v" + _['version'] for _ in prj_tpls)))
+    _log_check_summary(cae, man, f"managed files of {tpl_cnt} associated template projects", fail_on_outdated)
 
     return man
 
 
-def clone_template_project(import_name: str, version_tag: str, repo_root: str = "") -> str:
+def clone_template_project(import_name: str, version_tag: str) -> str:
     """ clone template package project from gitlab.com
 
     :param import_name:         template package import name.
     :param version_tag:         version tag of the template package to clone.
-    :param repo_root:           optional remote root URL to clone the template package from. if not specified then it
-                                compiles from the aedev.project_vars-defaults for protocol/domain/group-suffix and
-                                the namespace from the :paramref:`~clone_template_project.import_name` argument.
     :return:                    path to the templates folder within the template package project
                                 or an empty string if an error occurred..
     """
     namespace_name, portion_name = import_name.split('.')
-    if not repo_root:
-        # repo_root=f"{PDV_REPO_HOST_PROTOCOL}{PDV_repo_domain}/{namespace_name}{PDV_REPO_GROUP_SUFFIX}"
-        repo_root = f"https://gitlab.com/{namespace_name}-group"
+    repo_root = f"{PDV_REPO_HOST_PROTOCOL}{PDV_repo_domain}/{namespace_name}{PDV_REPO_GROUP_SUFFIX}"
 
     # partial clone tpl-prj into tmp dir, --depth 1 extra-arg is redundant if branch_or_tag/--single-branch is specified
     path = git_clone(repo_root, norm_name(import_name), "--filter=blob:none", "--sparse", branch_or_tag=version_tag)
@@ -211,6 +230,7 @@ def clone_template_project(import_name: str, version_tag: str, repo_root: str = 
 
 
 def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]:
+    # noinspection PyUnnecessaryCast
     req_ver = {_o: cast(str, get_app_option(pdv, _o)) for _o in cae.cfg_options
                if _o.endswith(TPL_PATH_OPTION_SUFFIX) or _o.endswith(TPL_VERSION_OPTION_SUFFIX)} \
             if 'main_app_options' in pdv else {}
@@ -225,7 +245,7 @@ def path_pfx_place_into_package_path(managed_file: ManagedFile):
     ctx_vars = managed_file.manager.context_vars
     pkg_path = os_path_relpath(ctx_vars['package_path'], ctx_vars['project_path'])
     if pkg_path != '.':
-        managed_file.extend_dst_file_path(pkg_path)
+        managed_file.extend_dst_file_path(cast(str, pkg_path))
 
 
 def path_pfx_skip_if_project_type(managed_file: ManagedFile, project_type: str):
@@ -283,7 +303,7 @@ def project_templates(project_type: str, namespace_name: str,
     :param version_tag_prefix:  version tag prefix.
     :return:                    list of the template packages needed by the specified project type/namespace.
     """
-    template_projects: list[TemplateProjectType] = []
+    template_projects: TemplateProjectsType = []
     reg_args = requested_options, cached_templates, dev_requires, template_projects, version_tag_prefix
 
     if namespace_name:
@@ -297,7 +317,7 @@ def project_templates(project_type: str, namespace_name: str,
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def register_template(import_name: str, requested_options: dict[str, str], cached_templates: CachedTemplates,
                       dev_requires: Union[list[str], tuple[str, ...]], template_packages: TemplateProjectsType,
-                      version_tag_prefix: str = GIT_VERSION_TAG_PREFIX, clone_url: str = ""):
+                      version_tag_prefix: str = GIT_VERSION_TAG_PREFIX):
     """ add/update the template register and the template packages list for the specified template package and version.
 
     :param import_name:         import name of the template package.
@@ -306,7 +326,6 @@ def register_template(import_name: str, requested_options: dict[str, str], cache
     :param dev_requires:        see description of the parameter :paramref:`project_template.dev_requires`.
     :param template_packages:   list of template packages, to be extended with the specified template package/version.
     :param version_tag_prefix:  version tag prefix.
-    :param clone_url:           optional URL to clone a template package from (see :func:`clone_template_project`).
     :raises AssertionError:     if both, the local path and the version option is specified.
     """
     prj_path = requested_options.get(template_path_option(import_name), "")
@@ -327,7 +346,7 @@ def register_template(import_name: str, requested_options: dict[str, str], cache
             else:
                 reg_pkg, prj_version = project_name_version(project_name, list(cached_templates.keys()))
                 if not reg_pkg:
-                    prj_version = get_pypi_versions(project_name)[-1]  # no 'aetst' tpl projects; they're all in 'aedev'
+                    prj_version = get_pypi_versions(project_name)[-1]  # no test tpl projects; they're all in 'aedev'
 
         if isinstance(dev_requires, list) and prj_version:
             if (dev_req_line := project_name + PROJECT_VERSION_SEP + prj_version) not in dev_requires:
@@ -336,7 +355,7 @@ def register_template(import_name: str, requested_options: dict[str, str], cache
     key = import_name + PROJECT_VERSION_SEP + prj_version
     if key not in cached_templates:
         if prj_version not in ('', 'local'):
-            templates_path = clone_template_project(import_name, version_tag_prefix + prj_version, repo_root=clone_url)
+            templates_path = clone_template_project(import_name, version_tag_prefix + prj_version)
         cached_templates[key] = {
             'import_name': import_name, 'tpl_path': templates_path, 'version': prj_version,
             'register_message':

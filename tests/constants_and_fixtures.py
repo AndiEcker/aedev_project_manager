@@ -3,23 +3,26 @@ import contextlib
 import os
 import tempfile
 
-from typing import Any, Optional, cast
+from typing import Any, Optional, Union, cast
 from unittest.mock import patch
 
 import pytest
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT, os_path_basename, os_path_isfile, os_path_join, read_file, write_file)
+    DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT,
+    load_env_var_defaults, os_path_basename, os_path_isfile, os_path_join,
+    read_file, write_file)
 from ae.core import main_app_instance
 from ae.console import ConsoleApp
 
-from aedev.base import DEF_MAIN_BRANCH
+from aedev.base import DEF_MAIN_BRANCH, TEST_PROJECTS_REMOTE
 from aedev.commands import in_prj_dir_venv, sh_exit_if_git_err
-from aedev.project_vars import PDV_NULL_VERSION, ProjectDevVars, increment_version
+from aedev.project_vars import (
+    ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, ProjectDevVars, increment_version)
 
-from aedev.project_manager.utils import get_app_option
+from aedev.project_manager.utils import REGISTERED_HOSTS_CLASS_NAMES, get_app_option
 from aedev.project_manager.templates import TPL_IMPORT_NAMES, template_path_option, template_version_option
-from aedev.project_manager.__main__ import init_main
+from aedev.project_manager.__main__ import init_main, GithubCom, GitlabCom
 
 
 # ---prepare unfinished/empty/changed namespace module/portion names&versions for unit tests (only on the local machine)
@@ -33,7 +36,27 @@ tst_nxt_pgk_ver = increment_version(tst_pkg_version)
 
 tst_root_prj_name = tst_ns_name + '_' + tst_ns_name
 tst_namespaces_roots = [tst_ns_name + '.' + tst_ns_name]
-TEST_TPL_REGISTER = {}      # map of the 3 template registers used by the tests, initialized in setup_module()
+
+tst_tpls_register = {}      # map of the 3 template registers used by the tests, initialized in setup_module()
+
+
+# get contributor|ctb & maintainer|mtn credential/token (in env|config variables)
+tst_ext_env = os.environ.copy()
+load_env_var_defaults(".", tst_ext_env)  # use local machine pjm project user to get maintainer&contributor name/mail
+
+tst_ctb_name = tst_ext_env.get('TEST_CONTRIBUTOR_NAME')
+tst_ctb_token = tst_ext_env.get('TEST_CONTRIBUTOR_TOKEN')
+# tst_ctb_email = tst_ext_env.get('TEST_CONTRIBUTOR_EMAIL')
+# tst_ctb_root_url = f"https://oauth2:{tst_ctb_token}@{TEST_PROJECTS_REMOTE}/{tst_ctb_name}"
+
+tst_mtn_name = tst_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
+tst_mtn_token = tst_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if tst_mtn_name != tst_ctb_name else ""
+# tst_mtn_email = tst_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR_EMAIL')
+# ..root_url = f"https://oauth2:{tst_mtn_token}@{TEST_PROJECTS_REMOTE}/{TEST_PROJECTS_NAMESPACE}{PDV_REPO_GROUP_SUFFIX}"
+
+
+skip_if_not_maintainer = pytest.mark.skipif('not bool(tst_mtn_token)',
+                                            reason=f"missing {TEST_PROJECTS_REMOTE} maintainer personal-access-token")
 
 
 @pytest.fixture
@@ -154,11 +177,30 @@ def ensure_tst_ns_portion_version_file(project_path: str) -> str:
 
 
 @pytest.fixture
+def gitlab_remote():
+    """ provide a connected Gitlab remote repository api """
+    assert tst_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {tst_mtn_token=}"
+    remote_project = GitlabCom()
+    remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
+                                             'repo_domain': TEST_PROJECTS_REMOTE,
+                                             'repo_token': tst_mtn_token}))
+
+    yield remote_project
+
+
+@pytest.fixture
 def module_repo_path():
     """ minimal/empty test namespace module project. """
     with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'module') as project_path:
         ensure_tst_ns_portion_version_file(project_path)
         yield project_path
+
+
+def remote_connect(pdv: ProjectDevVars, action: str) -> Union[GithubCom, GitlabCom]:
+    host_api: Union[GithubCom, GitlabCom] = globals()[REGISTERED_HOSTS_CLASS_NAMES[TEST_PROJECTS_REMOTE]]()
+    pdv['host_api'] = host_api  # pdv['host_api'] is needed by _check_action()
+    assert host_api.connect(pdv), f" **** could not connect to remote host {TEST_PROJECTS_REMOTE} to {action} tst repo"
+    return host_api
 
 
 @pytest.fixture
