@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.75
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.76
 image: python:3.12
 
 
@@ -7,7 +7,7 @@ image: python:3.12
 
 before_script:
   - python --version
-  - pip install --upgrade "setuptools<82" pip pipx
+  - pip install --upgrade setuptools pip pipx
   - pip install --upgrade -r requirements_frozen.txt -r tests/requirements_frozen.txt
 
 
@@ -30,7 +30,6 @@ pages:
     - ls -l -R
     - mkdir -p public/coverage
     - mv -f -v htmlcov/* public/coverage
-    - mv -f -v .pytest_cache/coverage.txt public/
     - mv -f -v .pytest_cache/coverage.svg public/
     - mv -f -v mypy_report/lineprecision.txt public/
     - mv -f -v mypy_report/mypy.svg public/
@@ -56,4 +55,5 @@ pypi_deploy:
      - pip install --upgrade pip build twine
      - python -m build
   script:
+    # use test.pypi.org for integration/unit test projects (if is under :data:`~aedev.base.TEST_PROJECTS_PARENT_FOLDER`)
     - twine upload --verbose dist/*

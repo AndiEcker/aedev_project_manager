@@ -100,6 +100,14 @@ def _get_and_log_project_templates(cae: ConsoleApp, pdv: ProjectDevVars) -> Temp
     return project_tpls
 
 
+def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]:
+    # noinspection PyUnnecessaryCast
+    req_ver = {_o: cast(str, get_app_option(pdv, _o)) for _o in cae.cfg_options
+               if _o.endswith(TPL_PATH_OPTION_SUFFIX) or _o.endswith(TPL_VERSION_OPTION_SUFFIX)} \
+            if 'main_app_options' in pdv else {}
+    return req_ver
+
+
 def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: str) -> TemplateFiles:
     get_files = partial(path_items, selector=os_path_isfile)
     tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and relative sub-paths
@@ -112,7 +120,7 @@ def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: 
 
 
 def _get_template_vars(pdv: ProjectDevVars) -> ContextVars:
-    tpl_vars = pdv.copy()
+    tpl_vars = pdv.as_dict()
     tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
     tpl_vars['frozen_req_file_path'] = frozen_req_file_path
     tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
@@ -135,20 +143,18 @@ def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on
         for file_name, new_content, old_content in outdated:
             cae.po(f"    - {file_name}  ------------")
             if isinstance(new_content, bytes) or isinstance(old_content, bytes):    # old_content check for mypy
-                dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]
+                dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]  # pragma: no cover
             else:
                 new_lines = new_content.splitlines(keepends=True)
                 old_lines = old_content.splitlines(keepends=True)
-                if verbose:
-                    if cae.verbose:
-                        dif = list(ndiff(old_lines, new_lines))
-                    else:
-                        dif = list(context_diff(old_lines, new_lines))
+                if not verbose:
+                    dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
+                elif cae.verbose:
+                    dif = list(ndiff(old_lines, new_lines))
+                elif cae.debug:
+                    dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
                 else:
-                    if cae.debug:
-                        dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
-                    else:
-                        dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
+                    dif = list(context_diff(old_lines, new_lines))
             cae.po("      " + "      ".join(dif), end="")
 
         cae.po()
@@ -180,6 +186,8 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
     :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
                                 and synced from templates. e.g. to retrieve a set of the destination project file paths
                                 that would be created/updated use set(<this return value>.deploy_files.keys()).
+                                ``None`` will be returned if no project type gets specified by the argument
+                                :paramref:`~check_templates.pdv`.
 
     .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
     """
@@ -229,14 +237,6 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
     return path
 
 
-def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]:
-    # noinspection PyUnnecessaryCast
-    req_ver = {_o: cast(str, get_app_option(pdv, _o)) for _o in cae.cfg_options
-               if _o.endswith(TPL_PATH_OPTION_SUFFIX) or _o.endswith(TPL_VERSION_OPTION_SUFFIX)} \
-            if 'main_app_options' in pdv else {}
-    return req_ver
-
-
 def path_pfx_place_into_package_path(managed_file: ManagedFile):
     """ path prefix callee for the :data:`MOVE_TPL_TO_PKG_PATH_NAME_PREFIX` prefix.
 
@@ -246,16 +246,6 @@ def path_pfx_place_into_package_path(managed_file: ManagedFile):
     pkg_path = os_path_relpath(ctx_vars['package_path'], ctx_vars['project_path'])
     if pkg_path != '.':
         managed_file.extend_dst_file_path(cast(str, pkg_path))
-
-
-def path_pfx_skip_if_project_type(managed_file: ManagedFile, project_type: str):
-    """ path prefix callback for the :data:`SKIP_PRJ_TYPE_PREFIX` prefix.
-
-    :param managed_file:        ManagedFile instance.
-    :param project_type:        project type prefix arg.
-    """
-    if project_type == managed_file.manager.context_vars['project_type']:
-        managed_file.skip(f"destination-project-type ({project_type=})")
 
 
 def path_pfx_skip_if_portion(managed_file: ManagedFile):
@@ -268,11 +258,21 @@ def path_pfx_skip_if_portion(managed_file: ManagedFile):
         managed_file.skip("destination-project-is-namespace-portion-skip")
 
 
+def path_pfx_skip_if_project_type(managed_file: ManagedFile, project_type: str):
+    """ path prefix callback for the :data:`SKIP_PRJ_TYPE_PREFIX` prefix.
+
+    :param managed_file:        ManagedFile instance.
+    :param project_type:        project type prefix arg.
+    """
+    if project_type == managed_file.manager.context_vars['project_type']:
+        managed_file.skip(f"destination-project-type ({project_type=})")
+
+
 PATH_PREFIXES_PARSERS = dict(DEFAULT_PATH_PREFIXES_PARSERS, **{
     MOVE_TPL_TO_PKG_PATH_NAME_PREFIX: (0, path_pfx_place_into_package_path),
-    SKIP_PRJ_TYPE_PREFIX: (1, path_pfx_skip_if_project_type),
     SKIP_IF_PORTION_PREFIX: (0, path_pfx_skip_if_portion),
-})
+    SKIP_PRJ_TYPE_PREFIX: (1, path_pfx_skip_if_project_type),
+})      #: mapping of path prefix parser markers (keys) to their corresponding parser functions (value)
 
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments
@@ -393,11 +393,16 @@ def setup_kwargs_literal(setup_kwargs: dict[str, Any]) -> str:
     return ret + sep + "}"
 
 
-def _template_options_prefix(import_name: str) -> str:
+def template_options_prefix(import_name: str) -> str:
+    """ unique key of a template package import name usable for command line options and to specify a template path.
+
+    :param import_name:         import name of the template package.
+    :return:                    command line option prefix of the specified template package.
+    """
     option_name = import_name.split('.')[-1]
     if option_name.endswith(TPL_IMPORT_NAME_SUFFIX):    # if it is a project type template (aedev.<project type>_tpls)
         return norm_name(option_name)                   # then use the template project portion name as option prefix
-    return 'portions_namespace_root'                     # for the portion's namespace root use hardcoded option name
+    return 'portions_namespace_root'                    # for the portion's namespace root use hardcoded option name
 
 
 def template_path_option(import_name: str) -> str:
@@ -406,7 +411,7 @@ def template_path_option(import_name: str) -> str:
     :param import_name:         template package import name.
     :return:                    template package version option key/name.
     """
-    return _template_options_prefix(import_name) + TPL_PATH_OPTION_SUFFIX
+    return template_options_prefix(import_name) + TPL_PATH_OPTION_SUFFIX
 
 
 def template_version_option(import_name: str) -> str:
@@ -415,4 +420,4 @@ def template_version_option(import_name: str) -> str:
     :param import_name:         template package import name.
     :return:                    template package path option key/name.
     """
-    return _template_options_prefix(import_name) + TPL_VERSION_OPTION_SUFFIX
+    return template_options_prefix(import_name) + TPL_VERSION_OPTION_SUFFIX

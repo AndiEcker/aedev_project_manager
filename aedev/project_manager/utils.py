@@ -30,6 +30,9 @@ ARGS_CHILDREN_DEFAULT = ((ARG_ALL, ), ('children-sets-expr', ), ('children-names
 DJANGO_EXCLUDED_FROM_CLEANUP = {'db.sqlite', 'project.db', '**/django.mo', 'media/**/*', 'static/**/*'}
 """ set of file path masks/pattern to exclude essential files from to be cleaned-up on the server. """
 
+PIP_FREEZE_COMMENT = '## The following requirements were added by pip freeze:'
+""" console output line of pip freeze command, separating the listed from the additional/unlisted packages. """
+
 # --------------- global types ----------------------------------------------------------------------------------------
 ActionArgs = list[str]                                      #: action arguments specified on pjm command line
 ActionArgNames = tuple[tuple[str, ...], ...]
@@ -78,7 +81,7 @@ def children_project_names(ini_pdv: ProjectDevVars, names: Sequence[str], chi_va
     """ check and compile a list of package names of the children of a namespace root or a projects parent folder.
 
     :param ini_pdv:             project dev variables of a root project or projects parent folder.
-    :param names:               names of the
+    :param names:               names of the children.
     :param chi_vars:            children project dev variables to double-check and to determine returned list order.
     :return:                    children package names list (ordered in the same order as the specified child pdvs).
     """
@@ -188,7 +191,7 @@ def get_host_domain(pdv: ProjectDevVars, var_prefix: str = 'repo_') -> str:
 
     :param pdv:                 project dev vars.
     :param var_prefix:          config variable name prefix. pass "web\\_" to get web server host config values.
-    :return:                    domain name of repository|web host.
+    :return:                    domain name of the host, or an empty string if '{var_prefix}domain' is not set.
     """
     host_domain = get_host_config_val(pdv, f'{var_prefix}domain')              # 'repo_domain' | 'web_domain'
     if host_domain is None:
@@ -205,7 +208,8 @@ def get_host_group(pdv: ProjectDevVars, host_domain: str) -> str:
 
     :param pdv:                 project dev vars.
     :param host_domain:         domain to get user token for.
-    :return:                    upstream user|group name or, if not found, then the default username PDV_AUTHOR.
+    :return:                    upstream user|group name or, if not found, then the default username PDV_AUTHOR,
+                                and if neither 'repo_group' nor 'AUTHOR' exists then an empty string..
     """
     user_group = get_host_config_val(pdv, 'repo_group', host_domain=host_domain)
     if user_group is None:
@@ -358,13 +362,12 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
     if release_remotes:
         return f"¡git workflow fully completed for {project_version=}! run pjm -b branch_name renew to start a new one"
 
+    merge_requests = []
     remote_api = pdv.pdv_val('host_api')
     if remote_api is not None and hasattr(remote_api, 'branch_merge_requests'):
         merge_requests = remote_api.branch_merge_requests(pdv, current_branch)
-    else:
-        merge_requests = []
-    if len(merge_requests) > 1 and pdv['REMOTE_UPSTREAM'] in remote_urls:  # multiple MRs and forked
-        return f"¡multiple merge requests found for {current_branch=} {merge_requests=}"
+        if len(merge_requests) > 1 and pdv['REMOTE_UPSTREAM'] in remote_urls:  # multiple MRs and forked
+            return f"¡multiple merge requests found for {current_branch=} {merge_requests=}"
 
     return 'release_project' if merge_requests else 'request_merge'
 
@@ -379,12 +382,70 @@ def ppp(output: Iterable[str]) -> str:
     return sep + sep.join(str(_) for _ in (output.items() if isinstance(output, dict) else output))
 
 
+def project_topics(pdv: ProjectDevVars) -> list[str]:
+    """ extracts the project topics of a project.
+
+    :param pdv:                 project development variables.
+    :return:                    list of the project topics.
+    """
+    topic_marker = 'Topic :: '      # set in :meth:`aedev_project_vars.ProjectDevVars._compile_setup_kwargs`
+    for classifier in pdv.pdv_val('setup_kwargs')['classifiers']:
+        if classifier.startswith(topic_marker):
+            return classifier[len(topic_marker):].split(' :: ')
+    return []
+
+
 def refresh_pdv(pdv: ProjectDevVars):
     """ refresh pdv in-place to reflect the current state of the project working tree.
 
-    :param pdv:
+    :param pdv:                 project development variables.
     """
     pdv.update(ProjectDevVars(project_path=pdv['project_path'], namespace_name=pdv['namespace_name']))
+
+
+def update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> list[str]:
+    """ update frozen requirements file
+
+    :param req_file_path:       file path of the requirements file.
+    :param all_packages:        pass True to include also not explicitly requested packages (added by pip freeze).
+    :return:                    list of errors or an empty list.
+    """
+    if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
+        return []
+
+    out_lines: list[str] = []
+    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path), lines_output=out_lines)
+
+    errors: list[str] = []
+    if out_lines and out_lines[-1] == STDERR_END_MARKER:
+        line_no = len(out_lines) - 2
+        while out_lines[line_no] != STDERR_BEG_MARKER:
+            errors.insert(0, out_lines[line_no])
+            line_no -= 1
+    if errors:
+        return errors
+
+    if not all_packages:
+        line_count = len(read_file(req_file_path).split(os.linesep))
+        out_lines = out_lines[:line_count + 1]
+    for line, req in enumerate(out_lines):
+        if req.startswith("-e "):
+            prj_name = req.rsplit('=', maxsplit=1)[-1]
+            prj_path = os_path_join("..", prj_name)
+            if os_path_isdir(prj_path):
+                prj_pdv = ProjectDevVars(project_path=prj_path)
+                version = prj_pdv['project_version']
+                out_lines[line] = f"{prj_name}=={version}  # {req}"
+
+    if REFRESHABLE_TEMPLATE_MARKER in out_lines[0]:
+        out_lines = out_lines[1:]
+    file_content = os.linesep.join(out_lines)
+    if not all_packages:
+        file_content = file_content.replace(PIP_FREEZE_COMMENT, "")
+
+    write_file(frozen_file_path, file_content)
+
+    return []
 
 
 def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
@@ -410,51 +471,6 @@ def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
     refresh_pdv(pdv)
 
     return errors
-
-
-def update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> list[str]:
-    """ update frozen requirements file
-
-    :param req_file_path:       file path of the requirements file.
-    :param all_packages:        pass True to include also not explicitly requested packages (added by pip freeze).
-    :return:                    list of errors or an empty list.
-    """
-    if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
-        return []
-
-    out_lines: list[str] = []
-    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path), lines_output=out_lines)
-
-    errors: list[str] = []
-    if out_lines and out_lines[-1] == STDERR_END_MARKER:
-        line_no = len(out_lines) - 2
-        while out_lines[line_no] != STDERR_BEG_MARKER:
-            errors.insert(0, out_lines[line_no])
-            line_no -= 1
-    if errors:
-        return errors
-
-    line_count = len(read_file(req_file_path).split(os.linesep))
-    if not all_packages:
-        out_lines = out_lines[:line_count]
-    for line, req in enumerate(out_lines):
-        if req.startswith("-e "):
-            prj_name = req.rsplit('=', maxsplit=1)[-1]
-            prj_path = os_path_join("..", prj_name)
-            if os_path_isdir(prj_path):
-                prj_pdv = ProjectDevVars(project_path=prj_path)
-                version = prj_pdv['project_version']
-                out_lines[line] = f"{prj_name}=={version}  # {req}"
-
-    if REFRESHABLE_TEMPLATE_MARKER in out_lines[0]:
-        out_lines = out_lines[1:]
-    file_content = os.linesep.join(out_lines)
-    if not all_packages:
-        file_content = file_content.replace("## The following requirements were added by pip freeze:", "")
-
-    write_file(frozen_file_path, file_content)
-
-    return []
 
 
 def write_commit_message(pdv: ProjectDevVars, pkg_version: str = "{project_version}", title: str = ""):
