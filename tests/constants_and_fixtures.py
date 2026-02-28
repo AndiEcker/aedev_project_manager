@@ -1,4 +1,4 @@
-""" test constants and fixtures. """
+""" test constants and fixtures of the aedev.project_manager project. """
 import contextlib
 import os
 import tempfile
@@ -12,7 +12,7 @@ from ae.base import (
     DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT,
     load_env_var_defaults, os_path_basename, os_path_isfile, os_path_join,
     read_file, write_file)
-from ae.core import main_app_instance
+from ae.core import DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE, main_app_instance
 from ae.console import ConsoleApp
 
 from aedev.base import DEF_MAIN_BRANCH, TEST_PROJECTS_REMOTE
@@ -55,6 +55,7 @@ tst_mtn_token = tst_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if tst_mt
 # ..root_url = f"https://oauth2:{tst_mtn_token}@{TEST_PROJECTS_REMOTE}/{TEST_PROJECTS_NAMESPACE}{PDV_REPO_GROUP_SUFFIX}"
 
 
+debug_levels = [DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE]
 skip_if_not_maintainer = pytest.mark.skipif('not bool(tst_mtn_token)',
                                             reason=f"missing {TEST_PROJECTS_REMOTE} maintainer personal-access-token")
 
@@ -62,7 +63,16 @@ skip_if_not_maintainer = pytest.mark.skipif('not bool(tst_mtn_token)',
 @pytest.fixture
 def app_pjm(restore_app_env):
     """ provide project-manager-ConsoleApp instance that will be unregistered automatically """
-    yield init_main()
+    return init_main()
+
+
+@pytest.fixture(params=debug_levels, ids=[f"debug_level=={_}" for _ in debug_levels])
+def app_pjm_debug(request, app_pjm):
+    print(f"\n>>> app_pjm_debug called with param={request.param}")
+    app_pjm.parse_arguments = lambda *_args: None
+    app_pjm.set_option('debug_level', request.param, save_to_config=False)
+
+    return app_pjm
 
 
 @pytest.fixture
@@ -97,6 +107,8 @@ def mocked_app_options():
     main_app.get_argument = main_app.get_option = lambda opt: mocked_options.get(opt, None)
 
     with (patch('aedev.project_manager.utils.get_app_option', new=_app_option),
+          patch('aedev.project_manager.__main__.get_app_option', new=_app_option),
+          patch('aedev.project_manager.templates.get_app_option', new=_app_option),
           patch('ae.core.main_app_instance', return_value=main_app),
           patch('aedev.project_manager.__main__.debug_or_verbose', new=_dbg_or_verbose),
           patch('ae.shell.debug_or_verbose', new=_dbg_or_verbose),
@@ -114,6 +126,14 @@ def init_parent():
         path = os_path_join(temp_path, DEF_PROJECT_PARENT_FOLDER)
         os.makedirs(path)
         yield path
+
+
+def pdv_with_email(**pdv_kwargs) -> ProjectDevVars:
+    """ pdv instance with non-empty values in AUTHOR and AUTHOR_EMAIL, to suppress pdv.errors() warnings. """
+    pdv = ProjectDevVars(**pdv_kwargs)
+    pdv['AUTHOR'] = 'AndiEcker'
+    pdv['AUTHOR_EMAIL'] = 'aecker2@gmail.com'
+    return pdv
 
 
 @pytest.fixture
@@ -181,7 +201,7 @@ def gitlab_remote():
     """ provide a connected Gitlab remote repository api """
     assert tst_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {tst_mtn_token=}"
     remote_project = GitlabCom()
-    remote_project.connect(ProjectDevVars(**{'REPO_HOST_PROTOCOL': "https://",
+    remote_project.connect(pdv_with_email(**{'REPO_HOST_PROTOCOL': "https://",
                                              'repo_domain': TEST_PROJECTS_REMOTE,
                                              'repo_token': tst_mtn_token}))
 
@@ -190,7 +210,7 @@ def gitlab_remote():
 
 @pytest.fixture
 def module_repo_path():
-    """ minimal/empty test namespace module project. """
+    """ minimal/empty test namespace module project with lots of templates missing and one outdated. """
     with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'module') as project_path:
         ensure_tst_ns_portion_version_file(project_path)
         yield project_path

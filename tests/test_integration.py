@@ -44,7 +44,7 @@ from tests.conftest import logging_unpatched_shutdown_setup, logging_unpatched_s
 
 
 from tests.constants_and_fixtures import (
-    gitlab_remote, mocked_app_options, remote_connect,
+    gitlab_remote, mocked_app_options, pdv_with_email, remote_connect,
     tst_ctb_name, tst_ctb_token, tst_mtn_name, tst_mtn_token,
     tst_namespaces_roots, tst_pkg_version, tst_tpls_register,
     uncommitted_guess_prefix)
@@ -205,7 +205,7 @@ def _itg_pdv(project_name: str, branch: str = '', user_role: str = '') -> Projec
     else:
         pdv_kwargs['repo_group'] = TEST_PROJECTS_NAMESPACE + PDV_REPO_GROUP_SUFFIX
 
-    pdv = ProjectDevVars(**pdv_kwargs)
+    pdv = pdv_with_email(**pdv_kwargs)
     return pdv
 
 
@@ -376,7 +376,7 @@ class TestEnvPreparation:
                 return
             if _uncommitted != {'dev_requirements.txt'}:
                 print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
-            pdv = ProjectDevVars(main_app_options={'branch': "pjm_itg_tst_portion_added_to_namespace_" + now_str(),
+            pdv = pdv_with_email(main_app_options={'branch': "pjm_itg_tst_portion_added_to_namespace_" + now_str(),
                                                    'delay': 3,  # needed by request_merge()/get_app_option()
                                                    'versionIncrementPart': 3},  # .. by push/get_app_option()
                                  project_path=ITG_ROOT_PRJ_PATH, repo_token=tst_mtn_token)
@@ -403,13 +403,13 @@ class TestEnvPreparation:
 
     @pytest.mark.parametrize(*_itg_test_projects_parametrize(), ids=str)
     def test_setup_of_test_project_git_state(self, itg_test_prj):
-        pdv = ProjectDevVars(project_path=itg_test_prj.path)
+        pdv = pdv_with_email(project_path=itg_test_prj.path)
 
         assert guess_next_action(pdv) == 'renew_project'
 
     @pytest.mark.parametrize(*_itg_test_projects_parametrize(), ids=str)
     def test_setup_of_test_project_versions(self, itg_test_prj):
-        pdv = ProjectDevVars(project_path=itg_test_prj.path)
+        pdv = pdv_with_email(project_path=itg_test_prj.path)
         prj_version = Version(pdv['project_version'])
 
         assert Version(latest_remote_version(pdv)) > Version(pdv['NULL_VERSION'])
@@ -425,7 +425,7 @@ class TestActionsGitLab:
     def test_show_status(self, itg_test_prj, capsys, gitlab_remote):
         verbose = debug_or_verbose()
 
-        gitlab_remote.show_status(ProjectDevVars(project_path=itg_test_prj.path))
+        gitlab_remote.show_status(pdv_with_email(project_path=itg_test_prj.path))
 
         output = capsys.readouterr().out
         assert ("-- project vars:" in output) is verbose
@@ -436,7 +436,7 @@ class TestActionsGitLab:
     def test_show_status_main_branch(self, itg_test_prj, capsys, gitlab_remote):
         verbose = debug_or_verbose()
 
-        gitlab_remote.show_status(ProjectDevVars(project_path=itg_test_prj.path))
+        gitlab_remote.show_status(pdv_with_email(project_path=itg_test_prj.path))
 
         output = capsys.readouterr().out
         assert ("-- project vars:" in output) is verbose
@@ -455,7 +455,7 @@ class TestHelpersRemote:
         namespace_name = project_name.startswith(TEST_PROJECTS_NAMESPACE) and TEST_PROJECTS_NAMESPACE or ""
         git_checkout(project_path, "--detach")
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret.startswith("¡detached HEAD")
 
@@ -464,53 +464,53 @@ class TestHelpersRemote:
         ver_fil_content = read_file(version_file)
         write_file(version_file, ver_fil_content.replace(VERSION_PREFIX, "any_var = " + VERSION_QUOTE))
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret.startswith("¡empty or invalid project version")
 
         write_file(version_file, ver_fil_content)
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret == 'renew_project'   # committed version_file restored, working tree is clean / all committed
 
         write_file(version_file, ver_fil_content + "# test_guess_next_action() added new line\n")
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret.startswith(uncommitted_guess_prefix)
 
         new_branch = 'new_feature_branch_name_testing_guest_next_action' + now_str(sep="_")
         git_checkout(project_path, new_branch=new_branch)
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret.startswith("¡unstaged files found")
 
         git_add(project_path)
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret == 'prepare_commit'
 
         write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "msg without project_version placeholder")
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret == 'prepare_commit'
 
         write_file(os_path_join(project_path, COMMIT_MSG_FILE_NAME), "test_guest_next_action V {project_version}")
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret == 'commit_project'
 
         git_commit(project_path, tst_pkg_version)
         git_checkout(project_path, DEF_MAIN_BRANCH)
         git_add(project_path)
-        git_commit(project_path, ProjectDevVars(project_path=project_path)['project_version'])
+        git_commit(project_path, pdv_with_email(project_path=project_path)['project_version'])
 
-        ret = guess_next_action(ProjectDevVars(project_path=project_path))
+        ret = guess_next_action(pdv_with_email(project_path=project_path))
 
         assert ret == 'renew_project'
 
@@ -519,7 +519,7 @@ class TestHelpersRemote:
         mocked_app_options['more_verbose'] = False
         project_path = itg_test_prj.path
 
-        _show_status(ProjectDevVars(project_path=project_path))
+        _show_status(pdv_with_email(project_path=project_path))
 
         output = capsys.readouterr().out
         assert output, f"with {project_path=}"
@@ -529,7 +529,7 @@ class TestHelpersRemote:
 
         mocked_app_options['more_verbose'] = True
 
-        _show_status(ProjectDevVars(project_path=project_path))
+        _show_status(pdv_with_email(project_path=project_path))
 
         output = capsys.readouterr().out
         assert output, f"with {project_path=}"

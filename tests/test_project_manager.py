@@ -38,7 +38,7 @@ from aedev.commands import (
     git_uncommitted, in_os_env)
 from aedev.project_vars import (
     PDV_NULL_VERSION, PLAYGROUND_PRJ, ROOT_PRJ,
-    latest_remote_version, main_file_path, ProjectDevVars)
+    latest_remote_version, main_file_path)
 
 from aedev.project_manager.templates import CACHED_TPL_PROJECTS, register_template
 from aedev.project_manager.utils import get_mirror_urls, guess_next_action
@@ -46,7 +46,7 @@ from aedev.project_manager.utils import get_mirror_urls, guess_next_action
 from tests.constants_and_fixtures import (
     tst_tpls_register,
     app_pjm, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, gitlab_remote, init_parent,
-    tst_mtn_name, tst_mtn_token, mocked_app_options, module_repo_path,
+    tst_mtn_name, tst_mtn_token, mocked_app_options, module_repo_path, pdv_with_email,
     root_repo_path, skip_if_not_maintainer,
     temp_parent_path, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx, tst_pkg_version,
     tst_root_prj_name, uncommitted_guess_prefix)
@@ -112,7 +112,7 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
 
     parent_without_git_folder = os_path_dirname(empty_repo_path)
     for prj_path in (parent_without_git_folder, changed_repo_path, empty_repo_path, module_repo_path):
-        pdv = ProjectDevVars(project_path=prj_path)
+        pdv = pdv_with_email(project_path=prj_path)
         assert latest_remote_version(pdv) == "0.3.1", f"failed for {prj_path=}"
 
         prj_state = guess_next_action(pdv)
@@ -128,30 +128,17 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
 
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token
 class TestActionsGitLab:
-    def test_show_remote1(self, app_pjm, capsys, gitlab_remote, temp_parent_path):
-        prj_grp = 'ae-group'
-        prj_nam = 'ae_base'
-        with (patch('aedev.project_manager.utils.get_host_group', return_value=prj_grp),
-              patch('aedev.project_manager.utils.get_host_domain', return_value=""), ):
-
-            gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
-
-            output = capsys.readouterr().out
-            assert " -- " + prj_grp + "/" + prj_nam + " remote repository attributes:" in output
-            assert " - default_branch = develop" in output
-            assert " - visibility = public" in output
-
     def test_clean_releases(self, app_pjm, gitlab_remote, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['repo_token'] = tst_mtn_token
         mocked_app_options['more_verbose'] = True
 
-        gitlab_remote.clean_releases(ProjectDevVars(project_path=module_repo_path))
+        gitlab_remote.clean_releases(pdv_with_email(project_path=module_repo_path))
 
     def test_fork_project(self, app_pjm, gitlab_remote, temp_parent_path):
         project_name = 'ae_base'
         project_path = os_path_join(esc_parent_path or temp_parent_path, project_name)
-        pdv = ProjectDevVars(project_path=project_path)
+        pdv = pdv_with_email(project_path=project_path)
 
         gitlab_remote.fork_project(pdv, "ae-group/" + project_name)
 
@@ -165,7 +152,7 @@ class TestActionsGitLab:
         with (patch('aedev.project_manager.utils.get_host_group', return_value=prj_grp),
               patch('aedev.project_manager.utils.get_host_domain', return_value=""), ):
 
-            gitlab_remote.show_remote(ProjectDevVars(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
+            gitlab_remote.show_remote(pdv_with_email(project_path=temp_parent_path), f'{prj_grp}/{prj_nam}')
 
             output = capsys.readouterr().out
             assert " -- " + prj_grp + "/" + prj_nam + " remote repository attributes:" in output
@@ -175,9 +162,9 @@ class TestActionsGitLab:
     def test_show_children_status(self, capsys, app_pjm, changed_repo_path, empty_repo_path, gitlab_remote,
                                   mocked_app_options, module_repo_path):
         mocked_app_options['more_verbose'] = False
-        chi_prj_vars = {norm_name(os_path_basename(_)): ProjectDevVars(project_path=_) 
+        chi_prj_vars = {norm_name(os_path_basename(_)): pdv_with_email(project_path=_)
                         for _ in (changed_repo_path, empty_repo_path, module_repo_path)}
-        par_pdv = ProjectDevVars(project_path=os_path_dirname(changed_repo_path), project_type=PARENT_PRJ,
+        par_pdv = pdv_with_email(project_path=os_path_dirname(changed_repo_path), project_type=PARENT_PRJ,
                                  children_project_vars=chi_prj_vars)
         assert par_pdv['project_type'] == PARENT_PRJ
 
@@ -203,7 +190,7 @@ class TestActionsGitLab:
         err_prefix = "empty or invalid project version"
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
 
-            gitlab_remote.show_status(ProjectDevVars(project_path=project_path))
+            gitlab_remote.show_status(pdv_with_email(project_path=project_path))
 
             output = capsys.readouterr().out
             assert ("-- project vars:" in output) is verbose
@@ -225,7 +212,7 @@ class TestActionsGitLab:
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
             ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
 
-            gitlab_remote.show_status(ProjectDevVars(project_path=project_path))
+            gitlab_remote.show_status(pdv_with_email(project_path=project_path))
 
             output = capsys.readouterr().out
             assert ("-- project vars:" in output) is verbose
@@ -249,7 +236,7 @@ class TestActionsGitLab:
         for project_path in (changed_repo_path, empty_repo_path, module_repo_path):
             ensure_tst_ns_portion_version_file(project_path)
             assert git_checkout(project_path, new_branch="feature_branch_to_prevent_check_action_errors") == ""
-            pdv = ProjectDevVars(project_path=project_path)
+            pdv = pdv_with_email(project_path=project_path)
 
             gitlab_remote.show_status(pdv)
 
@@ -275,7 +262,7 @@ class TestActionsGitLab:
             ensure_tst_ns_portion_version_file(project_path)
             git_checkout(project_path, new_branch="feature_branch_to_prevent_check_action_errors")
             git_add(project_path)
-            pdv = ProjectDevVars(project_path=project_path)
+            pdv = pdv_with_email(project_path=project_path)
             if project_path in (changed_repo_path, empty_repo_path, module_repo_path):
                 prepare_commit(pdv, f"commit of {project_path=} for show-status action tests V {{project_version}}")
                 commit_project(pdv)
@@ -301,13 +288,14 @@ class TestActionsLocal:
         tpl_name = REFRESHABLE_TEMPLATE_PATH_PFX + "add_tpl_file.xyz"
         tpl_content = "tpl content"
         tpl_src_path = os_path_join(module_repo_path, tpl_name)
+        # noinspection PyTypeChecker
         write_file(tpl_src_path, tpl_content)
         tpl_dst_path = os_path_join(module_repo_path, tst_ns_name, tpl_name[len(REFRESHABLE_TEMPLATE_PATH_PFX):])
-        mod_pdv = ProjectDevVars(project_path=module_repo_path)
+        mod_pdv = pdv_with_email(project_path=module_repo_path)
 
         assert not add_children_file(mod_pdv, "not_existing_file.xxx", tst_ns_name, mod_pdv)
 
-        new_pdv = ProjectDevVars(project_path=empty_repo_path)
+        new_pdv = pdv_with_email(project_path=empty_repo_path)
         new_dst_path = os_path_join(empty_repo_path, tst_ns_name, file_name)
 
         assert not add_children_file(new_pdv, file_src_path, tst_ns_name, new_pdv)  # fail because no tst_ns_name dir
@@ -332,39 +320,42 @@ class TestActionsLocal:
 
         assert not os_path_isfile(tpl_dst_path)
 
+        # noinspection PyTypeChecker
         assert not add_children_file(mod_pdv, tpl_src_path, tst_ns_name, mod_pdv)
 
         assert os_path_isfile(tpl_dst_path)
+        # noinspection PyTypeChecker
         assert tpl_content in read_file(tpl_dst_path)
+        # noinspection PyTypeChecker
         assert REFRESHABLE_TEMPLATE_MARKER in read_file(tpl_dst_path)
 
     def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
                                       module_repo_path, patched_shutdown_wrapper):
-        par_pdv = ProjectDevVars(project_path=os_path_dirname(changed_repo_path))
+        par_pdv = pdv_with_email(project_path=os_path_dirname(changed_repo_path))
 
-        check_children_integrity(par_pdv, ProjectDevVars(project_path=changed_repo_path))
+        check_children_integrity(par_pdv, pdv_with_email(project_path=changed_repo_path))
         assert " ==== " in capsys.readouterr().out
 
-        check_children_integrity(par_pdv, ProjectDevVars(project_path=empty_repo_path))
+        check_children_integrity(par_pdv, pdv_with_email(project_path=empty_repo_path))
         assert " ==== " in capsys.readouterr().out
 
-        cl = patched_shutdown_wrapper(check_children_integrity, par_pdv, ProjectDevVars(project_path=module_repo_path))
+        cl = patched_shutdown_wrapper(check_children_integrity, par_pdv, pdv_with_email(project_path=module_repo_path))
         assert len(cl) == 1
         assert cl[0]['exit_code'] == 46 if on_ci_host() else 44  # (44, tplsChk) (46, pytest-exec w/ CI_PROJECT_ID set)
         assert capsys.readouterr().out
 
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
-        check_integrity(ProjectDevVars(project_path=changed_repo_path))
+        check_integrity(pdv_with_email(project_path=changed_repo_path))
         assert capsys.readouterr().out
 
-        check_integrity(ProjectDevVars(project_path=empty_repo_path))
+        check_integrity(pdv_with_email(project_path=empty_repo_path))
         assert capsys.readouterr().out
 
     def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,
                                     patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = False
 
-        calls = patched_shutdown_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
+        calls = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=module_repo_path))
 
         assert len(calls) == 1
         assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (13, ) (44, ) (46, w/ CI_PROJECT_ID set)
@@ -372,7 +363,7 @@ class TestActionsLocal:
 
         mocked_app_options['more_verbose'] = True
 
-        calls = patched_shutdown_wrapper(check_integrity, ProjectDevVars(project_path=module_repo_path))
+        calls = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=module_repo_path))
 
         assert len(calls) == 1
         assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (44, ) (46, )
@@ -382,7 +373,7 @@ class TestActionsLocal:
         project_versions = (f"ae-group/ae_base{PROJECT_VERSION_SEP}0.3.60", f"ae_paths{PROJECT_VERSION_SEP}0.3.42")
 
         with init_parent() as parent_dir:
-            par_pdv = ProjectDevVars(project_path=parent_dir, namespace_name='ae', repo_group='ae-group')
+            par_pdv = pdv_with_email(project_path=parent_dir, namespace_name='ae', repo_group='ae-group')
 
             project_paths = clone_children(par_pdv, *project_versions)
 
@@ -399,7 +390,7 @@ class TestActionsLocal:
         project_version = "0.3.81"
 
         with init_parent() as parent_dir:
-            par_pdv = ProjectDevVars(main_app_options={'branch': GIT_RELEASE_REF_PREFIX + project_version},
+            par_pdv = pdv_with_email(main_app_options={'branch': GIT_RELEASE_REF_PREFIX + project_version},
                                      project_path=parent_dir, repo_group='ae-group')
 
             project_path = clone_project(par_pdv, project_name)
@@ -415,7 +406,7 @@ class TestActionsLocal:
         project_version = "0.3.81"
 
         with init_parent() as parent_dir:
-            par_pdv = ProjectDevVars(main_app_options={'branch': GIT_VERSION_TAG_PREFIX + project_version},
+            par_pdv = pdv_with_email(main_app_options={'branch': GIT_VERSION_TAG_PREFIX + project_version},
                                      project_path=parent_dir, repo_group='ae-group')
 
             project_path = clone_project(par_pdv, project_name)
@@ -433,7 +424,7 @@ class TestActionsLocal:
 
         with init_parent() as par_dir:
 
-            project_path = clone_project(ProjectDevVars(project_path=par_dir),
+            project_path = clone_project(pdv_with_email(project_path=par_dir),
                                          group_name + "/" + project_name + PROJECT_VERSION_SEP + project_version)
 
             assert project_path
@@ -448,8 +439,8 @@ class TestActionsLocal:
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "commit message testing commit_children")
 
         cl = patched_shutdown_wrapper(commit_children,
-                                      ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
-                                      ProjectDevVars(project_path=module_repo_path))
+                                      pdv_with_email(project_path=os_path_dirname(module_repo_path)),
+                                      pdv_with_email(project_path=module_repo_path))
         assert len(cl) == 1         # _check_action() failed because of no-branch/unstaged files/commit-msg-file-w/o-ver
         assert cl[0]['exit_code'] == 13     # (13, )
 
@@ -457,33 +448,33 @@ class TestActionsLocal:
         git_add(module_repo_path)
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "children with {project_version} placeholder")
 
-        commit_children(ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
-                        ProjectDevVars(project_path=module_repo_path))
+        commit_children(pdv_with_email(project_path=os_path_dirname(module_repo_path)),
+                        pdv_with_email(project_path=module_repo_path))
 
     def test_commit_project(self, app_pjm, mocked_app_options, module_repo_path, patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = True
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "commit project msg w/o version placeholder")
 
-        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, pdv_with_email(project_path=module_repo_path))
 
         git_add(module_repo_path)
 
-        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, pdv_with_email(project_path=module_repo_path))
 
         git_checkout(module_repo_path, new_branch="tst_commit_project_branch_name")
 
-        assert patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert patched_shutdown_wrapper(commit_project, pdv_with_email(project_path=module_repo_path))
 
         write_file(os_path_join(module_repo_path, COMMIT_MSG_FILE_NAME), "msg-title with {project_version} placeholder")
 
-        assert not patched_shutdown_wrapper(commit_project, ProjectDevVars(project_path=module_repo_path))
+        assert not patched_shutdown_wrapper(commit_project, pdv_with_email(project_path=module_repo_path))
 
     def test_delete_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
-        root_pdv = ProjectDevVars(project_path=empty_repo_path)
+        root_pdv = pdv_with_email(project_path=empty_repo_path)
         root_pdv['project_type'] = ROOT_PRJ
-        mod_pdv = ProjectDevVars(project_path=module_repo_path)
+        mod_pdv = pdv_with_email(project_path=module_repo_path)
 
         del_dir = "del_dir"
         os.makedirs(os_path_join(empty_repo_path, del_dir))
@@ -502,8 +493,8 @@ class TestActionsLocal:
     def test_install_children_editable(self, module_repo_path):
         call_mock = MagicMock()
         with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=call_mock):
-            install_children_editable(ProjectDevVars(project_path=os_path_dirname(module_repo_path)),
-                                      ProjectDevVars(project_path=module_repo_path))
+            install_children_editable(pdv_with_email(project_path=os_path_dirname(module_repo_path)),
+                                      pdv_with_email(project_path=module_repo_path))
         assert call_mock.call_count == 1
         args = call_mock.call_args.args
         assert args[0] == 90
@@ -512,7 +503,7 @@ class TestActionsLocal:
     def test_install_editable(self, module_repo_path):
         call_mock = MagicMock()
         with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=call_mock):
-            install_editable(ProjectDevVars(project_path=module_repo_path))
+            install_editable(pdv_with_email(project_path=module_repo_path))
         assert call_mock.call_count == 1
         args = call_mock.call_args.args
         assert args[0] == 90
@@ -522,7 +513,7 @@ class TestActionsLocal:
         with init_parent() as par_path:
             project_name = "TstApp"
             project_path = os_path_join(par_path, project_name)
-            pdv = ProjectDevVars(main_app_options={'project_path': project_path}, project_path=project_path)
+            pdv = pdv_with_email(main_app_options={'project_path': project_path}, project_path=project_path)
 
             pdv = new_app(pdv)
 
@@ -535,9 +526,9 @@ class TestActionsLocal:
     def test_new_children(self, app_pjm, mocked_app_options, module_repo_path):
         mocked_app_options['namespace_name'] = tst_ns_name
 
-        parent_pdv = ProjectDevVars(project_path=os_path_dirname(module_repo_path), 
+        parent_pdv = pdv_with_email(project_path=os_path_dirname(module_repo_path),
                                     main_app_options=mocked_app_options.copy(), **mocked_app_options)
-        module_pdv = ProjectDevVars(project_path=module_repo_path,
+        module_pdv = pdv_with_email(project_path=module_repo_path,
                                     main_app_options=mocked_app_options.copy(), **mocked_app_options)
         assert os_path_isfile(main_file_path(module_repo_path, MODULE_PRJ, namespace_name=tst_ns_name))
         assert not os_path_isfile(main_file_path(module_repo_path, PACKAGE_PRJ, namespace_name=tst_ns_name))
@@ -551,7 +542,7 @@ class TestActionsLocal:
 
     def test_new_django(self, app_pjm, temp_parent_path):
         project_path = os_path_join(temp_parent_path, "django_project_root")
-        pdv = ProjectDevVars(main_app_options=project_path, project_path=project_path)
+        pdv = pdv_with_email(main_app_options=project_path, project_path=project_path)
 
         new_pdv = new_django(pdv)
 
@@ -561,7 +552,7 @@ class TestActionsLocal:
     def test_new_django_without_namespace(self, app_pjm, mocked_app_options, empty_repo_path):
         mocked_app_options['project_path'] = empty_repo_path
 
-        pdv = ProjectDevVars(project_path=empty_repo_path)
+        pdv = pdv_with_email(project_path=empty_repo_path)
         assert pdv['project_type'] == NO_PRJ
         assert not os_path_isfile(main_file_path(empty_repo_path, DJANGO_PRJ))
 
@@ -574,7 +565,7 @@ class TestActionsLocal:
         mocked_app_options['namespace_name'] = tst_ns_name
         mocked_app_options['project_path'] = module_repo_path
 
-        pdv = ProjectDevVars(project_path=module_repo_path)
+        pdv = pdv_with_email(project_path=module_repo_path)
         assert os_path_isfile(main_file_path(module_repo_path, MODULE_PRJ, namespace_name=tst_ns_name))
         assert not os_path_isfile(main_file_path(module_repo_path, PACKAGE_PRJ, namespace_name=tst_ns_name))
 
@@ -587,7 +578,7 @@ class TestActionsLocal:
         mocked_app_options['namespace_name'] = tst_ns_name
         mocked_app_options['project_path'] = root_repo_path
 
-        pdv = ProjectDevVars(main_app_options=mocked_app_options.copy(), **mocked_app_options)
+        pdv = pdv_with_email(main_app_options=mocked_app_options.copy(), **mocked_app_options)
         assert not os_path_isfile(main_file_path(root_repo_path, MODULE_PRJ, namespace_name=tst_ns_name))
         assert os_path_isfile(main_file_path(root_repo_path, ROOT_PRJ, namespace_name=tst_ns_name))
 
@@ -599,7 +590,7 @@ class TestActionsLocal:
 
     def test_new_namespace_root(self, app_pjm, temp_parent_path):
         project_path = os_path_join(temp_parent_path, tst_root_prj_name)
-        pdv = ProjectDevVars(main_app_options={'versionIncrementPart': 3},
+        pdv = pdv_with_email(main_app_options={'versionIncrementPart': 3},
                              namespace_name=tst_ns_name, project_path=project_path)
 
         new_pdv = new_namespace_root(pdv)
@@ -615,7 +606,7 @@ class TestActionsLocal:
         tst_prj = 'tst_prj_name'
         prj_path = os_path_join(temp_parent_path, tst_prj)
 
-        new_pdv = new_package(ProjectDevVars(project_path=prj_path))
+        new_pdv = new_package(pdv_with_email(project_path=prj_path))
 
         assert new_pdv['project_type'] == PACKAGE_PRJ
         assert not os_path_isfile(main_file_path(prj_path, MODULE_PRJ))
@@ -626,14 +617,14 @@ class TestActionsLocal:
         os.rename(empty_repo_path, playground_prj_dir)
         mocked_app_options['project_path'] = playground_prj_dir
 
-        pdv = ProjectDevVars(project_path=playground_prj_dir)
+        pdv = pdv_with_email(project_path=playground_prj_dir)
         new_pdv = new_playground(pdv)
         assert new_pdv['project_type'] == PLAYGROUND_PRJ
 
     def test_new_project_with_namespace(self, module_repo_path):
         files = set(path_items(os_path_join(module_repo_path, "**")))
 
-        new_pdv = renew_project(ProjectDevVars(project_path=module_repo_path))
+        new_pdv = renew_project(pdv_with_email(project_path=module_repo_path))
 
         assert new_pdv['namespace_name'] == tst_ns_name
         assert new_pdv['portion_name'] == tst_ns_por_pfx + 'module'
@@ -658,9 +649,9 @@ class TestActionsLocal:
             git_add(chi_path)
 
             write_file(os_path_join(chi_path, added), "# new python module file to be added by prepare action")
-            chi_pdvs.append(ProjectDevVars(project_path=chi_path))
+            chi_pdvs.append(pdv_with_email(project_path=chi_path))
 
-        prepare_children_commit(ProjectDevVars(project_path=os_path_dirname(module_repo_path)), title, *chi_pdvs)
+        prepare_children_commit(pdv_with_email(project_path=os_path_dirname(module_repo_path)), title, *chi_pdvs)
 
         for chi_path in test_projects:
             msg_file_content = read_file(os_path_join(chi_path, COMMIT_MSG_FILE_NAME))
@@ -673,7 +664,7 @@ class TestActionsLocal:
         mocked_app_options['more_verbose'] = True
         title = "commit msg title"
 
-        cl = patched_shutdown_wrapper(prepare_commit, ProjectDevVars(project_path=changed_repo_path), title)
+        cl = patched_shutdown_wrapper(prepare_commit, pdv_with_email(project_path=changed_repo_path), title)
 
         assert len(cl) == 1                 # _check_action() failed because on main branch with changed/unstaged files
         assert cl[0]['exit_code'] == 13     # (13, )
@@ -687,7 +678,7 @@ class TestActionsLocal:
             git_add(prj_path)
             assert not os_path_isfile(os_path_join(prj_path, COMMIT_MSG_FILE_NAME))
             uncommitted_files = git_uncommitted(prj_path)
-            pdv = ProjectDevVars(project_path=prj_path)
+            pdv = pdv_with_email(project_path=prj_path)
 
             prepare_commit(pdv, title=title)
 
@@ -697,8 +688,8 @@ class TestActionsLocal:
 
     @skip_gitlab_ci
     def test_refresh_children_managed(self, module_repo_path):
-        par_pdv = ProjectDevVars(projecT_path=os_path_dirname(module_repo_path))
-        chi_pdv = ProjectDevVars(project_path=module_repo_path)
+        par_pdv = pdv_with_email(projecT_path=os_path_dirname(module_repo_path))
+        chi_pdv = pdv_with_email(project_path=module_repo_path)
         tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
         assert not os_path_isdir(tst_dir)
 
@@ -709,9 +700,9 @@ class TestActionsLocal:
     def test_rename_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
-        root_pdv = ProjectDevVars(project_path=empty_repo_path)
+        root_pdv = pdv_with_email(project_path=empty_repo_path)
         root_pdv['project_type'] = ROOT_PRJ
-        mod_pdv = ProjectDevVars(project_path=module_repo_path)
+        mod_pdv = pdv_with_email(project_path=module_repo_path)
 
         src_file = "ren.efg"
         write_file(os_path_join(empty_repo_path, src_file), "file content")
@@ -735,8 +726,8 @@ class TestActionsLocal:
         assert os_path_isfile(os_path_join(module_repo_path, dst_file))
 
     def test_renew_children(self, empty_repo_path, module_repo_path):
-        par_pdv = ProjectDevVars(**{'project_path': os_path_dirname(empty_repo_path)})
-        chi_pdv = ProjectDevVars(**{'project_path': module_repo_path})
+        par_pdv = pdv_with_email(**{'project_path': os_path_dirname(empty_repo_path)})
+        chi_pdv = pdv_with_email(**{'project_path': module_repo_path})
 
         renew_children(par_pdv, chi_pdv)
 
@@ -747,7 +738,7 @@ class TestActionsLocal:
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
         assert code_file_version(version_file_path) == tst_pkg_version
 
-        renew_project(ProjectDevVars(main_app_options={'versionIncrementPart': 3}, project_path=module_repo_path))
+        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 3}, project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == tst_pkg_version   # not incrementing because no remote repo
 
@@ -756,20 +747,20 @@ class TestActionsLocal:
 
         mocked_app_options['versionIncrementPart'] = 0
 
-        renew_project(ProjectDevVars(project_path=module_repo_path))
+        renew_project(pdv_with_email(project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == PDV_NULL_VERSION     # disabled via mocked_app_options
 
         mocked_app_options.pop('versionIncrementPart')
 
-        renew_project(ProjectDevVars(main_app_options={'versionIncrementPart': 0}, project_path=module_repo_path))
+        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 0}, project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == PDV_NULL_VERSION     # disabled via main_app_options
 
     def test_run_children_command(self, capsys, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['delay'] = 0
-        par_pdv = ProjectDevVars(project_path=os_path_dirname(empty_repo_path))
-        chi_pdv = ProjectDevVars(project_path=empty_repo_path)
+        par_pdv = pdv_with_email(project_path=os_path_dirname(empty_repo_path))
+        chi_pdv = pdv_with_email(project_path=empty_repo_path)
         echo_word = "tst_run_chi_cmd"
 
         run_children_command(par_pdv, f"echo {echo_word}", chi_pdv, chi_pdv)
@@ -778,7 +769,7 @@ class TestActionsLocal:
         assert output.count(echo_word) == 3  # one for each child and a final one on action complete
 
     def test_show_actions(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
-        pdv = ProjectDevVars(**{'host_api': GitlabCom()})
+        pdv = pdv_with_email(**{'host_api': GitlabCom()})
 
         mocked_app_options['more_verbose'] = False
         show_actions(pdv)
@@ -793,11 +784,11 @@ class TestActionsLocal:
         chi_prj = 'ae_base'
         chi_ver = "0.3.60"
         with init_parent() as parent_dir:
-            parent_pdv = ProjectDevVars(project_path=parent_dir)
+            parent_pdv = pdv_with_email(project_path=parent_dir)
             chi_path = clone_project(parent_pdv, f"{chi_grp}/{chi_prj}{PROJECT_VERSION_SEP}{chi_ver}")
             assert chi_path
 
-            show_children_versions(parent_pdv, ProjectDevVars(project_path=chi_path))
+            show_children_versions(parent_pdv, pdv_with_email(project_path=chi_path))
 
             output = capsys.readouterr().out
             assert chi_grp in output
@@ -815,7 +806,7 @@ class TestActionsLocal:
         down and look for the option 'Allow force pushes' and check the box to enable it and click 'Save changes'.
         alternative: simply 'Delete' the branch protection rule entirely.
         """
-        pdv = ProjectDevVars()
+        pdv = pdv_with_email()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
             for mirror_url in get_mirror_urls(pdv):
                 # https://${USERNAME}:${TOKEN}@${DOMAIN}/{namespace_name}-group-mirror/{project_name}.git
@@ -830,7 +821,7 @@ class TestActionsLocal:
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_redirect_onto_codeberg_user(self, capsys, app_pjm):
-        pdv = ProjectDevVars()
+        pdv = pdv_with_email()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
             remote = get_mirror_urls(pdv)[0].replace('aedev-group-mirror', tst_mtn_name)
             # https://${CODEBERG_USERNAME}:${CODEBERG_TOKEN}@codeberg.org/${PDV_AUTHOR}/{project_name}.git
@@ -846,7 +837,7 @@ class TestActionsLocal:
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_redirect_onto_github_user(self, capsys, app_pjm):
-        pdv = ProjectDevVars()
+        pdv = pdv_with_email()
         with in_os_env():   # to load GITHUB_TOKEN credential from .env files
             remote = get_mirror_urls(pdv)[1].replace('aedev-group-mirror', tst_mtn_name)
             # https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${PDV_AUTHOR}/{project_name}.git
@@ -868,7 +859,7 @@ class TestActionsLocal:
         Protected branches section. the row for the develop branch provides two ways to fix this: toggle the switch
         labeled 'Allowed to force push' to 'On' or click the 'Unprotect' (yellow/red button) button.
         """
-        pdv = ProjectDevVars()
+        pdv = pdv_with_email()
         auth = tst_mtn_name + ":" + tst_mtn_token + "@"
         group = 'aedev-group-mirror'
         url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + group + "/" + pdv['project_name'] + '.git'
@@ -885,7 +876,7 @@ class TestActionsLocal:
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_onto_gitlab_user(self, app_pjm, capsys):
-        pdv = ProjectDevVars()
+        pdv = pdv_with_email()
         auth = tst_mtn_name + ":" + tst_mtn_token + "@"
         user = tst_mtn_name
         url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + user + "/" + pdv['project_name'] + '.git'
@@ -943,7 +934,7 @@ class TestHelpersLocal:
         assert 'fork_project' not in _available_actions(project_type=NO_PRJ)
 
     def test_check_arguments(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
-        pdv = ProjectDevVars(**{'project_type': PARENT_PRJ})
+        pdv = pdv_with_email(**{'project_type': PARENT_PRJ})
         act_spec = {'docstring': "act new_app docstring", 'project_types': ANY_PRJ_TYPE}
 
         calls = patched_shutdown_wrapper(_init_act_args_check, pdv, act_spec, 'new_app', [], {})
@@ -988,7 +979,7 @@ class TestHelpersLocal:
 
     def test_check_arguments_except_empty_action(self, app_pjm):
         with pytest.raises(KeyError):
-            _init_act_args_check(ProjectDevVars(), {}, "", [], {})
+            _init_act_args_check(pdv_with_email(), {}, "", [], {})
 
     def test_init_act_exec_args_check_deploy(self, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['action'] = 'check_deploy'
@@ -1040,9 +1031,9 @@ class TestHelpersLocal:
 
     def test_init_children_pdv_args_branch_filter(self, app_pjm):
         filtered_branch = "tst_filtered_branch_name"
-        ch1_pdv = ProjectDevVars(**{'project_path': 'n_a'})
-        ch2_pdv = ProjectDevVars(**{'project_path': 'n_b'})
-        par_pdv = ProjectDevVars(**{'children_project_vars': {'n_a': ch1_pdv, 'n_b': ch2_pdv},
+        ch1_pdv = pdv_with_email(**{'project_path': 'n_a'})
+        ch2_pdv = pdv_with_email(**{'project_path': 'n_b'})
+        par_pdv = pdv_with_email(**{'children_project_vars': {'n_a': ch1_pdv, 'n_b': ch2_pdv},
                                     'namespace_name': 'n',
                                     'portions_packages': ['n_a', 'n_b']})
 
@@ -1054,7 +1045,7 @@ class TestHelpersLocal:
             assert _init_children_pdv_args(par_pdv, ['filterBranch']) == [ch2_pdv]
 
     def test_init_children_pdv_args_exit(self, app_pjm, patched_shutdown_wrapper):
-        ini_pdv = ProjectDevVars(**{'children_project_vars': {}, 'namespace_name': "nn"})
+        ini_pdv = pdv_with_email(**{'children_project_vars': {}, 'namespace_name': "nn"})
 
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [])) == 0    # noExit: missing/empty args
 
@@ -1069,14 +1060,14 @@ class TestHelpersLocal:
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 0
 
     def test_init_children_pdv_args_expression(self, temp_parent_path):
-        par_pdv = ProjectDevVars(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
-        ch1_pdv = ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'p1')})
-        ch2_pdv = ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'p2')})
+        par_pdv = pdv_with_email(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
+        ch1_pdv = pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'p1')})
+        ch2_pdv = pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'p2')})
         chi_vars = {'p1': ch1_pdv, 'p2': ch2_pdv}
         par_pdv['children_project_vars'] = chi_vars
 
         assert _init_children_pdv_args(par_pdv, ['any_pkg_nam']) == [
-            ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'any_pkg_nam')})]
+            pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'any_pkg_nam')})]
 
         with patch('aedev.project_manager.__main__._init_children_presets',
                    return_value={'ps_a': {'p1'}, 'ps_b': {'p1', 'p2'}}):
@@ -1107,18 +1098,18 @@ class TestHelpersLocal:
 
     def test_init_children_pdv_args_list(self, app_pjm, empty_repo_path, mocked_app_options):
         par_dir = os_path_dirname(empty_repo_path)
-        par_pdv = ProjectDevVars(**{'project_path': par_dir, 'project_type': PARENT_PRJ})
+        par_pdv = pdv_with_email(**{'project_path': par_dir, 'project_type': PARENT_PRJ})
         ch1_dir = os_path_join(par_dir, 'p1')
-        ch1_pdv = ProjectDevVars(**{'project_path': ch1_dir})
+        ch1_pdv = pdv_with_email(**{'project_path': ch1_dir})
         ch2_dir = os_path_join(par_dir, 'p2')
-        ch2_pdv = ProjectDevVars(**{'project_path': ch2_dir})
+        ch2_pdv = pdv_with_email(**{'project_path': ch2_dir})
         chi_vars = {'p1': ch1_pdv, 'p2': ch2_pdv}
         par_pdv['children_project_vars'] = chi_vars
 
         assert _init_children_pdv_args(par_pdv, ["('p1', ) + ('p2', )"]) == [ch1_pdv, ch2_pdv]
 
         with in_wd(par_dir):
-            chi_vars = {key: ProjectDevVars(**{'project_name': key}) for key in ['a1', 'b', 'p3']}
+            chi_vars = {key: pdv_with_email(**{'project_name': key}) for key in ['a1', 'b', 'p3']}
         par_pdv['children_project_vars'] = chi_vars
 
         assert _init_children_pdv_args(par_pdv, [ARG_ALL]) == list(chi_vars.values())
@@ -1138,19 +1129,19 @@ class TestHelpersLocal:
         assert chi_pdvs[0]['project_path'] == chi_pdvs[1]['project_path'] == ch3_dir
 
         nsn = 'n'
-        ch1_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_1")})
-        ch2_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_por2")})
+        ch1_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_1")})
+        ch2_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_por2")})
         chi_vars = {nsn + '_1': ch1_pdv, nsn + '_por2': ch2_pdv}
-        par_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_" + nsn),
+        par_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_" + nsn),
                                     'children_project_vars': chi_vars, 'namespace_name': nsn, 'project_type': ROOT_PRJ})
 
         assert _init_children_pdv_args(par_pdv, ["('1', ) + ('n_por2', )"]) == [ch1_pdv, ch2_pdv]
 
     def test_init_children_presets(self, empty_repo_path):
         pkg_name = os_path_basename(empty_repo_path)
-        par = ProjectDevVars(**{'project_path': os_path_dirname(empty_repo_path),
+        par = pdv_with_email(**{'project_path': os_path_dirname(empty_repo_path),
                                 'main_app_options': {'filterBranch': DEF_MAIN_BRANCH, 'filterExpression': "True"}})
-        chi = ProjectDevVars(**{'project_path': empty_repo_path, 'editable_project_path': empty_repo_path})
+        chi = pdv_with_email(**{'project_path': empty_repo_path, 'editable_project_path': empty_repo_path})
 
         with (patch('aedev.project_manager.__main__.git_uncommitted', return_value=["any-non-empty-value"]),
               patch('aedev.project_manager.__main__.git_current_branch', return_value=DEF_MAIN_BRANCH)):
@@ -1180,7 +1171,7 @@ class TestHelpersLocal:
         assert presets['filterExpression'] == set()  # invalid expression evaluates to False
 
     def test_print_pdv(self, app_pjm):
-        _print_pdv(ProjectDevVars(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
+        _print_pdv(pdv_with_email(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
         # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
 
     def test_renew_prj_dir(self, app_pjm, mocked_app_options, tmp_path):
@@ -1191,7 +1182,7 @@ class TestHelpersLocal:
         mocked_app_options['repo_group'] = "group_name"
         mocked_app_options['project_name'] = app_name
         mocked_app_options['project_path'] = project_path
-        pdv = ProjectDevVars(**{
+        pdv = pdv_with_email(**{
             'namespace_name': '',
             'project_path': project_path,
             'package_path': package_path,
@@ -1226,7 +1217,7 @@ class TestHelpersLocal:
 
     def test_renew_project_exits_on_erroneous_pdv_value(self, app_pjm, empty_repo_path, mocked_app_options,
                                                         patched_shutdown_wrapper):
-        pdv = ProjectDevVars(project_path=empty_repo_path)
+        pdv = pdv_with_email(project_path=empty_repo_path)
         inv_project_type = "any-invalid-or-unknown-project-type"
 
         calls = patched_shutdown_wrapper(_renew_project, pdv, inv_project_type)
@@ -1243,7 +1234,7 @@ class TestHelpersLocal:
         os.makedirs(parent_dir)
 
         with in_wd(parent_dir):
-            parent_pdv = ProjectDevVars(project_path=project_name)
+            parent_pdv = pdv_with_email(project_path=project_name)
             assert parent_pdv['project_type'] == NO_PRJ
             assert parent_pdv['project_path'] == os_path_join(norm_path(""), project_name)
 
@@ -1265,7 +1256,7 @@ class TestHelpersLocal:
         project_path = norm_path(os_path_join(parent_dir, pkg_name))
         mocked_app_options['project_path'] = pkg_name
         os.makedirs(parent_dir)
-        pdv = ProjectDevVars(project_path=project_path)
+        pdv = pdv_with_email(project_path=project_path)
 
         with in_wd(parent_dir):
             app_pdv = _renew_project(pdv, APP_PRJ)
@@ -1287,7 +1278,7 @@ class TestHelpersLocal:
         os.makedirs(parent_dir)
 
         with in_wd(parent_dir):
-            new_pdv = ProjectDevVars(main_app_options={'project_path': pkg_name}, project_path=pkg_name)
+            new_pdv = pdv_with_email(main_app_options={'project_path': pkg_name}, project_path=pkg_name)
 
             new_pdv = _renew_project(new_pdv, PACKAGE_PRJ)
 
@@ -1308,10 +1299,10 @@ class TestHelpersLocal:
     def test_wait(self, app_pjm):
         mock_sleep = MagicMock()
         with patch('aedev.project_manager.__main__.time.sleep', new=mock_sleep):
-            _wait(ProjectDevVars(**{'main_app_options': {'delay': 3.69}}))
+            _wait(pdv_with_email(**{'main_app_options': {'delay': 3.69}}))
             mock_sleep.assert_called_with(3.69)
 
-        _wait(ProjectDevVars(**{'main_app_options': {'delay': 0}}))
+        _wait(pdv_with_email(**{'main_app_options': {'delay': 0}}))
 
 
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token
@@ -1371,7 +1362,7 @@ class TestHelpersRemote:
         for project_path in test_projects:
             ensure_tst_ns_portion_version_file(project_path)  # needed for changed/empty, leave itg projects untouched
 
-            _show_status(ProjectDevVars(project_path=project_path))
+            _show_status(pdv_with_email(project_path=project_path))
 
             output = capsys.readouterr().out
             assert output, f"with {project_path=}"
@@ -1389,7 +1380,7 @@ class TestHelpersRemote:
             else:       # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
-        pdv = ProjectDevVars(project_path=empty_repo_path)
+        pdv = pdv_with_email(project_path=empty_repo_path)
         pdv['children_project_vars'] = {}
         pdv['namespace_name'] = tst_ns_name
         pdv['project_type'] = ROOT_PRJ
@@ -1415,7 +1406,7 @@ class TestHelpersRemote:
         mocked_app_options['more_verbose'] = True
 
         for project_path in test_projects:
-            _show_status(ProjectDevVars(project_path=project_path))
+            _show_status(pdv_with_email(project_path=project_path))
 
             output = capsys.readouterr().out
             assert output, f"with {project_path=}"
@@ -1432,7 +1423,7 @@ class TestHelpersRemote:
             else:  # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
-        pdv = ProjectDevVars(project_path=empty_repo_path)
+        pdv = pdv_with_email(project_path=empty_repo_path)
         pdv['children_project_vars'] = {}
         pdv['namespace_name'] = tst_ns_name
         pdv['project_type'] = ROOT_PRJ

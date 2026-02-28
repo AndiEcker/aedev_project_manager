@@ -1,7 +1,6 @@
 # aedev-project-manager requirements
 anybadge
 coverage
-coverage-badge
 flake8
 mypy
 packaging
