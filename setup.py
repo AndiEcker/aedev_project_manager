@@ -49,7 +49,7 @@ setup_kwargs = {
             'aedev_base==0.3.4',
             'aedev_commands==0.3.7',
             'aedev_namespace_root_tpls==0.3.24',
-            'aedev_project_manager==0.3.15',
+            'aedev_project_manager==0.3.16',
             'aedev_project_vars==0.3.6',
             'anybadge==1.16.0',
             'argcomplete==3.6.3',
@@ -198,7 +198,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.15',
+    'version': '0.3.16',
     'zip_safe': True,
 }
 

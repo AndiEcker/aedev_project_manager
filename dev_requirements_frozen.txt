@@ -17,7 +17,7 @@ aedev_app_tpls==0.3.19
 aedev_base==0.3.4
 aedev_commands==0.3.7
 aedev_namespace_root_tpls==0.3.24
-aedev_project_manager==0.3.15  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@38cc4dee5e5555b404cba20f67d98c714fd41e7f#egg=aedev_project_manager
+aedev_project_manager==0.3.16  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@cff6e2e527a4fabffb055671c79fbb3595d8c0b4#egg=aedev_project_manager
 aedev_project_vars==0.3.6
 anybadge==1.16.0
 argcomplete==3.6.3

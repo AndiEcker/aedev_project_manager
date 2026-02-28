@@ -38,7 +38,7 @@ from aedev.commands import (
     git_uncommitted, in_os_env)
 from aedev.project_vars import (
     PDV_NULL_VERSION, PLAYGROUND_PRJ, ROOT_PRJ,
-    latest_remote_version, main_file_path)
+    ProjectDevVars, latest_remote_version, main_file_path)
 
 from aedev.project_manager.templates import CACHED_TPL_PROJECTS, register_template
 from aedev.project_manager.utils import get_mirror_urls, guess_next_action
@@ -1059,15 +1059,15 @@ class TestHelpersLocal:
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, [ARG_ALL])) == 1
         assert len(patched_shutdown_wrapper(_init_children_pdv_args, ini_pdv, ["filterBranch"])) == 0
 
-    def test_init_children_pdv_args_expression(self, temp_parent_path):
-        par_pdv = pdv_with_email(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
-        ch1_pdv = pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'p1')})
-        ch2_pdv = pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'p2')})
+    def test_init_children_pdv_args_expression(self, temp_parent_path, recwarn):
+        par_pdv = ProjectDevVars(**{'project_path': temp_parent_path, 'project_type': PARENT_PRJ})
+        ch1_pdv = ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'p1')})
+        ch2_pdv = ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'p2')})
         chi_vars = {'p1': ch1_pdv, 'p2': ch2_pdv}
         par_pdv['children_project_vars'] = chi_vars
 
         assert _init_children_pdv_args(par_pdv, ['any_pkg_nam']) == [
-            pdv_with_email(**{'project_path': os_path_join(temp_parent_path, 'any_pkg_nam')})]
+            ProjectDevVars(**{'project_path': os_path_join(temp_parent_path, 'any_pkg_nam')})]
 
         with patch('aedev.project_manager.__main__._init_children_presets',
                    return_value={'ps_a': {'p1'}, 'ps_b': {'p1', 'p2'}}):
@@ -1096,7 +1096,7 @@ class TestHelpersLocal:
             assert _init_children_pdv_args(par_pdv, ["ps_a&ps_b"]) == [ch1_pdv]
             assert _init_children_pdv_args(par_pdv, ["ps_a", "&", "ps_b"]) == [ch1_pdv]
 
-    def test_init_children_pdv_args_list(self, app_pjm, empty_repo_path, mocked_app_options):
+    def test_init_children_pdv_args_list(self, app_pjm, empty_repo_path, mocked_app_options, recwarn):
         par_dir = os_path_dirname(empty_repo_path)
         par_pdv = pdv_with_email(**{'project_path': par_dir, 'project_type': PARENT_PRJ})
         ch1_dir = os_path_join(par_dir, 'p1')
@@ -1129,10 +1129,10 @@ class TestHelpersLocal:
         assert chi_pdvs[0]['project_path'] == chi_pdvs[1]['project_path'] == ch3_dir
 
         nsn = 'n'
-        ch1_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_1")})
-        ch2_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_por2")})
+        ch1_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_1")})
+        ch2_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_por2")})
         chi_vars = {nsn + '_1': ch1_pdv, nsn + '_por2': ch2_pdv}
-        par_pdv = pdv_with_email(**{'project_path': os_path_join(par_dir, nsn + "_" + nsn),
+        par_pdv = ProjectDevVars(**{'project_path': os_path_join(par_dir, nsn + "_" + nsn),
                                     'children_project_vars': chi_vars, 'namespace_name': nsn, 'project_type': ROOT_PRJ})
 
         assert _init_children_pdv_args(par_pdv, ["('1', ) + ('n_por2', )"]) == [ch1_pdv, ch2_pdv]
