@@ -395,12 +395,12 @@ def _check_resources_i18n_po(file_name: str, content: str):                     
             cae.chk(69, not text or text[0] == "#", f"expected comment/empty-line, got {text} in {file_name=}:{lno=}")
 
 
-def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:
+def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:                          # pragma: no cover
     def _chk_files(chk_func: Callable[[str, str], None], *path_parts: str) -> list[FileObject]:
         stem_mask = path_parts[-1]
         regs = FilesRegister(os_path_join(pdv['project_path'], *path_parts))
         file_names: list[str] = []
-        for stem_name, files in regs.items():                                               # pragma: no cover
+        for stem_name, files in regs.items():
             for file_name in (norm_path(str(file)) for file in files):
                 content = read_file(file_name)
                 cae.chk(69, bool(content), f"stem {stem_name} has empty translation message file {file_name}")
@@ -442,10 +442,10 @@ def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:                     
     return list(local_sounds.values())
 
 
-def _check_resources(pdv: ProjectDevVars):
+def _check_resources(pdv: ProjectDevVars):                                                  # pragma: no cover
     """ check images, message texts and sounds of the specified project. """
     resources = _check_resources_img(pdv) + _check_resources_i18n_texts(pdv) + _check_resources_snd(pdv)
-    if resources:                                                                           # pragma: no cover
+    if resources:
         cae.po(f"  === {len(resources)} image/message-text/sound resources checks passed")
         if debug_or_verbose():
             cae.po(ppp(str(_) for _ in resources)[1:])
@@ -2468,8 +2468,8 @@ def check_integrity(ini_pdv: ProjectDevVars):
     if not on_ci_host():                                                                    # pragma: no cover
         with in_prj_dir_venv(project_path):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
-    _check_resources(ini_pdv)
-    _check_types_linting_tests(ini_pdv)
+    _check_resources(ini_pdv)                                                               # pragma: no cover
+    _check_types_linting_tests(ini_pdv)                                                     # pragma: no cover
     cae.po(f" ==== passed integrity checks for {ini_pdv['project_title']}")                 # pragma: no cover
 
 

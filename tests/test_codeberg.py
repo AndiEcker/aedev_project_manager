@@ -1,7 +1,6 @@
 """ codeberg.py unit tests. """
 from unittest.mock import Mock, patch
 
-import pytest
 import requests
 
 from aedev.project_manager.codeberg import ensure_repo, set_main_branch

@@ -1,5 +1,5 @@
 aedev_project_tpls==0.3.76
-aedev_aedev==0.3.30
+aedev_aedev==0.3.32
 ## The following requirements were added by pip freeze:
 ae-parse-date==0.3.5
 ae_base==0.3.78
@@ -10,15 +10,15 @@ ae_files==0.3.25
 ae_literal==0.3.35
 ae_managed_files==0.3.4
 ae_paths==0.3.43
-ae_pythonanywhere==0.3.3
+ae_pythonanywhere==0.3.4
 ae_shell==0.3.12
 ae_updater==0.3.17
 aedev_app_tpls==0.3.19
 aedev_base==0.3.4
-aedev_commands==0.3.7
-aedev_namespace_root_tpls==0.3.24
-aedev_project_manager==0.3.16  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@cff6e2e527a4fabffb055671c79fbb3595d8c0b4#egg=aedev_project_manager
-aedev_project_vars==0.3.6
+aedev_commands==0.3.8
+aedev_namespace_root_tpls==0.3.27
+aedev_project_manager==0.3.17  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@e82b4a10401f614dd9e7fd631e680afb54045abf#egg=aedev_project_manager
+aedev_project_vars==0.3.7
 anybadge==1.16.0
 argcomplete==3.6.3
 astroid==4.0.2
@@ -60,21 +60,21 @@ pycparser==2.22
 pyflakes==3.4.0
 PyGithub==2.8.1
 Pygments==2.19.1
-pyjnius==1.6.1
+pyjnius==1.7.0
 PyJWT==2.10.1
-pylint==4.0.4
+pylint==4.0.5
 PyNaCl==1.5.0
 pytest==9.0.2
 pytest-cov==7.0.0
-pytest-django==4.11.1
-python-gitlab==8.0.0
+pytest-django==4.12.0
+python-gitlab==8.1.0
 readme_renderer==44.0
 requests==2.32.5
 requests-toolbelt==1.0.0
 rfc3986==2.0.0
 rich==14.0.0
 SecretStorage==3.3.3
-setuptools==81.0.0
+setuptools==82.0.0
 tomlkit==0.13.3
 twine==6.2.0
 types-Pillow==10.2.0.20240822
