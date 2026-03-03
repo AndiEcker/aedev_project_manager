@@ -18,7 +18,7 @@ from ae.managed_files import (                                                  
 from ae.paths import path_items                                                                         # type: ignore
 from ae.shell import debug_or_verbose                                                                   # type: ignore
 from aedev.base import (                                                                                # type: ignore
-    ANY_PRJ_TYPE, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
+    ANY_PRJ_TYPE, DJANGO_PRJ, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
     CachedTemplates, TemplateProjectsType,
     get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
@@ -121,6 +121,7 @@ def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: 
 
 def _get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     tpl_vars = pdv.as_dict()
+    tpl_vars['DJANGO_PRJ'] = DJANGO_PRJ
     tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
     tpl_vars['frozen_req_file_path'] = frozen_req_file_path
     tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
