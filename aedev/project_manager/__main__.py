@@ -77,7 +77,7 @@ from PIL import Image
 
 from ae.base import (  # type: ignore # pylint: disable=reimported
     PY_INIT, UNSET, UnsetType,
-    camel_to_snake, duplicates, module_attr, norm_name, norm_path, now_str, on_ci_host,
+    camel_to_snake, duplicates, full_stack_trace, module_attr, norm_name, norm_path, now_str, on_ci_host,
     os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     os_path_relpath, os_path_splitext,
     project_main_file, read_file, stack_var, url_failure, write_file,
@@ -496,6 +496,8 @@ def _check_types_linting_tests(pdv: ProjectDevVars
         # clash for packages kivy and ae.kivy (see https://github.com/PyCQA/pylint/issues/5226 of user hmc-cs-mdrissi).
         extra_args = [f"--max-line-length={mll}", "--output-format=text", "--recursive=y", "--disable=E0401,E0611"] \
             + ["--ignore=" + _ for _ in excludes] + options + path_args
+        if project_type == DJANGO_PRJ:
+            extra_args.insert(0, "--load-plugins pylint_django")
         # alternatively to exit_on_err=False: using pylint option --exit-zero
         sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False, lines_output=out)
         if get_app_option(pdv, 'more_verbose') and not cae.debug:
@@ -3081,7 +3083,7 @@ def main():                                                         # pragma: no
         cae.run_app()               # parse command line arguments
         prepare_and_run_main()
     except Exception as main_ex:                                    # pylint: disable=broad-exception-caught
-        debug_info = f":{os.linesep}{format_exc()}" if debug_or_verbose() else ""
+        debug_info = f":\n{full_stack_trace(main_ex) if cae.debug else format_exc()}" if debug_or_verbose() else ""
         cae.shutdown(99, error_message=f"unexpected exception {main_ex} raised{debug_info}")
 
 
