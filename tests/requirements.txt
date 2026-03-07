@@ -1,10 +1,11 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.76
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.77
 anybadge
 flake8
 mypy
 pylint
+
 pytest
 pytest-cov                  # includes coverage package
-pytest-django
+
 typing
 types-setuptools            # for mypy
