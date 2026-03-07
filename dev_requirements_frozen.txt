@@ -1,4 +1,4 @@
-aedev_project_tpls==0.3.76
+aedev_project_tpls==0.3.77
 aedev_aedev==0.3.32
 ## The following requirements were added by pip freeze:
 ae-parse-date==0.3.5
@@ -17,7 +17,7 @@ aedev_app_tpls==0.3.19
 aedev_base==0.3.4
 aedev_commands==0.3.8
 aedev_namespace_root_tpls==0.3.27
-aedev_project_manager==0.3.18  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@1d4ab4323f727677d1498775d920b87c58a99c71#egg=aedev_project_manager
+aedev_project_manager==0.3.19  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@94293b6c096695a5f472d4f17b93f977898d9640#egg=aedev_project_manager
 aedev_project_vars==0.3.7
 anybadge==1.16.0
 argcomplete==3.6.3

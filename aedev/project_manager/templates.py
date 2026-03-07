@@ -15,7 +15,7 @@ from ae.console import ConsoleApp                                               
 from ae.managed_files import (                                                                          # type: ignore
     DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
     ContextVars, ManagedFile, TemplateMngr, TemplateFiles)
-from ae.paths import path_items                                                                         # type: ignore
+from ae.paths import path_items, skip_py_cache_files                                                    # type: ignore
 from ae.shell import debug_or_verbose                                                                   # type: ignore
 from aedev.base import (                                                                                # type: ignore
     ANY_PRJ_TYPE, DJANGO_PRJ, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
@@ -109,7 +109,7 @@ def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]
 
 
 def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: str) -> TemplateFiles:
-    get_files = partial(path_items, selector=os_path_isfile)
+    get_files = partial(path_items, selector=lambda _path: not skip_py_cache_files(_path) and os_path_isfile(_path))
     tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and relative sub-paths
     for tpl_prj in project_tpls:
         tpl_path = tpl_prj['tpl_path']

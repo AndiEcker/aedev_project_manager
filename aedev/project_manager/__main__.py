@@ -497,12 +497,14 @@ def _check_types_linting_tests(pdv: ProjectDevVars
         extra_args = [f"--max-line-length={mll}", "--output-format=text", "--recursive=y", "--disable=E0401,E0611"] \
             + ["--ignore=" + _ for _ in excludes] + options + path_args
         if project_type == DJANGO_PRJ:
-            extra_args.insert(0, "--load-plugins pylint_django")
+            extra_args.insert(0, "--load-plugins=pylint_django")
         # alternatively to exit_on_err=False: using pylint option --exit-zero
         sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False, lines_output=out)
-        if get_app_option(pdv, 'more_verbose') and not cae.debug:
-            cae.po(ppp(out))
         matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
+        if get_app_option(pdv, 'more_verbose') and (not cae.debug or not matcher):
+            if not matcher:
+                cae.po(f"  ##  pylint {extra_args=} failed with:")
+            cae.po(ppp(out))
         cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
         if STDERR_BEG_MARKER in out:
             out = out[:out.index(STDERR_BEG_MARKER)]
@@ -524,6 +526,8 @@ def _check_types_linting_tests(pdv: ProjectDevVars
             # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
             # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
             extra_args = ["--doctest-modules"] + extra_args + path_args
+        if project_type == DJANGO_PRJ:
+            extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
         sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
         try:
             perc = json.loads(read_file(".pytest_cache/coverage.json"))['totals']['percent_covered_display']
