@@ -71,11 +71,13 @@ def standard_pdv(**overrides):
 
 @pytest.fixture
 def mock_pdv(request):
+    """ fixture returning standard pdv mock."""
     return standard_pdv(**getattr(request, 'param', {}))
 
 
 @pytest.fixture
 def pdv_factory():
+    """ factory for standard pdv mock. """
     def _factory(overrides):
         return standard_pdv(**overrides)
 
@@ -164,6 +166,7 @@ class TestGuessNextAction:
         mock_pdv.__getitem__.side_effect = pdv_data.get
 
         def pdv_val_side_effect(key):
+            """ ProjectDevVars.pdv_val() mock """
             if key == 'remote_urls':
                 return [GIT_REMOTE_ORIGIN, GIT_REMOTE_UPSTREAM]
             if key == 'host_api':
@@ -327,6 +330,7 @@ class TestGuessNextAction:
         mock_api.branch_merge_requests.return_value = []
 
         def pdv_val_side_effect(key):
+            """ mock ProjectDevVars.pdv_val function """
             if key == 'remote_urls':
                 return [GIT_REMOTE_ORIGIN]
             if key == 'host_api':

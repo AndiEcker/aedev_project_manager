@@ -17,8 +17,8 @@ aedev_app_tpls==0.3.19
 aedev_base==0.3.4
 aedev_commands==0.3.8
 aedev_namespace_root_tpls==0.3.27
-aedev_project_manager==0.3.19  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@94293b6c096695a5f472d4f17b93f977898d9640#egg=aedev_project_manager
-aedev_project_vars==0.3.7
+aedev_project_manager==0.3.20  # -e git+https://gitlab.com/aedev-group/aedev_project_manager.git@892728c34f33524c693f0b74e87be5020cc8c21c#egg=aedev_project_manager
+aedev_project_vars==0.3.9
 anybadge==1.16.0
 argcomplete==3.6.3
 astroid==4.0.2
@@ -26,7 +26,7 @@ certifi==2025.4.26
 cffi==1.17.1
 charset-normalizer==3.4.2
 click==8.3.0
-coverage==7.13.4
+coverage==7.13.5
 cryptography==45.0.4
 Deprecated==1.2.18
 dill==0.4.0
@@ -52,13 +52,13 @@ nh3==0.2.21
 packaging==26.0
 pathspec==0.12.1
 pillow==12.1.1
-pipx==1.8.0
+pipx==1.11.0
 platformdirs==4.3.8
 pluggy==1.6.0
 pycodestyle==2.14.0
 pycparser==2.22
 pyflakes==3.4.0
-PyGithub==2.8.1
+PyGithub==2.9.0
 Pygments==2.19.1
 pyjnius==1.7.0
 PyJWT==2.10.1
@@ -67,20 +67,20 @@ pylint-django==2.7.0
 pylint-plugin-utils==0.9.0
 PyNaCl==1.5.0
 pytest==9.0.2
-pytest-cov==7.0.0
+pytest-cov==7.1.0
 pytest-django==4.12.0
-python-gitlab==8.1.0
+python-gitlab==8.2.0
 readme_renderer==44.0
-requests==2.32.5
+requests==2.33.0
 requests-toolbelt==1.0.0
 rfc3986==2.0.0
 rich==14.0.0
 SecretStorage==3.3.3
-setuptools==82.0.0
+setuptools==82.0.1
 tomlkit==0.13.3
 twine==6.2.0
 types-Pillow==10.2.0.20240822
-types-requests==2.32.4.20260107
+types-requests==2.33.0.20260327
 types-setuptools==82.0.0.20260210
 typing==3.7.4.3
 typing_extensions==4.15.0

@@ -38,7 +38,7 @@ from aedev.project_manager.utils import guess_next_action, refresh_pdv
 from aedev.project_manager.__main__ import (
     REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     _renew_project, _show_status,
-    clone_project, commit_project, init_main, prepare_commit)
+    clone_project, commit_project, init_main, prepare_commit, update_mirror)
 
 from tests.conftest import logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
@@ -145,7 +145,7 @@ def teardown_module():
     print()
     print(f"::::: {os_path_basename(__file__)} teardown_module BEG - {main_app_instance()=} {tst_tpls_register=}")
 
-    assert not (errors := logging_unpatched_shutdown_teardown()), f"integration test logged {len(errors)} {errors=}"
+    assert not (errors := logging_unpatched_shutdown_teardown()), f"{len(errors)} integration test teardown errors"
 
     CACHED_TPL_PROJECTS.clear()                     # prevent side effects if other module unit tests running after
 
@@ -446,8 +446,8 @@ class TestActionsGitLab:
 
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token
 @pytest.mark.integration
-class TestHelpersRemote:
-    """ test helper functions that need internet access, some of them need also authentication. """
+class TestRemoteActionsAndHelpers:
+    """ test actions and helper functions that need internet access, some of them need also authentication. """
     @pytest.mark.parametrize(*_itg_test_projects_parametrize(), ids=str)
     def test_guess_next_action(self, itg_test_prj):
         project_name = itg_test_prj.name
@@ -536,6 +536,24 @@ class TestHelpersRemote:
         assert "-- project vars:" in output, f"with {project_path=}"
         assert "-- git status:" in output, f"with {project_path=}"
         assert "-- next action guess: renew_project" in output
+
+    # @skip_if_no_integration_tests
+    # @skip_if_not_maintainer
+    def test_update_mirror_pjm_onto_gitlab_user(self, capsys):  # untested remove of app_pjm fixture after move to here
+        pdv = pdv_with_email()
+        auth = tst_mtn_name + ":" + tst_mtn_token + "@"
+        user = tst_mtn_name
+        url = pdv['REPO_HOST_PROTOCOL'] + auth + pdv['repo_domain'] + "/" + user + "/" + pdv['project_name'] + '.git'
+
+        update_mirror(pdv, url)
+
+        output = capsys.readouterr().out
+        assert user in output
+        assert pdv['repo_domain'] in output
+        assert pdv['project_name'] in output
+        assert auth not in output
+        assert tst_mtn_token not in output
+        assert " ==== " in output
 
 
 @skip_gitlab_ci

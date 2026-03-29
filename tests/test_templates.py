@@ -52,6 +52,7 @@ def teardown_module():
 
 @pytest.fixture
 def cleanup_caches():
+    """ clean up the template cache """
     assert not temp_context_folders(GIT_CLONE_CACHE_CONTEXT)
     yield
     temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
@@ -630,7 +631,7 @@ class TestHelpers:
 
         mf.skip.assert_called_once()
 
-    def test_project_templates_new_dev_req(self, cleanup_caches, cons_app):
+    def test_project_templates_new_dev_req(self, cleanup_caches, app_pjm):
         old_tpls = CACHED_TPL_PROJECTS.copy()
         root_prj_imp_name = 'ae.ae'
         reg_tpls = CACHED_TPL_PROJECTS.copy()
@@ -640,12 +641,13 @@ class TestHelpers:
 
         assert root_prj_imp_name + PROJECT_VERSION_SEP + prj_tpls[0]['version'] in reg_tpls
         assert 'aedev.module_tpls' + PROJECT_VERSION_SEP + "" in reg_tpls
-        assert 'aedev.project_tpls' + PROJECT_VERSION_SEP + prj_tpls[1]['version'] in reg_tpls
 
-        assert len(prj_tpls) == 2   # ae namespace root and project_tpls
         assert prj_tpls[0]['import_name'] == root_prj_imp_name
         assert prj_tpls[0]['version'] != ""   # latest PyPI version
         assert prj_tpls[0] == reg_tpls[root_prj_imp_name + PROJECT_VERSION_SEP + prj_tpls[0]['version']]
+
+        assert len(prj_tpls) == 2   # ae namespace root and project_tpls
+        assert 'aedev.project_tpls' + PROJECT_VERSION_SEP + prj_tpls[1]['version'] in reg_tpls
         assert prj_tpls[1]['import_name'] == 'aedev.project_tpls'
         assert prj_tpls[1]['version'] != ""   # latest PyPI version
         assert prj_tpls[1] == reg_tpls['aedev.project_tpls' + PROJECT_VERSION_SEP + prj_tpls[1]['version']]
