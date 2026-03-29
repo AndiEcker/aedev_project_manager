@@ -2163,7 +2163,7 @@ class PythonanywhereCom(RemoteHost):
         prj_desc = f"{ini_pdv['web_user']}@{ini_pdv['web_domain']}/{ini_pdv['project_title']}"
         func = self.check_deploy if action == 'check' else self.deploy_project
         lean_msg = ' lean' if optional_flags['LEAN'] else ''
-        verbose = debug_or_verbose()
+        verbose = debug_or_verbose(cae)
         deployed_ver = web_app_version(self.connection)
         cae.po(f" ---- {action} {version_tag}{lean_msg} against host/project {prj_desc} {deployed_ver}")
 
@@ -2172,15 +2172,15 @@ class PythonanywhereCom(RemoteHost):
         if version_tag == 'WORKTREE':
             include_untracked = True
             branch_or_tag = prefix + deployed_ver if deployed_ver else ini_pdv['MAIN_BRANCH']
-            # add "w" suffix to version number (only visible in logs)
-            version_tag = prefix + latest_remote_version(ini_pdv, increment_part=0) + "w"
+            # add "w" suffix to local version number (only visible in logs)
+            version_tag = prefix + ini_pdv['project_version'] + "w"
         else:
             include_untracked = False
             if version_tag == 'LATEST':
                 version_tag = prefix + latest_remote_version(ini_pdv, increment_part=0)
             else:
                 cae.chk(85, version_tag[0] == prefix and version_tag.count(".") == 2,
-                        f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}0.3.6, got '{version_tag}'")
+                        f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}3.6.9, got '{version_tag}'")
                 cae.chk(85, not deployed_ver or version_tag[1:] in (deployed_ver, increment_version(deployed_ver)),
                         f"too big increment between old|deployed ({deployed_ver}) and new version ({version_tag[1:]})"
                         + hint('pjm', func, " with the correct version or add --force to skip this version check"))
@@ -2221,7 +2221,7 @@ class PythonanywhereCom(RemoteHost):
             src_content = read_file(src_path, extra_mode='b') if os_path_isfile(src_path) else None
             dst_content = self.connection.deployed_file_content(pkg_file_path)
             if src_content == dst_content:
-                dif = "is missing on both, repository and server" if src_content is None else "is identical on server"
+                dif = "is missing on both, repository and server" if src_content is None else ""
                 to_deploy.remove(pkg_file_path)
             elif src_content is None:                   # should never happen
                 dif = f"need to be deleted on server (size={len(dst_content)})"
@@ -2233,7 +2233,8 @@ class PythonanywhereCom(RemoteHost):
                 dif = f"need to be upgraded on server (file size repo={len(src_content)} server={len(dst_content)})"
                 if verbose:
                     dif += ":" + bytes_file_diff(dst_content, src_path, line_sep=os.linesep + " " * 6) + os.linesep
-            cae.po(f"  --= {pkg_file_path: <45} {dif}")
+            if dif or verbose:
+                cae.po(f"  --= {pkg_file_path: <69} {dif or 'is identical on server'}")
 
         to_cleanup = set()
         if optional_flags['CLEANUP']:
@@ -2244,20 +2245,24 @@ class PythonanywhereCom(RemoteHost):
             cae.vpo(f"  --- {len(to_cleanup)} removable files found on {self.connection.project_name} project server:"
                     f" {ppp(sorted(to_cleanup))}")
             to_cleanup -= (deployable - skipped)
-            if not to_cleanup:
-                cae.po("  --- no extra files to clean up found on server")
-            else:
+            if to_cleanup:
+                which_files += "|cleanup"
                 cae.po(f"  --- {len(to_cleanup)} deletable{lean_msg} files: {ppp(sorted(to_cleanup))}" + hint(
                     'pjm', func, " to remove them from the server") if action == 'check' else "")
+            else:
+                cae.po("  --- no extra files to clean up found on server")
 
-        cae.chk(85, bool(to_deploy | to_delete | to_cleanup), f"no {which_files}|cleanup files found in {version_tag}"
-                + hint('pjm', func, f" specifying ALL as extra argument to {action} all deployable project files"))
-
-        verbose = action == 'check' or verbose
-        cae.po(f" ===  {len(to_deploy)} {which_files} files found to migrate server to {version_tag} version"
-               f"{'; from v' + deployed_ver if deployed_ver else ''}{':' + ppp(sorted(to_deploy)) if verbose else ''}")
-        cae.po(f" ===  {len(to_delete) + len(to_cleanup)} deletable (repo={len(to_delete)} cleanup={len(to_cleanup)})"
-               f" files found{':' + ppp(sorted(to_delete | to_cleanup)) if verbose else ''}")
+        deploy_msg = f"{len(to_deploy) + len(to_delete) + len(to_cleanup)} {which_files} files (in {version_tag})"
+        deploy_files = ":" + ppp(sorted(to_deploy)) if verbose else ""
+        delete_msg = f"{len(to_delete)} deletable and {len(to_cleanup)} cleanup-able files"
+        delete_files = ":" + ppp(sorted(to_delete | to_cleanup)) if verbose else ""
+        if action == 'check':
+            cae.po(f" ===  {deploy_msg} found to update on server ({deployed_ver}){deploy_files}")
+            cae.po(f"      found {delete_msg}{delete_files}")
+        else:
+            cae.po(f" ===  updating {deploy_msg} to server (replacing old version {deployed_ver}){deploy_files}")
+            if to_delete or to_cleanup:
+                cae.po(f"      including remove of {delete_msg} from server{delete_files}")
 
         return prj_desc, project_path, to_deploy, to_delete | to_cleanup
 
@@ -2307,20 +2312,26 @@ class PythonanywhereCom(RemoteHost):
         """
         prj_desc, root, to_deploy, to_delete = self.deploy_differences(ini_pdv, 'deploy', version_tag, **optional_flags)
 
+        deployed = []
         for upg_fil in to_deploy:
             err_str = self.connection.deploy_file(upg_fil, read_file(os_path_join(root, upg_fil), extra_mode='b'))
             cae.chk(96, not err_str, err_str)
+            if not err_str:
+                deployed.append(upg_fil)
 
+        deleted = []
         for del_fil in to_delete:
             err_str = self.connection.delete_file_or_folder(del_fil)
             cae.chk(96, not err_str, err_str)
+            if not err_str:
+                deleted.append(del_fil)
 
-        if to_deploy:
-            cae.po(f"  === {len(to_deploy)} files deployed: {ppp(sorted(to_deploy))}")
-        if to_delete:
-            cae.po(f"  === {len(to_delete)} files removed: {ppp(sorted(to_delete))}")
-        if to_deploy or to_delete:
-            cae.po("  === check server if Django manage migration command(s) have to be run and if a restart is needed")
+        if debug_or_verbose(cae):
+            if deployed:
+                cae.po(f"  === {len(deployed)} files successfully deployed: {ppp(sorted(deployed))}")
+            if deleted:
+                cae.po(f"  === {len(deleted)} files successfully removed: {ppp(sorted(deleted))}")
+            cae.po("  === check server if any manage.py command(s) have to be run and if a restart is needed")
         cae.po(f" ==== successfully deployed {version_tag} to host/project {prj_desc}")
 
 
@@ -3026,7 +3037,7 @@ def init_main() -> ConsoleApp:
                           " preset children sets like all|editable|modified|develop|filterBranch|filterExpression",
                      nargs='*')
     cae.add_option('branch', "name of the branch or version-tag to checkout/filter-/work-on", "")
-    cae.add_option('delay', "seconds to pause, e.g. between sub-actions of a children-bulk-action", 12.3, short_opt='w')
+    cae.add_option('delay', "seconds to pause, e.g. between sub-actions of a children-bulk-action", 15.9, short_opt='w')
     cae.add_option('docs_domain', f"documentation domain (default={PDV_docs_domain})", None, short_opt=UNSET)
     cae.add_option('filterExpression', "Python expression evaluated against each children project, to be used as"
                                        " 'filterExpression' children-set-expression argument", "", short_opt='F')
