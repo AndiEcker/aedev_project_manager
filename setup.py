@@ -84,7 +84,7 @@ setup_kwargs = {
             'packaging==26.0',
             'pathspec==0.12.1',
             'pillow==12.1.1',
-            'pipx==1.11.0',
+            'pipx==1.11.1',
             'platformdirs==4.3.8',
             'pluggy==1.6.0',
             'pycodestyle==2.14.0',
@@ -202,7 +202,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.20',
+    'version': '0.3.21',
     'zip_safe': True,
 }
 
