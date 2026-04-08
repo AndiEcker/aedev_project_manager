@@ -4,6 +4,7 @@ templates for managed files of Python projects
 
 
 """
+import os
 from difflib import context_diff, diff_bytes, ndiff, unified_diff
 from functools import partial
 from typing import Any, Union, cast
@@ -379,7 +380,7 @@ def setup_kwargs_literal(setup_kwargs: dict[str, Any]) -> str:
 
     .. note:: the setup.py template has to include/provide the statement: import pathlib.
     """
-    sep = "\n"      # not using os.linesep to prevent formatting discrepancies on different operating systems.
+    sep = os.linesep
     pre = sep + " " * 4
     ret = "{"
 

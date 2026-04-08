@@ -12,7 +12,7 @@ from ae.base import (                                                           
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER, get_domain_user_var, sh_exit_if_exec_err     # type: ignore
-from aedev.base import PIP_CMD, ROOT_PRJ                                                                # type: ignore
+from aedev.base import PIP_CMD, PROJECT_VERSION_SEP, ROOT_PRJ                                           # type: ignore
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_FOLDER_NAME, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX, GitRemotesType,
     git_add, git_any, git_branch_remotes, git_current_branch, git_init_if_needed, git_status, git_tag_remotes,
@@ -296,36 +296,37 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
     """ guess the next action to be done locally.
 
     :param pdv:                 dev vars of the project.
-    :return:                    error message with a "¡" as the first char or one of the action names:
+    :return:                    error message with a '¡' as the first char or one of the action names:
                                 'new_project', 'renew_project', 'prepare_commit', 'commit_project', 'push_project',
                                 'request_merge', 'release_project'.
     """
     project_path = pdv['project_path']
     project_version = pdv['project_version']
     main_branch = pdv['MAIN_BRANCH']
+    prefix = '¡'
 
     if not os_path_isdir(os_path_join(project_path, GIT_FOLDER_NAME)):
-        return f"¡no git repository found at {project_path=} ({GIT_FOLDER_NAME} folder is missing)"
+        return f"{prefix}no git repository found at {project_path=} ({GIT_FOLDER_NAME} folder is missing)"
 
     current_branch = git_current_branch(project_path)
     if not current_branch:
-        return "¡detached HEAD! - to fix it checkout or create a branch"
+        return f"{prefix}detached HEAD! - to fix it checkout or create a branch"
     on_main_branch = current_branch == main_branch
 
     if not project_version or not try_call(Version, project_version, ignored_exceptions=(InvalidVersion, Exception)):
-        return f"¡empty or invalid project version '{project_version}'! check the {pdv['version_file']=}"
+        return f"{prefix}empty or invalid project version '{project_version}'! check the {pdv['version_file']=}"
     prj_ver_obj = Version(project_version)
     if prj_ver_obj < Version(remote_version := latest_remote_version(pdv, increment_part=0)):
-        return (f"¡project version discrepancy; local {project_version=} is less than the current {remote_version=};"
+        return (f"{prefix}project version discrepancy; local {project_version=} is less than the {remote_version=};"
                 f" run 'pjm renew' to renew/recalculate the next project version")
     if prj_ver_obj > Version(next_remote_version := increment_version(remote_version)):
-        return (f"¡project version discrepancy; local {project_version=} is greater than the {next_remote_version=};"
+        return (f"{prefix}project version discrepancy; local {project_version=} is greater than {next_remote_version=};"
                 f" run 'pjm renew' to renew/recalculate the next project version")
 
     uncommitted = git_status(project_path)
     if uncommitted:
         if on_main_branch:
-            return (f"¡detected {main_branch=} with added/changed/uncommitted files: {', '.join(uncommitted)}!"
+            return (f"{prefix}detected {main_branch=} with added/changed/uncommitted files: {', '.join(uncommitted)}!"
                     " run 'pjm -b feature_branch renew' to create branch")
 
         output = git_any(project_path, 'diff', '--staged', '--quiet')   # git_diff() has conflicting options
@@ -334,7 +335,7 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
             return 'commit_project' if os_path_isfile(file_path) and '{project_version}' in read_file(file_path) else \
                 'prepare_commit'
 
-        return "¡unstaged files found! run git add, or delete them: " + ", ".join(uncommitted)
+        return f"{prefix}unstaged files found! run git add, or delete them: " + ", ".join(uncommitted)
 
     if on_main_branch:
         # no git workflow initiated. execute 'pjm -b new_feature_branch renew' to start a new git workflow for an
@@ -348,26 +349,26 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
                                          remote_names=remote_urls)
     if not branch_remotes:
         if version_remotes or release_remotes:
-            return (f"¡current branch '{current_branch}' not on remotes, although the current {project_version=}"
+            return (f"{prefix}current branch '{current_branch}' not on remotes, although the current {project_version=}"
                     f" exists on {version_remotes=}/{release_remotes=}!")
         return 'push_project'
 
     if not version_remotes:
-        return f"¡the {project_version=} got not pushed to any remote!"
+        return f"{prefix}the {project_version=} got not pushed to any remote!"
     if (ori_nam := pdv['REMOTE_ORIGIN']) not in version_remotes:
-        return f"¡the origin remote '{ori_nam}' has no {project_version=} tag! tag found only in {version_remotes=}"
+        return f"{prefix}the origin remote '{ori_nam}' has no {project_version=} tag! tag found in {version_remotes=}"
     if any(remote not in version_remotes for remote in release_remotes):
-        return (f"¡the release remotes {[remote for remote in release_remotes if remote not in version_remotes]}"
+        return (f"{prefix}the release remotes {[remote for remote in release_remotes if remote not in version_remotes]}"
                 f" are not in {version_remotes=}")
     if release_remotes:
-        return f"¡git workflow fully completed for {project_version=}! run pjm -b branch_name renew to start a new one"
+        return f"{prefix}git workflow completed for {project_version=}! run `pjm -b <branch> renew` to start a new one"
 
     merge_requests = []
     remote_api = pdv.pdv_val('host_api')
     if remote_api is not None and hasattr(remote_api, 'branch_merge_requests'):
         merge_requests = remote_api.branch_merge_requests(pdv, current_branch)
         if len(merge_requests) > 1 and pdv['REMOTE_UPSTREAM'] in remote_urls:  # multiple MRs and forked
-            return f"¡multiple merge requests found for {current_branch=} {merge_requests=}"
+            return f"{prefix}multiple merge requests found for {current_branch=} {merge_requests=}"
 
     return 'release_project' if merge_requests else 'request_merge'
 
@@ -403,12 +404,16 @@ def refresh_pdv(pdv: ProjectDevVars):
     pdv.update(ProjectDevVars(project_path=pdv['project_path'], namespace_name=pdv['namespace_name']))
 
 
-def update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> list[str]:
+def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packages: bool = False,
+                           integrate_pip_errors: bool = False) -> list[str]:
     """ update frozen requirements file
 
+    :param project_pip_name:    pip name of the project with this requirements file.
     :param req_file_path:       file path of the requirements file.
     :param all_packages:        pass True to include also not explicitly requested packages (added by pip freeze).
-    :return:                    list of errors or an empty list.
+    :param integrate_pip_errors: pass True to integrate errors into the resulting frozen requirements file.
+    :return:                    an empty list (if :paramref:`update_rozen_req_file.integrate_pip_errors` is True)
+                                or a list of pip error output lines.
     """
     if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
         return []
@@ -423,11 +428,14 @@ def update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> li
             errors.insert(0, out_lines[line_no])
             line_no -= 1
     if errors:
-        return errors
+        if not integrate_pip_errors:
+            return errors
+        out_lines = out_lines[:-(len(errors) + 2)]
 
     if not all_packages:
-        line_count = len(read_file(req_file_path).split(os.linesep))
-        out_lines = out_lines[:line_count + 1]
+        # out_lines = out_lines[:1 + len([_ for _ in read_file(req_file_path).splitlines() if _.strip()])]
+        # pylint: disable-next=consider-using-with,unspecified-encoding
+        out_lines = out_lines[:1 + sum(1 for _line in open(req_file_path) if _line.strip()) - len(errors)]
     for line, req in enumerate(out_lines):
         if req.startswith("-e "):
             prj_name = req.rsplit('=', maxsplit=1)[-1]
@@ -439,6 +447,8 @@ def update_frozen_req_file(req_file_path: str, all_packages: bool = False) -> li
 
     if REFRESHABLE_TEMPLATE_MARKER in out_lines[0]:
         out_lines = out_lines[1:]
+    out_lines = (["# " + _ for _ in errors] +
+                 [_ for _ in out_lines if not _.replace('_', '-').startswith(project_pip_name + PROJECT_VERSION_SEP)])
     file_content = os.linesep.join(out_lines)
     if not all_packages:
         file_content = file_content.replace(PIP_FREEZE_COMMENT, "")
@@ -464,8 +474,10 @@ def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
 
     errors = []
     with in_prj_dir_venv(pdv['project_path']):
+        pip_name = pdv['pip_name']
+        dev_req_file_path = pdv['REQ_DEV_FILE_NAME']
         for req_file_path in req_file_paths:
-            errors += update_frozen_req_file(req_file_path, all_packages=req_file_path == pdv['REQ_DEV_FILE_NAME'])
+            errors += update_frozen_req_file(pip_name, req_file_path, all_packages=req_file_path == dev_req_file_path)
 
     # update pdv['dev_requires'] with new (frozen) requirements w/o error checking like done by _refresh_pdv/_get_pdv()
     refresh_pdv(pdv)
