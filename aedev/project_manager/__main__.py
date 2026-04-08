@@ -217,7 +217,7 @@ def _check_action(pdv: ProjectDevVars, *acceptable_actions: Callable):
     action_desc = (f"the '{action_names[0]}' action" if len(acceptable_actions) == 1 else
                    f"one of the actions {action_names}")
     guessed_action = guess_next_action(pdv)
-    has_discrepancy = guessed_action.startswith("¡")
+    has_discrepancy = guessed_action.startswith('¡')
 
     cae.chk(13, not has_discrepancy,
             f"found discrepancy (while checking the execution of {action_desc}):\n" + " " * 6 + guessed_action[1:])
@@ -231,7 +231,7 @@ def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:                     
     increment_part = cast(int, get_app_option(pdv, 'versionIncrementPart'))
     project_path = pdv['project_path']
     local_ver = pdv['project_version']
-    cae.chk(75, try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, )),
+    cae.chk(75, bool(try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, ))),
             f"local project version '{local_ver}' has invalid format not conform to PEP 440")
 
     if git_tag_list(project_path, tag_pattern=pdv['VERSION_TAG_PREFIX'] + "*"):  # not the first/initial project version
@@ -363,7 +363,7 @@ def _check_resources_i18n_po(file_name: str, content: str):                     
     str_marker = "msgstr"
     in_txt = msg_id = msg_str = ""
     in_header = True
-    for lno, text in enumerate(content.split(os.linesep), start=1):
+    for lno, text in enumerate(content.splitlines(), start=1):
         in_id = in_txt.startswith(id_marker)
         if text.startswith(id_marker):
             cae.chk(69, not in_txt, f"new {id_marker} in uncompleted {in_txt} in {file_name=}:{lno=}")
@@ -576,7 +576,7 @@ def _init_act_args_check(ini_pdv: ProjectDevVars, act_spec: Any, act_name: str, 
 
     called after _init_act_exec_args/INI_PDV-initialization.
     """
-    cae.dpo(f"   -- args check of action {act_name} ({act_spec.get('docstring', '').split(os.linesep)[0].strip('. ')})")
+    cae.dpo(f"   -- args check of action {act_name} ({act_spec.get('docstring', ' ').splitlines()[0].strip('. ')})")
     cae.vpo(f"    - {act_name} command line {act_args=} and {act_flags=}")
 
     optional_flags = act_spec.get('flags', {})
@@ -1120,7 +1120,7 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:                               
                 cae.po(f"   -- remotes having current branch: {branch_remotes}")
 
         next_action = guess_next_action(ini_pdv)
-        if next_action.startswith("¡"):
+        if next_action.startswith('¡'):
             cae.po(f"  *** next action discrepancy: {next_action[1:]}")
         else:
             cae.po(f"   -- next action guess: {next_action}")
@@ -2034,7 +2034,7 @@ class GitlabCom(RemoteHost):
         project_path = ini_pdv['project_path']
         commit_msg_file = check_commit_msg_file(project_path, 'pjm', prepare_commit, " to create a commit message file",
                                                 commit_msg_file=ini_pdv['COMMIT_MSG_FILE_NAME'])
-        commit_msg = read_file(commit_msg_file)
+        commit_msg = read_file(commit_msg_file) or ""
         try:
             merge_req = src_prj.mergerequests.create({
                 'project_id': tgt_prj.id,
@@ -2042,7 +2042,7 @@ class GitlabCom(RemoteHost):
                 'source_branch': branch,
                 'target_project_id': tgt_prj.id,
                 'target_branch': ini_pdv['MAIN_BRANCH'],
-                'title': commit_msg.split(os.linesep)[0],
+                'title': commit_msg.splitlines()[0],
                 # 'remove_source_branch': False,
                 # 'force_remove_source_branch': False,
                 # 'allow_collaboration': True,
@@ -2859,7 +2859,7 @@ def show_actions(ini_pdv: ProjectDevVars):
         cae.po(prefix + "; add the --more_verbose (-v) option for action details:")
         for act_name in actions:
             if act_fun := _act_callable(host_api, act_name):
-                cae.po(f"    - {act_fun.__name__: <30} {(act_fun.__doc__ or '').split(os.linesep)[0]}")
+                cae.po(f"    - {act_fun.__name__: <30} {(act_fun.__doc__ or ' ').splitlines()[0]}")
 
     else:
         cae.po(prefix + f" (locally and at {'|'.join(REGISTERED_HOSTS_CLASS_NAMES)}):")
@@ -2955,23 +2955,20 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):                 
     if hostname == 'codeberg.org':
         group_project = owner_project_from_url(mirror_url)
         usr_or_org, repo_name = group_project.split("/", maxsplit=1)
-        if err_msg := ensure_repo(usr_or_org, repo_name, token, main_branch=ini_pdv['MAIN_BRANCH']):
-            cae.po(f" **** codeberg repository check failed: {err_msg}")
-            return
+        err_msg = ensure_repo(usr_or_org, repo_name, token, main_branch=ini_pdv['MAIN_BRANCH'])
+        cae.chk(74, not err_msg, f" **** codeberg repository check failed: {err_msg}")
 
     elif hostname == 'github.com':    # GitHub server does not allow to create initial/new mirror via git push
         group_project = owner_project_from_url(mirror_url)
         usr_or_org, repo_name = group_project.split("/", maxsplit=1)
         mirror_api = GithubCom()
-        if not mirror_api.connect(cast(ProjectDevVars, {'repo_token': token})):
-            cae.po(" **** connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
-            return
+        cae.chk(74, mirror_api.connect(cast(ProjectDevVars, {'repo_token': token})),
+                " **** connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
         if not mirror_api.repo_obj(0, "", group_project):
-            group_obj = mirror_api.group_obj(usr_or_org)
-            if not group_obj:
-                cae.po(f" **** invalid user or organization name {usr_or_org}")
-                return
-            group_obj.create_repo(repo_name)
+            cae.chk(74, bool(group_obj := mirror_api.group_obj(usr_or_org)),
+                    f" **** invalid user or organization name {usr_or_org}")
+            if group_obj:
+                group_obj.create_repo(repo_name)
             ini_rep = partial(mirror_api.init_new_repo, group_project, ini_pdv['project_title'], ini_pdv['MAIN_BRANCH'])
 
     # git push --prune <url+token> '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/notes/*:refs/notes/*'
@@ -3088,7 +3085,7 @@ def prepare_and_run_main():                                                     
         temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
     if left_forces := cae.get_option('force'):
-        cae.po(f"    ¡ ignoring {left_forces} unused --force options")
+        cae.po(f"    # ignoring {left_forces} unused --force options")
 
 
 def main():                                                         # pragma: no cover

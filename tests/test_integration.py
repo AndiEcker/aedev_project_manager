@@ -457,7 +457,7 @@ class TestRemoteActionsAndHelpers:
 
         ret = guess_next_action(pdv_with_email(project_path=project_path))
 
-        assert ret.startswith("¡detached HEAD")
+        assert ret.startswith('¡' + "detached HEAD")
 
         git_checkout(project_path, DEF_MAIN_BRANCH)
         version_file = main_file_path(project_path, itg_tst_projects[project_name].type, namespace_name=namespace_name)
@@ -466,7 +466,7 @@ class TestRemoteActionsAndHelpers:
 
         ret = guess_next_action(pdv_with_email(project_path=project_path))
 
-        assert ret.startswith("¡empty or invalid project version")
+        assert ret.startswith('¡' + "empty or invalid project version")
 
         write_file(version_file, ver_fil_content)
 
@@ -485,7 +485,7 @@ class TestRemoteActionsAndHelpers:
 
         ret = guess_next_action(pdv_with_email(project_path=project_path))
 
-        assert ret.startswith("¡unstaged files found")
+        assert ret.startswith('¡' + "unstaged files found")
 
         git_add(project_path)
 

@@ -116,9 +116,9 @@ def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path
 
         prj_state = guess_next_action(pdv)
         if prj_path == parent_without_git_folder:
-            assert prj_state.startswith("¡no git repository found"), f"failed for {prj_path=}"
+            assert prj_state.startswith('¡' + "no git repository found"), f"failed for {prj_path=}"
         elif prj_path in (changed_repo_path, empty_repo_path):
-            assert prj_state.startswith("¡empty or invalid project version"), f"failed for {prj_path=}"
+            assert prj_state.startswith('¡' + "empty or invalid project version"), f"failed for {prj_path=}"
         else:
             assert prj_state.startswith(uncommitted_guess_prefix), f"failed for {prj_path=}"
 
@@ -657,7 +657,7 @@ class TestActionsLocal:
             msg_file_content = read_file(os_path_join(chi_path, COMMIT_MSG_FILE_NAME))
             assert added in msg_file_content, f"with {chi_path=}"
             assert git_uncommitted(chi_path) == uncommitted[chi_path] | {added} | {chi_version_files[chi_path]}
-            assert title in msg_file_content.split(os.linesep)[0], f"with {chi_path=}"
+            assert title in msg_file_content.splitlines()[0], f"with {chi_path=}"
 
     def test_prepare_commit_check_action_errors(self, app_pjm, changed_repo_path, mocked_app_options,
                                                 patched_shutdown_wrapper):
@@ -684,7 +684,7 @@ class TestActionsLocal:
 
             assert os_path_isfile(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME']))
             assert uncommitted_files == git_uncommitted(prj_path)
-            assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).split(os.linesep)[0]
+            assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).splitlines()[0]
 
     @skip_gitlab_ci
     def test_refresh_children_managed(self, module_repo_path):

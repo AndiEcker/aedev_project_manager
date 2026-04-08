@@ -2,14 +2,16 @@
 import os
 from typing import OrderedDict
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from ae.base import in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, read_file, write_file
+from ae.base import (
+    in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, os_path_splitext, read_file, write_file)
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER
-from aedev.base import COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, ROOT_PRJ
+from aedev.base import (
+    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, PROJECT_VERSION_SEP, ROOT_PRJ)
 from aedev.commands import GIT_REMOTE_ORIGIN, GIT_REMOTE_UPSTREAM, git_add, git_checkout, git_commit, git_current_branch
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL, PDV_REQ_FILE_NAME,
@@ -32,6 +34,7 @@ FEATURE_BRANCH = "feature/test"
 PORTION_NAME = "portion_name"
 PRJ_NAMESPACE = "test"
 PRJ_NAME = f"{PRJ_NAMESPACE}_{PORTION_NAME}"
+PIP_NAME = PRJ_NAME.replace('_', '-')
 PRJ_ROOT_PATH = f"/{PRJ_NAME}"
 PRJ_VERSION = "1.2.3"
 PRJ_VERSION_V2 = "2.0.0"
@@ -54,6 +57,7 @@ def standard_pdv(**overrides):
         'REPO_HOST_PROTOCOL': PDV_REPO_HOST_PROTOCOL,
         'host_api': MagicMock(),
         'namespace_name': PRJ_NAMESPACE,
+        'pip_name': PIP_NAME,
         'portion_name': PORTION_NAME,
         'project_name': PRJ_NAME,
         'project_path': PRJ_ROOT_PATH,
@@ -129,7 +133,7 @@ class TestGuessNextAction:
         mock_tag_remotes.return_value = [GIT_REMOTE_ORIGIN]
 
         result = guess_next_action(mock_pdv)
-        assert "workflow fully completed" in result
+        assert "workflow completed" in result
 
     @patch('aedev.project_manager.utils.git_current_branch')
     @patch('aedev.project_manager.utils.os_path_isdir')
@@ -433,8 +437,8 @@ class TestUpdateFrozenReqFile:
 
     @pytest.fixture
     def mock_read_file(self):
-        """ patch read_file() to return the standard fake requirements content. """
-        with patch('aedev.project_manager.utils.read_file', return_value=REQ_FILE_CONTENT) as mock:
+        """ patch builtin open() to return the standard fake requirements content. """
+        with patch("builtins.open", mock_open(read_data=REQ_FILE_CONTENT)) as mock:
             yield mock
 
     @pytest.fixture
@@ -504,7 +508,7 @@ class TestUpdateFrozenReqFile:
             lines_output.extend(lines_with_pip_comment)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -521,7 +525,7 @@ class TestUpdateFrozenReqFile:
             lines_output.extend(all_lines)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=True)
+            errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -540,7 +544,7 @@ class TestUpdateFrozenReqFile:
             lines_output.extend(lines)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=True)
+            errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -555,7 +559,7 @@ class TestUpdateFrozenReqFile:
         with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=True),
               patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -572,7 +576,7 @@ class TestUpdateFrozenReqFile:
         with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=False),
               patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
         assert EDITABLE_LINE in mock_write_file.call_args[0][1]
@@ -585,7 +589,7 @@ class TestUpdateFrozenReqFile:
             lines_output.extend([refreshable_first_line] + REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -600,7 +604,7 @@ class TestUpdateFrozenReqFile:
             lines_output.extend(REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
-            errors = update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
         written_content = mock_write_file.call_args[0][1]
@@ -611,7 +615,7 @@ class TestUpdateFrozenReqFile:
     def test_frozen_file_path_falsy_returns_empty_list_immediately(self, mock_frozen_path_none):
         with (patch("aedev.project_manager.utils.sh_exit_if_exec_err") as mock_exec,
               patch("aedev.project_manager.utils.write_file") as mock_write):
-            errors = update_frozen_req_file(REQ_FILE_PATH)
+            errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
         mock_exec.assert_not_called()
@@ -620,7 +624,7 @@ class TestUpdateFrozenReqFile:
 
     def test_no_errors_writes_file_and_returns_empty_list(
             self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
-        errors = update_frozen_req_file(REQ_FILE_PATH)
+        errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
         mock_write_file.assert_called_once_with(FROZEN_FILE_PATH, REQ_FILE_CONTENT)
@@ -629,7 +633,7 @@ class TestUpdateFrozenReqFile:
             self, mock_frozen_path_valid, mock_sh_exit_with_stderr_errors, mock_write_file):
         with (patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER),
               patch("aedev.project_manager.utils.STDERR_BEG_MARKER", STDERR_BEG_MARKER)):
-            errors = update_frozen_req_file(REQ_FILE_PATH)
+            errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == [TestUpdateFrozenReqFile.PIP_WARNING]
         mock_write_file.assert_not_called()
@@ -638,7 +642,7 @@ class TestUpdateFrozenReqFile:
             self, mock_frozen_path_valid, mock_sh_exit_with_stderr_no_error_messages, mock_read_file, mock_write_file):
         with (patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER),
               patch("aedev.project_manager.utils.STDERR_BEG_MARKER", STDERR_BEG_MARKER)):
-            errors = update_frozen_req_file(REQ_FILE_PATH)
+            errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
         mock_write_file.assert_called_once()
@@ -646,13 +650,13 @@ class TestUpdateFrozenReqFile:
     def test_stderr_no_markers_in_output_no_errors_returned(
             self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
         with patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER):
-            errors = update_frozen_req_file(REQ_FILE_PATH)
+            errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
 
     def test_sh_exit_called_with_correct_arguments(
             self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
-        update_frozen_req_file(REQ_FILE_PATH)
+        update_frozen_req_file("", REQ_FILE_PATH)
 
         mock_sh_exit_no_errors.assert_called_once()
         call_kwargs = mock_sh_exit_no_errors.call_args
@@ -667,9 +671,31 @@ class TestUpdateFrozenReqFile:
             lines_output.extend(REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
-            update_frozen_req_file(REQ_FILE_PATH, all_packages=False)
+            update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         mock_write_file.assert_called_once_with(FROZEN_FILE_PATH, REQ_FILE_CONTENT)
+
+    def test_write_req_file_without_excluded_pip_name_and_empty_lines(self, tmp_path):
+        req_file_path = str(tmp_path / PDV_REQ_FILE_NAME)
+        frozen_file_path = os_path_splitext(req_file_path)[0] + "_frozen.txt"
+        write_file(frozen_file_path, "tst overwritten frozen file content")
+        req_packages = REQ_FILE_PACKAGES + [PRJ_NAME + PROJECT_VERSION_SEP + PRJ_VERSION]
+        req_file_lines = [_line for pkg in req_packages for _line in ("", pkg)]
+        file_content = os.linesep.join(req_file_lines)
+
+        write_file(req_file_path, file_content)
+
+        errors = update_frozen_req_file(PIP_NAME, req_file_path)
+
+        assert len(errors) == len(req_packages)
+        assert all(any(_p in _e for _p in req_packages) for _e in errors)
+
+        errors = update_frozen_req_file(PIP_NAME, req_file_path, integrate_pip_errors=True)
+
+        assert not errors
+        frozen_lines = read_file(frozen_file_path).splitlines()
+        assert len(frozen_lines) == len(req_packages)
+        assert all(any(_p in _l for _p in req_packages) for _l in frozen_lines)
 
 
 class TestOtherHelpers:
@@ -992,13 +1018,13 @@ class TestOtherHelpers:
 
         ret = guess_next_action(pdv_with_email(project_path=empty_repo_path))
 
-        assert ret.startswith("¡detached HEAD")
+        assert ret.startswith('¡' + "detached HEAD")
 
         git_checkout(empty_repo_path, DEF_MAIN_BRANCH)
 
         ret = guess_next_action(pdv_with_email(project_path=empty_repo_path))
 
-        assert ret.startswith("¡empty or invalid project version")
+        assert ret.startswith('¡' + "empty or invalid project version")
 
         ensure_tst_ns_portion_version_file(empty_repo_path)
 
@@ -1011,7 +1037,7 @@ class TestOtherHelpers:
 
         ret = guess_next_action(pdv_with_email(project_path=empty_repo_path))
 
-        assert ret.startswith(f"¡unstaged files found")
+        assert ret.startswith('¡' + "unstaged files found")
 
         git_add(empty_repo_path)
 
@@ -1041,12 +1067,12 @@ class TestOtherHelpers:
 
         assert ret == 'renew_project'
 
-        # NOT TESTABLE because ret.startswith("¡detached HEAD") if .git gets renamed
+        # NOT TESTABLE because ret.startswith('¡' + "detached HEAD") if .git gets renamed
         # os.rename(os_path_join(empty_repo_path, ".git"), os_path_join(empty_repo_path, '_renamed_git_folder'))
         #
         # ret = guess_next_action(pdv_with_email(project_path=empty_repo_path))
         #
-        # assert ret.startswith("¡no git workflow initiated")
+        # assert ret.startswith('¡' + "no git workflow initiated")
         # assert "start a new project" in ret
         #
         # os.rename(os_path_join(empty_repo_path, '_renamed_git_folder'), os_path_join(empty_repo_path, ".git"))
@@ -1058,7 +1084,7 @@ class TestOtherHelpers:
         assert ret == 'push_project'
 
     def test_guess_next_action_fix_empty_on_local_machine_only(self, empty_repo_path):
-        assert guess_next_action(pdv_with_email(project_path=empty_repo_path)).startswith("¡")
+        assert guess_next_action(pdv_with_email(project_path=empty_repo_path)).startswith('¡')
 
         ensure_tst_ns_portion_version_file(empty_repo_path)
         git_checkout(empty_repo_path, new_branch='new_feature_branch_name_testing_guest_next_action' + now_str(sep="_"))
@@ -1078,8 +1104,8 @@ class TestOtherHelpers:
         pdv.pdv_val('setup_kwargs')['classifiers'] = []
         assert project_topics(pdv) == []
 
-    def test_update_frozen_req_file(self):
-        assert not update_frozen_req_file("")
+    def test_update_frozen_req_file(self):  # more detailed tests are above in TestUpdateFrozenReqFile
+        assert not update_frozen_req_file("", "")
 
     def test_refresh_pdv(self, mock_pdv):
         refresh_pdv(mock_pdv)
@@ -1092,7 +1118,7 @@ class TestOtherHelpers:
         assert not pdv['dev_requires']
 
         pgk_names = ["package_name1", "package_name2"]
-        write_file(os_path_join(empty_repo_path, pdv['REQ_DEV_FILE_NAME']), "\n".join(pgk_names))
+        write_file(os_path_join(empty_repo_path, pdv['REQ_DEV_FILE_NAME']), os.linesep.join(pgk_names))
 
         assert not update_frozen_req_files(pdv)
         assert pdv['dev_requires']
@@ -1108,8 +1134,8 @@ class TestOtherHelpers:
         assert not os_path_isfile(frozen_req_file_path(req_file_name))
         assert not update_frozen_req_files(pdv)
 
-        write_file(req_file_name, "\n".join(pgk_names), make_dirs=True)
-        write_file(frozen_req_file_path(req_file_name), "\n".join(pgk_names))
+        write_file(req_file_name, os.linesep.join(pgk_names), make_dirs=True)
+        write_file(frozen_req_file_path(req_file_name), os.linesep.join(pgk_names))
 
         assert not update_frozen_req_files(pdv)
 

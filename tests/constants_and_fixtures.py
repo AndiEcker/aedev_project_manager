@@ -257,4 +257,4 @@ def root_repo_path():
 #         print(f"=!=!=!END env polluted by test method {request.node.name}")
 
 
-uncommitted_guess_prefix = f"¡detected main_branch='{DEF_MAIN_BRANCH}' with added/changed/uncommitted files"
+uncommitted_guess_prefix = '¡' + f"detected main_branch='{DEF_MAIN_BRANCH}' with added/changed/uncommitted files"

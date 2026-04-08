@@ -859,14 +859,14 @@ class TestHelpers:
         lit = setup_kwargs_literal(kwargs)
 
         assert lit[0] == "{"
-        assert lit[1] == "\n"
+        assert lit[1] == os.linesep
         assert lit[2:14] == " " * 4 + "'key1': "
         assert lit[14:21] == "'val1',"
-        assert lit[21:36] == "\n" + " " * 4 + "'key2': {\n"
-        assert lit[35:52] == "\n" + " " * 8 + "'a': 1,\n"
-        assert lit[51:70] == "\n" + " " * 8 + "'b': '3',\n"
+        assert lit[21:36] == os.linesep + " " * 4 + "'key2': {" + os.linesep
+        assert lit[35:52] == os.linesep + " " * 8 + "'a': 1," + os.linesep
+        assert lit[51:70] == os.linesep + " " * 8 + "'b': '3'," + os.linesep
         assert lit[-4:-2] == "},"
-        assert lit[-2:] == "\n}"
+        assert lit[-2:] == os.linesep + "}"
 
     def test_setup_kwargs_literal_long_description(self):
         kwargs = {'key1': "val1", 'long_description': {'a': 1, 'b': "3"}}
