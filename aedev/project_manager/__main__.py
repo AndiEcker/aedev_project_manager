@@ -114,7 +114,7 @@ from aedev.project_vars import (                                                
     ProjectDevVars)
 
 
-from aedev.project_manager.codeberg import ensure_repo
+from aedev.project_manager.codeberg import ensure_repo, set_main_branch
 from aedev.project_manager.templates import (
     PATH_PREFIXES_PARSERS, TPL_IMPORT_NAMES,
     check_templates, project_templates, template_path_option, template_version_option)
@@ -818,7 +818,7 @@ def _print_pdv(pdv: ProjectDevVars):
         if 'long_desc_content' in pdv:
             pdv['long_desc_content'] = skw['long_description'] = pdv['long_desc_content'][:33] + "..."
         pdv['package_data'] = ", ".join(pdv.pdv_val('package_data'))
-        pdv['portions_packages'] = ", ".join(pkg[nsp_len:] for pkg in sorted(pdv.pdv_val('portions_packages')))
+        pdv['portions_packages'] = ", ".join(_pkg[nsp_len:] for _pkg in sorted(pdv.pdv_val('portions_packages')))
         pdv['project_packages'] = ", ".join(pdv.pdv_val('project_packages'))
         pdv['tests_requires'] = ", ".join(pdv.pdv_val('tests_requires'))
 
@@ -1354,19 +1354,19 @@ class GithubCom(RemoteHost):                                                    
         except UnknownObjectException:
             return None
 
-    def init_new_repo(self, group_repo: str, project_desc: str, main_branch: str):
+    def init_new_repo(self, group_repo: str, project_desc: str, main_branch: str) -> str:
         """ config new project repo.
 
         :param group_repo:      project owner user and repository names in the format "user-name/repo-name".
         :param project_desc:    project description.
         :param main_branch:     name of the default/main branch.
+        :return:                error message or empty string if no errors occurred.
         """
         project_repo = self.repo_obj(78, "repository initialization error", group_repo)
         if project_repo is None:
-            cae.po(f" **** group/repository {group_repo} not available; skipped properties/protected-branch setup")
-            return
+            return f"group/repository {group_repo} not available; skipped properties/protected-branch setup"
 
-        cae.vpo(f"    - setting remote project properties of new repository '{group_repo}'")
+        cae.dpo(f"    - setting remote project properties of new repository '{group_repo}'")
         project_repo.edit(default_branch=main_branch, description=project_desc, visibility='public')
 
         branch_masks = [main_branch]      # , f'{ini_pdv['RELEASE_REF_PREFIX']}*']
@@ -1375,7 +1375,8 @@ class GithubCom(RemoteHost):                                                    
         # .. see https://github.com/orgs/community/discussions/24703
         # current workaround is to protect individual release branch in the release_project action
 
-        cae.po(f"   == initialized project and created {len(branch_masks)} protected branch(es): {branch_masks}")
+        cae.po(f"   == initialized new project and created {len(branch_masks)} protected branch(es): {branch_masks}")
+        return ""
 
     def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Optional[Repository]:
         """ convert user repo names to a repository instance of the remote api.
@@ -1461,8 +1462,9 @@ class GithubCom(RemoteHost):                                                    
             cae.po(ppp(output))
 
         if new_repo:    # branch protection rules have to be created after branch creation done by git push
-            self.init_new_repo(owner_project, ini_pdv['project_title'], ini_pdv['MAIN_BRANCH'])
-
+            if error := self.init_new_repo(owner_project, ini_pdv['project_title'], ini_pdv['MAIN_BRANCH']):
+                cae.po(f" **** new repo initialization {error=} of remote project {owner_project}")
+                return
         cae.po(f" ==== pushed {' '.join(push_refs)} branches/tags to remote project {owner_project}")
 
     @_action(*ANY_PRJ_TYPE, arg_names=(("version-tag", ), ('LATEST', )), shortcut='release')
@@ -1571,8 +1573,8 @@ class GitlabCom(RemoteHost):
         except (GitlabHttpError, GitlabCreateError, GitlabError, Exception):    # pylint: disable=broad-exception-caught
             cae.shutdown(86, error_message=f"error '{format_exc()}' creating {branch_name=} for tag '{tag_name}'")
 
-    def init_new_remote_repo(self, ini_pdv: ProjectDevVars) -> str:                         # pragma: no cover
-        """ create a group/user project specified in ini_pdv or quit with error if group/user not found.
+    def init_new_repo(self, ini_pdv: ProjectDevVars) -> str:                         # pragma: no cover
+        """ create a remote group/user project specified in ini_pdv or quit with error if group/user not found.
 
         :param ini_pdv:         project dev vars.
         :return:                error message or empty string if no errors occurred.
@@ -1603,7 +1605,7 @@ class GitlabCom(RemoteHost):
             project_properties['user_id'] = owner_obj.id
         else:
             project_properties['namespace_id'] = owner_obj.id
-        cae.vpo(f"    - remote project properties of new package {project_name}: {PPF(project_properties)}")
+        cae.dpo(f"    - remote project properties of new package {project_name}: {PPF(project_properties)}")
 
         retries = 3
         while retries and self.connection:
@@ -1616,22 +1618,23 @@ class GitlabCom(RemoteHost):
 
                 _wait(ini_pdv)
 
-                for branch_mask in (main_branch, ini_pdv['RELEASE_REF_PREFIX'] + '*'):
+                release_branch_mask = ini_pdv['RELEASE_REF_PREFIX'] + '*'
+                for branch_mask in (main_branch, release_branch_mask):
                     protected_branch_properties = {'name': branch_mask,
                                                    'merge_access_level': MAINTAINER_ACCESS,
                                                    'push_access_level': MAINTAINER_ACCESS}
                     cae.vpo(f"    - {branch_mask} protected branch properties: {protected_branch_properties}")
                     project.protectedbranches.create(protected_branch_properties)
-                cae.po(f"   == created 2 protected branches: '{main_branch}' and '{ini_pdv['RELEASE_REF_PREFIX']}*'")
+                cae.po(f"   == created 2 protected branches: '{main_branch}' and '{release_branch_mask}'")
                 return ""
 
             except (GitlabHttpError, GitlabCreateError, Exception) as ex:   # pylint: disable=broad-exception-caught
                 # 400: {'namespace': ['is not valid']} get raised also on insufficient access rights/role
-                cae.po(f"   ** exception {ex=} raised in init_new_repo(); {retries=} props={PPF(project_properties)}")
+                cae.po(f"    # exception {ex=} raised in init_new_repo(); {retries=} props={PPF(project_properties)}")
                 _wait(ini_pdv)
                 retries -= 1
 
-        return f"  *** failed to create new remote project {project_name} with {project_properties=}"
+        return f"failed to create new remote project {owner_obj.name}/{project_name} with {project_properties=}"
 
     # pylint: disable-next=too-many-locals
     def merge_pushed_project(self, pdv: ProjectDevVars,
@@ -1945,13 +1948,11 @@ class GitlabCom(RemoteHost):
         cae.chk(17, not changed, f"{owner_project} has {len(changed)} uncommitted files: {changed}")
 
         if not self.repo_obj(0, owner_project):
-            errors = self.init_new_remote_repo(ini_pdv)
-            if errors:
-                cae.po(f" **** errors in initializing git repository before push to remote {owner_project}:")
-                cae.po(errors)
+            if error := self.init_new_repo(ini_pdv):
+                cae.po(f" **** initializing of repository before push to remote {owner_project} failed with {error=}")
                 return
         elif err_list := _update_project(ini_pdv, remote_names=remote_urls):
-            cae.po(f" **** errors in updating project before pushing it to remote {owner_project}")
+            cae.po(f" **** errors in updating project before pushing it to remote {owner_project}:")
             cae.po(ppp(err_list))
             return
 
@@ -1965,7 +1966,7 @@ class GitlabCom(RemoteHost):
         push_refs.append(_check_and_add_version_tag(ini_pdv))
 
         repo_url = git_push_url(ini_pdv, authenticate=True)
-        output = git_push(project_path, repo_url, "--set-upstream", *push_refs)
+        output = git_push(project_path, repo_url, "--set-upstream", *push_refs, exit_on_err=False)
         if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
             cae.po(f" **** errors in pushing project to remote {owner_project}")
             cae.po(ppp(output))
@@ -2220,14 +2221,14 @@ class PythonanywhereCom(RemoteHost):
             src_path = os_path_join(project_path, pkg_file_path)
             src_content = read_file(src_path, extra_mode='b') if os_path_isfile(src_path) else None
             dst_content = self.connection.deployed_file_content(pkg_file_path)
-            if src_content == dst_content:
+            if src_content == dst_content:  # or src_content is None and dst_content is None
                 dif = "is missing on both, repository and server" if src_content is None else ""
                 to_deploy.remove(pkg_file_path)
-            elif src_content is None:                   # should never happen
+            elif src_content is None:       # and dst_content is not None:
                 dif = f"need to be deleted on server (size={len(dst_content)})"
                 to_delete.add(pkg_file_path)
                 to_deploy.remove(pkg_file_path)
-            elif dst_content is None:
+            elif dst_content is None:       # and src_content is not None
                 dif = f"is missing on server(size={len(src_content)})"
             else:
                 dif = f"need to be upgraded on server (file size repo={len(src_content)} server={len(dst_content)})"
@@ -2240,8 +2241,11 @@ class PythonanywhereCom(RemoteHost):
         if optional_flags['CLEANUP']:
             def _cleanup_speedup_skipper(file_path: str) -> bool:
                 return skip_func(file_path) or bool(set(paths_match([file_path], DJANGO_EXCLUDED_FROM_CLEANUP)))
-            to_cleanup = self.connection.deployed_code_files(['**/*'] if optional_flags['ALL'] else path_masks,
-                                                             skip_file_path=_cleanup_speedup_skipper)
+            path_masks = ['**/*'] if optional_flags['ALL'] else path_masks
+            to_cleanup = self.connection.deployed_code_files(path_masks, skip_file_path=_cleanup_speedup_skipper)
+            if to_cleanup is None:
+                cae.po(f" #### ignoring/skipping error in determining the {path_masks=}-files to cleanup")
+                to_cleanup = set()
             cae.vpo(f"  --- {len(to_cleanup)} removable files found on {self.connection.project_name} project server:"
                     f" {ppp(sorted(to_cleanup))}")
             to_cleanup -= (deployable - skipped)
@@ -2919,7 +2923,7 @@ def show_versions(ini_pdv: ProjectDevVars):             # pylint: disable=too-ma
     cae.po(msg)
 
 
-# pylint: disable=too-many-branches
+# pylint: disable=too-many-branches,too-many-locals
 @_action(*ANY_PRJ_TYPE, arg_names=(('mirror-url-or-remote-name', ), ), shortcut='mirror')
 def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):                             # pragma: no cover
     """ create or update a mirror of the actual repo onto the specified remote/host.
@@ -2951,34 +2955,38 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):                 
         cae.po(f" **** token missing in mirror url {mask_token(mirror_url)}")
         return
 
-    ini_rep = None  # set to callable if any post-creation initialisations of the mirrored repo are needed
+    project_desc = ini_pdv['project_desc']
+    ini_rep = None  # set to callable if any post-push initialisations of the mirrored repo are needed
     if hostname == 'codeberg.org':
         group_project = owner_project_from_url(mirror_url)
         usr_or_org, repo_name = group_project.split("/", maxsplit=1)
-        err_msg = ensure_repo(usr_or_org, repo_name, token, main_branch=ini_pdv['MAIN_BRANCH'])
-        cae.chk(74, not err_msg, f" **** codeberg repository check failed: {err_msg}")
+        err_msg = ensure_repo(usr_or_org, repo_name, token, desc=project_desc)
+        cae.chk(74, not err_msg, f"codeberg repository check failed: {err_msg}")
+        ini_rep = partial(set_main_branch, usr_or_org, repo_name, token, ini_pdv['MAIN_BRANCH'])
 
     elif hostname == 'github.com':    # GitHub server does not allow to create initial/new mirror via git push
         group_project = owner_project_from_url(mirror_url)
         usr_or_org, repo_name = group_project.split("/", maxsplit=1)
         mirror_api = GithubCom()
         cae.chk(74, mirror_api.connect(cast(ProjectDevVars, {'repo_token': token})),
-                " **** connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
+                "connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
         if not mirror_api.repo_obj(0, "", group_project):
-            cae.chk(74, bool(group_obj := mirror_api.group_obj(usr_or_org)),
-                    f" **** invalid user or organization name {usr_or_org}")
+            cae.chk(74, bool(group_obj := mirror_api.group_obj(usr_or_org)), f"invalid user/org name {usr_or_org}")
             if group_obj:
                 group_obj.create_repo(repo_name)
-            ini_rep = partial(mirror_api.init_new_repo, group_project, ini_pdv['project_title'], ini_pdv['MAIN_BRANCH'])
+            ini_rep = partial(mirror_api.init_new_repo, group_project, project_desc, ini_pdv['MAIN_BRANCH'])
 
     # git push --prune <url+token> '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/notes/*:refs/notes/*'
     output = git_push(ini_pdv['project_path'], mirror_remote, "--prune",
-                      *[f"+refs/{ref_group}/*:refs/{ref_group}/*" for ref_group in ('heads', 'tags', 'notes')])
+                      *[f"+refs/{ref_group}/*:refs/{ref_group}/*" for ref_group in ('heads', 'tags', 'notes')],
+                      exit_on_err=False)
     if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
         cae.po(f" **** update mirror error:{ppp(mask_token(output))}")
     else:
         if ini_rep is not None:
-            ini_rep()
+            cae.chk(74, not (_err := ini_rep()), _err)
+            if _err:
+                return  # do not show success message on force/ignored ini_rep() error
         cae.po(f" ==== successfully updated mirror at remote {mask_token(mirror_remote)}")
 
 
@@ -3021,10 +3029,7 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
 def init_main() -> ConsoleApp:
     """ initialize main app instance. """
     global cae          # pylint: disable=global-statement
-    # because ae.core determines the app version with stack_var('__version__') it doesn't find it, alternatively to pass
-    # it via the app_version kwarg to ConsoleApp() the next line could be uncommented:
-    # __version__ = module_attr('aedev.project_manager', '__version__'))
-    cae = ConsoleApp(app_name="pjm", app_version=module_attr('aedev.project_manager', '__version__'),
+    cae = ConsoleApp(app_name="pjm", app_version=module_attr('aedev.project_manager', '__version__') or "",
                      debug_level=DEBUG_LEVEL_DISABLED)  # DEBUG_LEVEL_VERBOSE is now default in ae.core/ae.console
 
     cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all available actions)")
