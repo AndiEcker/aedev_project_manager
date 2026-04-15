@@ -106,4 +106,4 @@ class TestHelpers:
             err_msg = set_main_branch("user_or_group_name", "repo_name", "token", {}, timeout=0.003)
 
         assert isinstance(err_msg, str)
-        assert f"timeout_exception=Timeout('{timeout_message}')" in err_msg
+        assert f"exception=Timeout('{timeout_message}')" in err_msg
