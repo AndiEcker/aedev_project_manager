@@ -112,7 +112,6 @@ def set_main_branch(user_or_group_name: str, repo_name: str, token: str, main_br
             if not (empty := requests.get(api_url, **requests_kwargs).json().get('empty', "unset")):
                 requests.patch(api_url, json={'default_branch': main_branch}, **requests_kwargs).raise_for_status()
                 return ""
-
             errors.append(f"repository {empty=}")
 
         except requests.exceptions.Timeout as exception:

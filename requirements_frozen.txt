@@ -19,11 +19,11 @@ ae_paths==0.3.43
 ae_dynamicod==0.3.15
 ae_literal==0.3.35
 ae_updater==0.3.17
-ae_core==0.3.83
+ae_core==0.3.84
 ae_console==0.3.94
 ae_shell==0.3.13
 ae_managed_files==0.3.4
 ae_pythonanywhere==0.3.4
-aedev_base==0.3.5
+aedev_base==0.3.6
 aedev_commands==0.3.9
-aedev_project_vars==0.3.10
+aedev_project_vars==0.3.11

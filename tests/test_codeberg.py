@@ -80,22 +80,36 @@ class TestHelpers:
     def test_set_main_branch(self):
         with (patch('aedev.project_manager.codeberg.requests.get', return_value=Mock(json=lambda: {'empty': False})),
               patch('aedev.project_manager.codeberg.requests.patch') as requests_patch_method, ):
-            err_msg = set_main_branch("user_or_group_name", "repo_name", "token", {}, timeout=0.003)
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "testtoken", "TstBranch", timeout=0.003)
             requests_patch_method.assert_called_once()
 
         assert isinstance(err_msg, str)
         assert err_msg == ""
 
+    def test_set_main_branch_connect_error(self):
+        with patch('aedev.project_manager.codeberg.requests.get', side_effect=requests.ConnectionError("TstConnErr")):
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "tst_token_x", "TstBranch", timeout=0.003)
+
+        assert isinstance(err_msg, str)
+        assert err_msg != ""
+
+    def test_set_main_branch_empty_repo_error(self):
+        with patch('aedev.project_manager.codeberg.requests.get', return_value=Mock(json=lambda: {'empty': True})):
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "test_Token", "TestBranch", timeout=0.003)
+
+        assert isinstance(err_msg, str)
+        assert err_msg != ""
+
     def test_set_main_branch_exception_error(self):
         with patch('aedev.project_manager.codeberg.requests.get', side_effect=RuntimeError("testException")):
-            err_msg = set_main_branch("user_or_group_name", "repo_name", "token", {})
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "tst_token", "TstBranch", timeout=0.003)
 
         assert isinstance(err_msg, str)
         assert err_msg != ""
 
     def test_set_main_branch_timeout_error(self):
         with patch('aedev.project_manager.codeberg.time.sleep'):
-            err_msg = set_main_branch("user_or_group_name", "repo_name", "token", {}, timeout=0.003)
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "Tst_token", "TstBranch", timeout=0.003)
 
         assert isinstance(err_msg, str)
         assert err_msg != ""
@@ -103,7 +117,7 @@ class TestHelpers:
         timeout_message = 'testTimeoutException'
         timeout_exception = requests.exceptions.Timeout(timeout_message)
         with patch('aedev.project_manager.codeberg.requests.get', side_effect=timeout_exception):
-            err_msg = set_main_branch("user_or_group_name", "repo_name", "token", {}, timeout=0.003)
+            err_msg = set_main_branch("user_or_group_name", "repo_name", "TstToken", "TstBranch", timeout=0.003)
 
         assert isinstance(err_msg, str)
         assert f"exception=Timeout('{timeout_message}')" in err_msg
