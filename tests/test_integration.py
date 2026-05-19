@@ -74,7 +74,7 @@ class ItgTstPrj:
         return os_path_join(ITG_PARENT_PATH, self.name)
 
 
-ITG_PARENT_PATH = norm_path(os_path_join('~', TEST_PROJECTS_PARENT_FOLDER))
+ITG_PARENT_PATH = norm_path(os_path_join("~", TEST_PROJECTS_PARENT_FOLDER))
 ITG_ROOT_IMPORT_NAME = f'{TEST_PROJECTS_NAMESPACE}.{TEST_PROJECTS_NAMESPACE}'
 if tst_ctb_token:
     tst_namespaces_roots.append(ITG_ROOT_IMPORT_NAME)

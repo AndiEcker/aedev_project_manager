@@ -17,10 +17,10 @@ import pytest
 from conftest import logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
 from ae.base import (
-    BUILD_CONFIG_FILE, DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
+    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
     in_wd, norm_name, norm_path, on_ci_host,
-    os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
-    project_main_file, read_file, write_file)
+    os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
+from ae.system import APP_BUILD_CFG_FILENAME, project_main_file
 from ae.paths import path_items
 from ae.core import main_app_instance, temp_context_cleanup
 from ae.shell import debug_or_verbose
@@ -1193,10 +1193,10 @@ class TestHelpersLocal:
         assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
         assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
         assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-        assert os_path_isfile(os_path_join(project_path, BUILD_CONFIG_FILE))
+        assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
 
         assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
-        assert not os.path.exists(BUILD_CONFIG_FILE)
+        assert not os.path.exists(APP_BUILD_CFG_FILENAME)
 
     def test_renew_project_exits_on_erroneous_pdv_value(self, app_pjm, empty_repo_path, mocked_app_options,
                                                         patched_shutdown_wrapper):
@@ -1228,7 +1228,7 @@ class TestHelpersLocal:
 
             assert os_path_isdir(project_path)
             assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-            assert os_path_isfile(os_path_join(project_path, BUILD_CONFIG_FILE))
+            assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
@@ -1249,7 +1249,7 @@ class TestHelpersLocal:
             assert app_pdv['project_path'] == project_path
             assert os_path_isdir(project_path)
             assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-            assert os_path_isfile(os_path_join(project_path, BUILD_CONFIG_FILE))
+            assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
@@ -1272,7 +1272,7 @@ class TestHelpersLocal:
             assert norm_path(pkg_name) == project_path
             assert os_path_isdir(project_path)
             assert os_path_isfile(os_path_join(project_path, pkg_name, PY_INIT))
-            assert not os_path_isfile(os_path_join(project_path, BUILD_CONFIG_FILE))
+            assert not os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))

@@ -10,8 +10,8 @@ import pytest
 
 from ae.base import (
     DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT,
-    load_env_var_defaults, os_path_basename, os_path_isfile, os_path_join,
-    read_file, write_file)
+    os_path_basename, os_path_isfile, os_path_join, read_file, write_file)
+from ae.system import load_env_var_defaults 
 from ae.core import DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE, main_app_instance
 from ae.console import ConsoleApp
 
