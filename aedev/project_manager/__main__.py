@@ -77,11 +77,11 @@ from PIL import Image
 
 from ae.base import (  # type: ignore # pylint: disable=reimported
     PY_INIT, UNSET, UnsetType,
-    camel_to_snake, duplicates, full_stack_trace, module_attr, norm_name, norm_path, now_str, on_ci_host,
-    os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
-    os_path_relpath, os_path_splitext,
-    project_main_file, read_file, stack_var, url_failure, write_file,
-    write_file as patchable_write_file, os_path_basename)
+    camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
+    os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
+    read_file, url_failure, write_file,
+    write_file as patchable_write_file)
+from ae.system import full_stack_trace, module_attr, project_main_file, stack_var                       # type: ignore
 from ae.files import FileObject                                                                         # type: ignore
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
@@ -891,7 +891,7 @@ def _renew_prj_dir(new_pdv: ProjectDevVars):
     if not os_path_isdir(sub_dir):
         patchable_makedirs(sub_dir)
 
-    file_name = os_path_join(project_path, new_pdv['BUILD_CONFIG_FILE'])
+    file_name = os_path_join(project_path, new_pdv['APP_BUILD_CFG_FILENAME'])
     if project_type == APP_PRJ and not os_path_isfile(file_name):
         patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}[app]{sep}")
 
@@ -2054,7 +2054,7 @@ class GitlabCom(RemoteHost):
 
             action = " ==== requested merge"
             if not forked:
-                retries = self.merge_pushed_project(ini_pdv, request=merge_req, message=commit_msg, max_wait=9)
+                retries = self.merge_pushed_project(ini_pdv, request=merge_req, message=commit_msg, max_wait=27.)
                 action = " ==== auto-merged unforked merge request" if retries else " **** failed merge request retries"
 
         except (GitlabError, GitlabHttpError, Exception) as ex:     # pylint: disable=broad-exception-caught
@@ -2180,7 +2180,7 @@ class PythonanywhereCom(RemoteHost):
             if version_tag == 'LATEST':
                 version_tag = prefix + latest_remote_version(ini_pdv, increment_part=0)
             else:
-                cae.chk(85, version_tag[0] == prefix and version_tag.count(".") == 2,
+                cae.chk(85, version_tag[0] == prefix and version_tag.count('.') == 2,
                         f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}3.6.9, got '{version_tag}'")
                 cae.chk(85, not deployed_ver or version_tag[1:] in (deployed_ver, increment_version(deployed_ver)),
                         f"too big increment between old|deployed ({deployed_ver}) and new version ({version_tag[1:]})"
@@ -2740,16 +2740,16 @@ def prepare_commit(ini_pdv: ProjectDevVars, title: str = ""):
 
 @_action(PARENT_PRJ, ROOT_PRJ)
 def refresh_children_managed(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):       # pragma: no cover
-    """ refresh managed files from templates in namespace/project-parent children projects. """
+    """ refresh frozen requirements and managed files from templates in all the children projects. """
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
-        refresh_managed(chi_pdv)
+        refresh_project(chi_pdv)
     cae.po(f" ==== refreshed {children_desc(ini_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='refresh')
-def refresh_managed(ini_pdv: ProjectDevVars):                                               # pragma: no cover
-    """ refresh/renew all the managed files in the specified project. """
+def refresh_project(ini_pdv: ProjectDevVars):                                               # pragma: no cover
+    """ refresh/renew all the *requirements_frozen.txt files and all the managed files of the specified project. """
     project_path = ini_pdv['project_path']
 
     errors = update_frozen_req_files(ini_pdv)  # check|update frozen *requirements.txt
@@ -2763,7 +2763,7 @@ def refresh_managed(ini_pdv: ProjectDevVars):                                   
 
     dst_files = list(dst_path for dst_path, mf in man.deploy_files.items() if not mf.up_to_date)
     dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose() else ""
-    cae.po(f" ==== refreshed {len(dst_files)} managed files in {ini_pdv['project_title']}{dbg_msg}")
+    cae.po(f" ==== refreshed *_frozen.txt and {len(dst_files)} managed files of {ini_pdv['project_title']}{dbg_msg}")
 
 
 @_action(PARENT_PRJ, ROOT_PRJ, arg_names=tuple(tuple(('old-name', 'new-name', ) + _) for _ in ARGS_CHILDREN_DEFAULT))
@@ -2909,7 +2909,7 @@ def show_versions(ini_pdv: ProjectDevVars):             # pylint: disable=too-ma
 
     if pip_name := ini_pdv['pip_name']:
         pypi_test = ini_pdv['parent_folder'] == TEST_PROJECTS_PARENT_FOLDER
-        newest_ver = get_pypi_versions(pip_name, pypi_test=pypi_test)[-1] or '-'
+        newest_ver = get_pypi_versions(pip_name, pypi_test=pypi_test)[-1] or "-"
         msg += f" pypi{TEST_PROJECTS_PARENT_FOLDER if pypi_test else ''}:{newest_ver: <9}"
 
     if ini_pdv['project_type'] == DJANGO_PRJ:

@@ -12,6 +12,7 @@ from typing import Any, Union, cast
 from ae.base import (                                                                                   # type: ignore
     TEMPLATES_FOLDER,
     in_wd, norm_name, norm_path, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, pep8_format)
+from ae.system import PyMo                                                                              # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.managed_files import (                                                                          # type: ignore
     DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
@@ -224,13 +225,13 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
     :return:                    path to the templates folder within the template package project
                                 or an empty string if an error occurred..
     """
-    namespace_name, portion_name = import_name.split('.')
-    repo_root = f"{PDV_REPO_HOST_PROTOCOL}{PDV_repo_domain}/{namespace_name}{PDV_REPO_GROUP_SUFFIX}"
+    py_mo = PyMo(import_name)
+    repo_root = f"{PDV_REPO_HOST_PROTOCOL}{PDV_repo_domain}/{py_mo.namespace_name}{PDV_REPO_GROUP_SUFFIX}"
 
     # partial clone tpl-prj into tmp dir, --depth 1 extra-arg is redundant if branch_or_tag/--single-branch is specified
     path = git_clone(repo_root, norm_name(import_name), "--filter=blob:none", "--sparse", branch_or_tag=version_tag)
     if path:
-        sub_dir_parts = (namespace_name, portion_name, TEMPLATES_FOLDER)
+        sub_dir_parts = (*py_mo.name_parts, TEMPLATES_FOLDER)
         with in_wd(path):
             tpl_dir = '/'.join(sub_dir_parts)   # git sparse-checkout expects *nix-path-separator also on MsWindows
             output = sh_exit_if_git_err(445, "git sparse-checkout", extra_args=("add", tpl_dir), exit_on_err=False)
@@ -401,7 +402,7 @@ def template_options_prefix(import_name: str) -> str:
     :param import_name:         import name of the template package.
     :return:                    command line option prefix of the specified template package.
     """
-    option_name = import_name.split('.')[-1]
+    option_name = PyMo(import_name).portion_name        # import_name.split('.')[-1]
     if option_name.endswith(TPL_IMPORT_NAME_SUFFIX):    # if it is a project type template (aedev.<project type>_tpls)
         return norm_name(option_name)                   # then use the template project portion name as option prefix
     return 'portions_namespace_root'                    # for the portion's namespace root use hardcoded option name

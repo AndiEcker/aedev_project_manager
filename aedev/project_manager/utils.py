@@ -8,7 +8,8 @@ from gitlab.v4.objects import Project
 from packaging.version import Version, InvalidVersion
 
 from ae.base import (                                                                                   # type: ignore
-    load_env_var_defaults, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
+    os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
+from ae.system import load_env_var_defaults                                                             # type: ignore
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER, get_domain_user_var, sh_exit_if_exec_err     # type: ignore
