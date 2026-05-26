@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from ae.base import (
-    in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, os_path_splitext, read_file, write_file)
+    extend_file, in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, os_path_splitext,
+    read_file, write_file)
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER
 from aedev.base import (
@@ -720,8 +721,8 @@ class TestOtherHelpers:
                                       OrderedDict({child_name: pdv_factory({'project_type': MODULE_PRJ})}))
 
     def test_expected_args(self):
-        spe = {'arg_names': (('varA_arg1', 'varA_arg2'), ('varB_arg1', 'varB_arg2', 'varB_arg3'))}
-        assert expected_args(spe) == "varA_arg1 varA_arg2 -or- varB_arg1 varB_arg2 varB_arg3"
+        spe = {'arg_names': (('var0_arg1', 'var0_arg2'), ('varB_arg1', 'varB_arg2', 'varB_arg3'))}
+        assert expected_args(spe) == "var0_arg1 var0_arg2 -or- varB_arg1 varB_arg2 varB_arg3"
 
         spe = {'arg_names': (('a', 'b'), ('c', ), ('d', ))}
         assert expected_args(spe) == "a b -or- c -or- d"
@@ -774,7 +775,7 @@ class TestOtherHelpers:
         t_domain2 = 'test.domain2.tst'
 
         with in_wd(project_path):   # prevent reading from .env in project_manager root or src parent
-            usr_nam = tst_ns_name + PDV_REPO_GROUP_SUFFIX   # default user name for namespace module / module_repo_path
+            usr_nam = tst_ns_name + PDV_REPO_GROUP_SUFFIX   # default username for namespace module / module_repo_path
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), "NotGitLabToIgnoreLocEnvs") == usr_nam
 
@@ -787,14 +788,14 @@ class TestOtherHelpers:
 
             var_nam = f"{ENV_VAR_NAME_PREFIX}repo_user"
             usr_nam = 'usr_nam_via_PDV_var_in_parent_.env'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), "") == usr_nam
             assert get_host_user_name(pdv_with_email(project_path=project_path), tst_domain) == usr_nam
 
             var_nam = f"{ENV_VAR_NAME_PREFIX}repo_user"
             usr_nam = 'usr_nam_via_PDV_var_in_.env'
-            write_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), tst_domain) == usr_nam
             assert get_host_user_name(pdv_with_email(project_path=project_path), "") == usr_nam
@@ -808,25 +809,25 @@ class TestOtherHelpers:
 
             var_nam = "AE_OPTIONS_REPO_USER"
             usr_nam = 'usr_nam_via_parent_.env_and_without_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), "") == usr_nam
 
             var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(tst_domain).upper()}"
             usr_nam = 'usr_nam_via_parent_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), tst_domain) == usr_nam
 
             var_nam = "AE_OPTIONS_REPO_USER"
             usr_nam = 'usr_nam_via_.env_and_without_domain'
-            write_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(project_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), "") == usr_nam
 
             var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(tst_domain).upper()}"
             usr_nam = 'usr_nam_via_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), tst_domain) == usr_nam
 
@@ -845,7 +846,7 @@ class TestOtherHelpers:
             var_nam = f"AE_OPTIONS_REPO_USER_AT_{norm_name(t_domain2).upper()}"
             usr_nam = 'usr_nam_via_.env_and_with_domain_set_via_command_line_option'
             mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_nam}\n")
 
             assert get_host_user_name(pdv_with_email(project_path=project_path), "") == usr_nam
             assert get_host_user_name(pdv_with_email(project_path=project_path), t_domain2) == usr_nam
@@ -876,14 +877,14 @@ class TestOtherHelpers:
 
             var_nam = f"{ENV_VAR_NAME_PREFIX}repo_token"
             usr_tok = 'usr_tok_via_PDV_var_in_parent_.env'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), "") == usr_tok
             assert get_host_user_token(pdv_with_email(), tst_domain) == usr_tok
 
             var_nam = f"{ENV_VAR_NAME_PREFIX}repo_token"
             usr_tok = 'usr_tok_via_PDV_var_in_.env'
-            write_file(".env", f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(".env", f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), tst_domain) == usr_tok
             assert get_host_user_token(pdv_with_email(), "") == usr_tok
@@ -897,37 +898,37 @@ class TestOtherHelpers:
 
             var_nam = "AE_OPTIONS_REPO_TOKEN"
             usr_tok = 'usr_tok_via_parent_.env_and_without_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), "") == usr_tok
 
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}"
             usr_tok = 'usr_tok_via_parent_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), tst_domain) == usr_tok
 
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}_{user_name.upper()}"
             usr_tok = 'usr_tok_via_parent_.env_and_with_domain_and_user'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), tst_domain, host_user=user_name) == usr_tok
 
             var_nam = "AE_OPTIONS_REPO_TOKEN"
             usr_tok = 'usr_tok_via_.env_and_without_domain'
-            write_file(".env", f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(".env", f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), "") == usr_tok
 
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}"
             usr_tok = 'usr_tok_via_.env_and_with_domain'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), tst_domain) == usr_tok
 
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(tst_domain).upper()}_{user_name.upper()}"
             usr_tok = 'usr_tok_via_.env_and_with_domain_and_user'
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), tst_domain, host_user=user_name) == usr_tok
 
@@ -952,7 +953,7 @@ class TestOtherHelpers:
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(t_domain2).upper()}"
             usr_tok = 'usr_tok_via_.env_and_with_domain_set_via_command_line_option'
             mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), "") == usr_tok
             assert get_host_user_token(pdv_with_email(), t_domain2) == usr_tok
@@ -960,7 +961,7 @@ class TestOtherHelpers:
             var_nam = f"AE_OPTIONS_REPO_TOKEN_AT_{norm_name(t_domain2).upper()}_{user_name.upper()}"
             usr_tok = 'usr_tok_via_.env_and_with_domain_set_via_command_line_option_and_with_user'
             mocked_app_options['repo_domain'] = t_domain2
-            write_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n", extra_mode='a')
+            extend_file(os_path_join(parent_path, ".env"), f"\n{var_nam}={usr_tok}\n")
 
             assert get_host_user_token(pdv_with_email(), "", host_user=user_name) == usr_tok
             assert get_host_user_token(pdv_with_email(), t_domain2, host_user=user_name) == usr_tok

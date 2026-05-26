@@ -131,8 +131,8 @@ def init_parent():
 def pdv_with_email(**pdv_kwargs) -> ProjectDevVars:
     """ pdv instance with non-empty values in AUTHOR and AUTHOR_EMAIL, to suppress pdv.errors() warnings. """
     pdv = ProjectDevVars(**pdv_kwargs)
-    pdv['AUTHOR'] = 'AndiEcker'
-    pdv['AUTHOR_EMAIL'] = 'aecker2@gmail.com'
+    pdv['AUTHOR'] = 'TstAuthor'
+    pdv['AUTHOR_EMAIL'] = 'author@email.tst'
     return pdv
 
 

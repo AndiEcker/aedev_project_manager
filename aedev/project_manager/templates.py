@@ -2,6 +2,8 @@
 templates for managed files of Python projects
 ==============================================
 
+this module extends the template processing engine of the :mod:`ae.managed_files` portion with
+code project management functionality.
 
 """
 import os
@@ -16,7 +18,7 @@ from ae.system import PyMo                                                      
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.managed_files import (                                                                          # type: ignore
     DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
-    ContextVars, ManagedFile, TemplateMngr, TemplateFiles)
+    ContextVars, ManagedFile, OutdatedFilesPathsContents, TemplateMngr, TemplateFiles)
 from ae.paths import path_items, skip_py_cache_files                                                    # type: ignore
 from ae.shell import debug_or_verbose                                                                   # type: ignore
 from aedev.base import (                                                                                # type: ignore
@@ -39,16 +41,13 @@ CACHED_TPL_PROJECTS: CachedTemplates = {}
 globally here to be used as argument value for :paramref:`project_templates.cached_templates` and
 :paramref:`register_template.cached_templates`.
 """
-MOVE_TPL_TO_PKG_PATH_NAME_PREFIX = 'de_mtp_'
-""" template path prefix, to move the templates (instead of the project path, underneath of it) to the package path. """
-SKIP_IF_PORTION_PREFIX = 'de_sfp_'
-""" template file/path prefix to skip deployment of template to namespace portion. will be removed from destination
-file name by :func:`deploy_template`, but the check if the destination project is a namespace portion has to be done
-externally, by not calling the :func:`deploy_template` function for templates with this prefix.
-"""
-SKIP_PRJ_TYPE_PREFIX = 'de_spt_'
-""" file name prefix followed by a project type id arg (see *_PRJ constants). file creation/update from template will be
-skipped if it the project type id in the template file name matches the destination project type.
+MOVE_INTO_PACKAGE_PATH_PFX = 'MovPkg-'
+""" template path prefix, to move the templates into the package path (underneath/instead of the project path). """
+SKIP_FOR_PORTIONS_PATH_PFX = 'SkpPor-'
+""" template file/path prefix to skip deployment of templates to a namespace portion. """
+SKIP_PRJ_TYPE_PATH_PFX = 'SkpTyp-'
+""" template file name prefix followed by a project type id arg (see *_PRJ constants). file creation/update from
+template will be skipped if it the project type id in the template file name matches the destination project type.
 """
 
 TPL_IMPORT_NAME_PREFIX = 'aedev.'                       #: package/import name prefix of project type template packages
@@ -131,7 +130,25 @@ def _get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     return tpl_vars
 
 
-# pylint: disable=too-many-branches
+def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, verbose: bool):
+    for file_name, new_content, old_content in outdated:
+        cae.po(f"    - {file_name}  ------------")
+        if isinstance(new_content, bytes) or isinstance(old_content, bytes):  # old_content check for mypy
+            dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]
+        else:
+            new_lines = new_content.splitlines(keepends=True)
+            old_lines = old_content.splitlines(keepends=True)
+            if not verbose:
+                dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
+            elif cae.verbose:
+                dif = list(ndiff(old_lines, new_lines))
+            elif cae.debug:
+                dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
+            else:
+                dif = list(context_diff(old_lines, new_lines))
+        cae.po("      " + "      ".join(dif), end="")
+
+
 def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on_outdated: bool = False):
     missing = man.missing_files
     outdated = man.outdated_files
@@ -143,22 +160,7 @@ def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on
         if outdated:
             cae.po(f"   -- {len(outdated)} managed files outdated: " +
                    (PPF(outdated) if cae.debug else " ".join(fn for fn, *_ in outdated)))
-        for file_name, new_content, old_content in outdated:
-            cae.po(f"    - {file_name}  ------------")
-            if isinstance(new_content, bytes) or isinstance(old_content, bytes):    # old_content check for mypy
-                dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]  # pragma: no cover
-            else:
-                new_lines = new_content.splitlines(keepends=True)
-                old_lines = old_content.splitlines(keepends=True)
-                if not verbose:
-                    dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
-                elif cae.verbose:
-                    dif = list(ndiff(old_lines, new_lines))
-                elif cae.debug:
-                    dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
-                else:
-                    dif = list(context_diff(old_lines, new_lines))
-            cae.po("      " + "      ".join(dif), end="")
+            _log_check_outdated(cae, outdated, verbose)
 
         cae.po()
         cae.chk(44, not fail_on_outdated, f"template check failed: {len(missing)=} {len(outdated)=}"
@@ -240,41 +242,41 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
     return path
 
 
-def path_pfx_place_into_package_path(managed_file: ManagedFile):
-    """ path prefix callee for the :data:`MOVE_TPL_TO_PKG_PATH_NAME_PREFIX` prefix.
+def path_pfx_place_into_package_path(mf: ManagedFile):
+    """ path prefix callee for the :data:`MOVE_INTO_PACKAGE_PATH_PFX` prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     """
-    ctx_vars = managed_file.manager.context_vars
+    ctx_vars = mf.manager.context_vars
     pkg_path = os_path_relpath(ctx_vars['package_path'], ctx_vars['project_path'])
     if pkg_path != '.':
-        managed_file.extend_dst_file_path(cast(str, pkg_path))
+        mf.extend_dst_file_path(cast(str, pkg_path))
 
 
-def path_pfx_skip_if_portion(managed_file: ManagedFile):
-    """ path prefix callee for the :data:`SKIP_IF_PORTION_PREFIX` prefix.
+def path_pfx_skip_for_portions(mf: ManagedFile):
+    """ callee for the :data:`SKIP_FOR_PORTIONS_PATH_PFX` path prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     """
-    ctx_vars = managed_file.manager.context_vars
+    ctx_vars = mf.manager.context_vars
     if bool(ctx_vars['namespace_name']) and ctx_vars['project_type'] != ROOT_PRJ:
-        managed_file.skip("destination-project-is-namespace-portion-skip")
+        mf.skip("destination-project-is-namespace-portion-skip")
 
 
-def path_pfx_skip_if_project_type(managed_file: ManagedFile, project_type: str):
-    """ path prefix callback for the :data:`SKIP_PRJ_TYPE_PREFIX` prefix.
+def path_pfx_skip_if_project_type(mf: ManagedFile, project_type: str):
+    """ path prefix callback for the :data:`SKIP_PRJ_TYPE_PATH_PFX` prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     :param project_type:        project type prefix arg.
     """
-    if project_type == managed_file.manager.context_vars['project_type']:
-        managed_file.skip(f"destination-project-type ({project_type=})")
+    if project_type == mf.manager.context_vars['project_type']:
+        mf.skip(f"destination-project-type ({project_type=})")
 
 
 PATH_PREFIXES_PARSERS = dict(DEFAULT_PATH_PREFIXES_PARSERS, **{
-    MOVE_TPL_TO_PKG_PATH_NAME_PREFIX: (0, path_pfx_place_into_package_path),
-    SKIP_IF_PORTION_PREFIX: (0, path_pfx_skip_if_portion),
-    SKIP_PRJ_TYPE_PREFIX: (1, path_pfx_skip_if_project_type),
+    MOVE_INTO_PACKAGE_PATH_PFX: (0, path_pfx_place_into_package_path),
+    SKIP_FOR_PORTIONS_PATH_PFX: (0, path_pfx_skip_for_portions),
+    SKIP_PRJ_TYPE_PATH_PFX: (1, path_pfx_skip_if_project_type),
 })      #: mapping of path prefix parser markers (keys) to their corresponding parser functions (value)
 
 

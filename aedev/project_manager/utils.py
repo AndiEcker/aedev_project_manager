@@ -188,10 +188,11 @@ def get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str 
 
 
 def get_host_domain(pdv: ProjectDevVars, var_prefix: str = 'repo_') -> str:
+    # noinspection GrazieInspection
     """ determine domain name of repository|web host from the repo_domain or web_domain option or config variable.
 
     :param pdv:                 project dev vars.
-    :param var_prefix:          config variable name prefix. pass "web\\_" to get web server host config values.
+    :param var_prefix:          config variable name prefix. pass 'web\\_' to get web server host config values.
     :return:                    domain name of the host, or an empty string if '{var_prefix}domain' is not set.
     """
     host_domain = get_host_config_val(pdv, f'{var_prefix}domain')              # 'repo_domain' | 'web_domain'
@@ -219,6 +220,7 @@ def get_host_group(pdv: ProjectDevVars, host_domain: str) -> str:
 
 
 def get_host_user_name(pdv: ProjectDevVars, host_domain: str, var_prefix: str = 'repo_') -> str:
+    # noinspection GrazieInspection
     """ determine username from --repo_user/--web_user options, PDV_repo_user or PDV_web_user config variable.
 
     :param pdv:                 project dev vars.
@@ -237,6 +239,7 @@ def get_host_user_name(pdv: ProjectDevVars, host_domain: str, var_prefix: str = 
 
 
 def get_host_user_token(pdv: ProjectDevVars, host_domain: str, host_user: str = "", var_prefix: str = 'repo_') -> str:
+    # noinspection GrazieInspection
     """ determine token or password of user from --repo_token or --web_token option or config variable.
 
     :param pdv:                 project development variables.

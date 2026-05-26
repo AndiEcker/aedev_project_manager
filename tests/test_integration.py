@@ -11,7 +11,7 @@ import pytest
 from packaging.version import Version
 
 from ae.base import (
-    norm_name, norm_path, now_str, on_ci_host,
+    extend_file, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_isdir, os_path_isfile, os_path_join,
     read_file, write_file)
 from ae.core import main_app_instance, temp_context_cleanup
@@ -131,9 +131,9 @@ def setup_module():
     for import_name in TPL_IMPORT_NAMES:
         register_template(import_name, {}, CACHED_TPL_PROJECTS, (), [])
 
-    write_file(norm_path(os_path_join("~", 'git' + SHELL_LOG_FILE_NAME_SUFFIX)),
-               f"\n\n{now_str(sep='-')}\n# pjm test suite enabled global git log\n",
-               extra_mode='a')  # ensure enabled git logging and add test suite run header marker/comment to log file
+    # ensure enabled git logging and add test suite run header marker/comment to log file
+    extend_file(norm_path(os_path_join("~", 'git' + SHELL_LOG_FILE_NAME_SUFFIX)),
+                f"\n\n{now_str(sep='-')}\n# pjm test suite enabled global git log\n")
 
     logging_unpatched_shutdown_setup()
 
@@ -581,9 +581,8 @@ class TestFullWorkflows:
         assert new_ver == latest_remote_version(pdv)
         assert guess_next_action(pdv) == 'prepare_commit'
 
-        write_file(main_file_path(project_path, project_type, namespace_name=pdv['namespace_name']),
-                   f"# full git workflow integration test version: {old_ver} -> {new_ver}\n",
-                   extra_mode='a')
+        extend_file(main_file_path(project_path, project_type, namespace_name=pdv['namespace_name']),
+                    f"# full git workflow integration test version: {old_ver} -> {new_ver}\n")
 
         prepare_commit(pdv)
 

@@ -14,7 +14,7 @@ from ae.base import (
     read_file, write_file)
 from ae.core import main_app_instance, temp_context_cleanup, temp_context_folders
 from ae.managed_files import (
-    PATH_PREFIXES_ARGS_SEP, REFRESHABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER,
+    PATH_PREFIXES_ARGS_SEP, PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER,
     F_STRINGS_PATH_PFX, TEMPLATE_PLACEHOLDER_ID_PREFIX, TEMPLATE_PLACEHOLDER_ID_SUFFIX,
     TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID,
     deploy_template, patch_string)
@@ -32,10 +32,10 @@ from constants_and_fixtures import (
 
 # noinspection PyProtectedMember
 from aedev.project_manager.templates import (
-    CACHED_TPL_PROJECTS, PATH_PREFIXES_PARSERS, SKIP_IF_PORTION_PREFIX, SKIP_PRJ_TYPE_PREFIX,
+    CACHED_TPL_PROJECTS, PATH_PREFIXES_PARSERS, SKIP_FOR_PORTIONS_PATH_PFX, SKIP_PRJ_TYPE_PATH_PFX,
     TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    _get_template_vars, check_templates, clone_template_project,
-    path_pfx_place_into_package_path, path_pfx_skip_if_portion, path_pfx_skip_if_project_type,
+    check_templates, clone_template_project, _get_template_vars, _log_check_outdated,
+    path_pfx_place_into_package_path, path_pfx_skip_for_portions, path_pfx_skip_if_project_type,
     project_templates, register_template, setup_kwargs_literal, template_path_option, template_version_option)
 
 
@@ -61,8 +61,8 @@ def cleanup_caches():
 
 # noinspection PyUnusedLocal
 def test_declaration_of_template_vars(cleanup_caches):
+    assert isinstance(PUTTABLE_TEMPLATE_PATH_PFX, str)
     assert isinstance(REFRESHABLE_TEMPLATE_MARKER, str)
-    assert isinstance(REFRESHABLE_TEMPLATE_PATH_PFX, str)
     assert isinstance(F_STRINGS_PATH_PFX, str)
     assert isinstance(TEMPLATE_PLACEHOLDER_ID_PREFIX, str)
     assert isinstance(TEMPLATE_PLACEHOLDER_ID_SUFFIX, str)
@@ -296,7 +296,7 @@ class TestHelpers:
             with in_wd(str(tmp_path)):
                 assert check_templates(app_pjm, ProjectDevVars(project_path=str(tmp_path))) is None
 
-        # fewer warnings if tests are running by pjm (but not w/ same command line in shell/console or in pycharm)
+        # fewer warnings if tests are running by pjm (but not w/ same command line in shell/console or in PyCharm)
         err_cnt = len(captured_warning)
         assert err_cnt in (1, 3)
         if err_cnt == 1:
@@ -311,7 +311,7 @@ class TestHelpers:
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         tpl_pkg_path = norm_path(os_path_join(parent_dir, 'tst_tpls', TEMPLATES_FOLDER))
         tpl_file_name = "including_content.txt"
-        tpl_file_path = os_path_join(tpl_pkg_path, REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + tpl_file_name)
+        tpl_file_path = os_path_join(tpl_pkg_path, PUTTABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + tpl_file_name)
         ver = '9.6.9999'
         prj_templates = [{'import_name': TPL_IMPORT_NAME_PREFIX + 'project' + TPL_IMPORT_NAME_SUFFIX,
                           'tpl_path': tpl_pkg_path,
@@ -333,6 +333,7 @@ class TestHelpers:
         os.mkdir(project_path)
         with in_wd(project_path):
             tmg = check_templates(app_pjm, pdv_with_email(project_type=MODULE_PRJ, project_templates=prj_templates))
+            assert tmg
             assert not os_path_isfile(patched_file_name)
             tmg.deploy()
             assert os_path_isfile(patched_file_name)
@@ -362,7 +363,7 @@ class TestHelpers:
         tpl_imp_name = namespace_name + '.' + namespace_name
         tpl_pkg_path = norm_path(os_path_join(
             parent_dir, norm_name(tpl_imp_name), namespace_name, namespace_name, TEMPLATES_FOLDER))
-        tpl_file_path = os_path_join(tpl_pkg_path, REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + patched_file)
+        tpl_file_path = os_path_join(tpl_pkg_path, PUTTABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + patched_file)
 
         default = "include file default string"
         version = '6.699.987'
@@ -388,6 +389,7 @@ class TestHelpers:
         with in_wd(project_path):
             tmg = check_templates(app_pjm, pdv)
 
+        assert tmg
         assert 'project_templates' in pdv
         assert not os_path_isfile(patched_path)
         assert norm_path(patched_path) in set(tmg.deploy_files.keys())
@@ -409,9 +411,70 @@ class TestHelpers:
         assert TEMPLATE_PLACEHOLDER_ARGS_SUFFIX not in content
         assert "TEMPLATE_PLACEHOLDER_ARGS_SUFFIX" not in content
 
+    def test_check_templates_log_check_outdated_diff_bytes(self):
+        app_mock = MagicMock()
+
+        _log_check_outdated(app_mock, [('f_nam.ext', b'old_bin', b'new_bin')], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_bin' in app_mock.method_calls[1].args[0]
+        assert 'new_bin' in app_mock.method_calls[1].args[0]
+
+    def test_check_templates_log_check_ndiff_debug_or_verbose_false(self):
+        app_mock = MagicMock()
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], False)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert 'new_str' in app_mock.method_calls[1].args[0]
+
+    def test_check_templates_log_check_outdated_ndiff_verbose(self):
+        app_mock = MagicMock()      # cae.verbose is True
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert 'new_str' in app_mock.method_calls[1].args[0]
+
+    def test_check_templates_log_check_outdated_unified_diff_debug(self):
+        app_mock = MagicMock()
+        app_mock.verbose = False
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert 'new_str' in app_mock.method_calls[1].args[0]
+
+    def test_check_templates_log_check_outdated_context_diff(self):
+        app_mock = MagicMock()
+        app_mock.verbose = False
+        app_mock.debug = False
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert 'new_str' in app_mock.method_calls[1].args[0]
+
     def test_check_templates_log_check_summary(self, app_pjm_debug, capsys, cleanup_caches, module_repo_path):
         pdv = pdv_with_email(project_path=module_repo_path)
+        # uncomment next line to test w/ full coverage using the new path-prefix-ids local:
+        # pdv['main_app_options'] = {'project_tpls_project_path': "~/src/aedev_project_tpls"}
         write_file(os.path.join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
+        # write_file(os.path.join(pdv['project_path'], '.gitignore'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
         por_name = pdv['portion_name']
 
         with in_wd(module_repo_path):
@@ -476,7 +539,7 @@ class TestHelpers:
         # 2nd test with template in all template projects (namespace-root template project has the highest priority)
         deep_sub_dir = os_path_join('deeper', 'even_deeper')
         file_for_all = 'file_for_all.ext'
-        tpl_file_for_all = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + file_for_all
+        tpl_file_for_all = PUTTABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + file_for_all
         for tpl_reg in prj_tpls:
             tpl_path = os_path_join(tpl_reg['tpl_path'], deep_sub_dir)
             write_file(os_path_join(tpl_path, tpl_file_for_all), tpl_reg['tpl_path'], make_dirs=True)
@@ -486,6 +549,7 @@ class TestHelpers:
 
         with in_wd(project_path):
             tmg = check_templates(cons_app, pdv)
+            assert tmg
             assert set(tmg.deploy_files.keys()) == {norm_path(tpl_file)}
             assert not os_path_isfile(tpl_file)
             tmg.deploy()
@@ -494,7 +558,7 @@ class TestHelpers:
         assert prj_tpls[0]['tpl_path'] in content
         assert REFRESHABLE_TEMPLATE_MARKER in content
 
-        # fewer warnings if tests are running by pjm (but not w/ same command line in shell/console or in pycharm)
+        # fewer warnings if tests are running by pjm (but not w/ same command line in shell/console or in PyCharm)
         err_cnt = len(recwarn)
         assert err_cnt in (2, 4)
         assert "author name is missing" in recwarn[0].message.args[0]
@@ -530,7 +594,7 @@ class TestHelpers:
         dst_dir = os_path_join(parent_dir, 'dst')
         new_pdv = {'namespace_name': "", 'project_path': dst_dir, 'project_type': ROOT_PRJ}
         os.makedirs(dst_dir)
-        prefixes = SKIP_IF_PORTION_PREFIX + SKIP_PRJ_TYPE_PREFIX + ROOT_PRJ + PATH_PREFIXES_ARGS_SEP
+        prefixes = SKIP_FOR_PORTIONS_PATH_PFX + SKIP_PRJ_TYPE_PATH_PFX + ROOT_PRJ + PATH_PREFIXES_ARGS_SEP
         dst_path = os_path_join(sub_dir_folder, prefixes + file_name)
 
         with in_wd(dst_dir):
@@ -615,10 +679,10 @@ class TestHelpers:
 
         mf.extend_dst_file_path.assert_called_once_with(rel_path)
 
-    def test_path_pfx_skip_if_portion(self):
+    def test_path_pfx_skip_for_portions(self):
         mf = MagicMock()
 
-        path_pfx_skip_if_portion(mf)
+        path_pfx_skip_for_portions(mf)
 
         mf.skip.assert_called_once()
 
