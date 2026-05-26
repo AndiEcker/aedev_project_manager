@@ -26,7 +26,7 @@ from ae.core import main_app_instance, temp_context_cleanup
 from ae.shell import debug_or_verbose
 from ae.pythonanywhere import PythonanywhereApi
 from ae.managed_files import (
-    REFRESHABLE_TEMPLATE_MARKER, REFRESHABLE_TEMPLATE_PATH_PFX)
+    PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER)
 from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
@@ -285,12 +285,12 @@ class TestActionsLocal:
         file_src_path = os_path_join(module_repo_path, file_name)
         write_file(file_src_path, file_content)
         file_dst_path = os_path_join(module_repo_path, tst_ns_name, file_name)
-        tpl_name = REFRESHABLE_TEMPLATE_PATH_PFX + "add_tpl_file.xyz"
+        tpl_name = PUTTABLE_TEMPLATE_PATH_PFX + "add_tpl_file.xyz"
         tpl_content = "tpl content"
         tpl_src_path = os_path_join(module_repo_path, tpl_name)
         # noinspection PyTypeChecker
         write_file(tpl_src_path, tpl_content)
-        tpl_dst_path = os_path_join(module_repo_path, tst_ns_name, tpl_name[len(REFRESHABLE_TEMPLATE_PATH_PFX):])
+        tpl_dst_path = os_path_join(module_repo_path, tst_ns_name, tpl_name[len(PUTTABLE_TEMPLATE_PATH_PFX):])
         mod_pdv = pdv_with_email(project_path=module_repo_path)
 
         assert not add_children_file(mod_pdv, "not_existing_file.xxx", tst_ns_name, mod_pdv)

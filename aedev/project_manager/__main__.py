@@ -75,11 +75,11 @@ from packaging.version import Version, InvalidVersion
 from PIL import Image
 
 
-from ae.base import (  # type: ignore # pylint: disable=reimported
+from ae.base import (                                                       # type: ignore # pylint: disable=reimported
     PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
-    read_file, url_failure, write_file,
+    read_bin_file, read_file, url_failure, write_file,
     write_file as patchable_write_file)
 from ae.system import full_stack_trace, module_attr, project_main_file, stack_var                       # type: ignore
 from ae.files import FileObject                                                                         # type: ignore
@@ -310,7 +310,7 @@ def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                     
 
     for name, files in local_images.items():
         for file_name in (norm_path(str(file)) for file in files):
-            cae.chk(69, bool(read_file(file_name, extra_mode='b')), f"empty image resource in {file_name}")
+            cae.chk(69, bool(read_bin_file(file_name)), f"empty image resource in {file_name}")
             # noinspection PyBroadException
             try:
                 img = Image.open(file_name)
@@ -434,7 +434,7 @@ def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:                     
 
     for name, files in local_sounds.items():
         for file_name in (norm_path(str(file)) for file in files):
-            cae.chk(69, bool(read_file(file_name, extra_mode='b')), f"empty sound resource in {file_name}")
+            cae.chk(69, bool(read_bin_file(file_name)), f"empty sound resource in {file_name}")
 
     if debug_or_verbose():
         cae.po(f"    = passed checks of {len(local_sounds)} sound resources ({len(file_names)} files: {file_names})")
@@ -538,7 +538,7 @@ def _check_types_linting_tests(pdv: ProjectDevVars
         badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
         # anybadge alternativ: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
         # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
-        # write_file("coverage.svg", urlopen(cov_badge_url).read(), extra_mode="b")
+        # write_bin_file("coverage.svg", urlopen(cov_badge_url).read())
         cae.po(f"  === pytest coverage: {perc}% - check coverage report in file:///{project_path}/htmlcov/index.html")
 
 
@@ -949,7 +949,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
             return ini_pdv                                                                  # pragma: no cover
         man.deploy()
 
-    dst_files = set(dst_path for dst_path, mf in man.deploy_files.items() if not mf.up_to_date)
+    dst_files = set(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
     dbg_msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose() else ""
     cae.po(f" ---- renewed {len(dst_files)} managed files{dbg_msg}")
 
@@ -2219,7 +2219,7 @@ class PythonanywhereCom(RemoteHost):
 
         for pkg_file_path in sorted(to_deploy):
             src_path = os_path_join(project_path, pkg_file_path)
-            src_content = read_file(src_path, extra_mode='b') if os_path_isfile(src_path) else None
+            src_content = read_bin_file(src_path) if os_path_isfile(src_path) else None
             dst_content = self.connection.deployed_file_content(pkg_file_path)
             if src_content == dst_content:  # or src_content is None and dst_content is None
                 dif = "is missing on both, repository and server" if src_content is None else ""
@@ -2318,7 +2318,7 @@ class PythonanywhereCom(RemoteHost):
 
         deployed = []
         for upg_fil in to_deploy:
-            err_str = self.connection.deploy_file(upg_fil, read_file(os_path_join(root, upg_fil), extra_mode='b'))
+            err_str = self.connection.deploy_file(upg_fil, read_bin_file(os_path_join(root, upg_fil)))
             cae.chk(96, not err_str, err_str)
             if not err_str:
                 deployed.append(upg_fil)
@@ -2761,7 +2761,7 @@ def refresh_project(ini_pdv: ProjectDevVars):                                   
             return
         man.deploy()
 
-    dst_files = list(dst_path for dst_path, mf in man.deploy_files.items() if not mf.up_to_date)
+    dst_files = list(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
     dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose() else ""
     cae.po(f" ==== refreshed *_frozen.txt and {len(dst_files)} managed files of {ini_pdv['project_title']}{dbg_msg}")
 
