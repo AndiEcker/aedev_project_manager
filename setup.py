@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.78
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.79
 """ setup of aedev namespace package portion project_manager: maintain Python projects locally and remotely. """
 import sys
 # noinspection PyUnresolvedReferences
@@ -31,13 +31,14 @@ setup_kwargs = {
     },
     'extras_require': {
         'dev': [
-            'aedev_project_tpls==0.3.78',
-            'aedev_aedev==0.3.32',
+            'aedev_project_tpls==0.3.79',
+            'aedev_aedev==0.3.33',
             'ae-parse-date==0.3.5',
-            'ae_app_log==0.3.1',
+            'ae_app_log==0.3.2',
             'ae_base==0.3.85',
             'ae_console==0.3.95',
             'ae_core==0.3.86',
+            'ae_deep==0.3.13',
             'ae_dynamicod==0.3.15',
             'ae_files==0.3.27',
             'ae_literal==0.3.35',
@@ -47,11 +48,12 @@ setup_kwargs = {
             'ae_shell==0.3.14',
             'ae_system==0.3.3',
             'ae_updater==0.3.18',
-            'aedev_app_tpls==0.3.20',
+            'aedev_app_tpls==0.3.21',
             'aedev_base==0.3.7',
             'aedev_commands==0.3.12',
-            'aedev_namespace_root_tpls==0.3.30',
-            'aedev_project_vars==0.3.13',
+            'aedev_namespace_root_tpls==0.3.31',
+            'aedev_project_manager==0.3.26',
+            'aedev_project_vars==0.3.14',
             'anybadge==1.16.0',
             'argcomplete==3.6.3',
             'ast_serialize==0.3.0',
@@ -60,7 +62,7 @@ setup_kwargs = {
             'cffi==1.17.1',
             'charset-normalizer==3.4.2',
             'click==8.3.0',
-            'coverage==7.14.0',
+            'coverage==7.14.1',
             'cryptography==45.0.4',
             'Deprecated==1.2.18',
             'dill==0.4.0',
@@ -86,9 +88,10 @@ setup_kwargs = {
             'packaging==26.2',
             'pathspec==1.0.4',
             'pillow==12.2.0',
-            'pipx==1.12.0',
+            'pipx==1.13.0',
             'platformdirs==4.3.8',
             'pluggy==1.6.0',
+            'plyer==2.1.0',
             'pycodestyle==2.14.0',
             'pycparser==2.22',
             'pyflakes==3.4.0',
@@ -102,7 +105,7 @@ setup_kwargs = {
             'PyNaCl==1.5.0',
             'pytest==9.0.3',
             'pytest-cov==7.1.0',
-            'python-gitlab==8.3.0',
+            'python-gitlab==8.4.0',
             'readme_renderer==44.0',
             'requests==2.34.2',
             'requests-toolbelt==1.0.0',
@@ -144,7 +147,7 @@ setup_kwargs = {
     },
     'install_requires': [
         'anybadge==1.16.0',
-        'coverage==7.14.0',
+        'coverage==7.14.1',
         'flake8==7.3.0',
         'mypy==2.1.0',
         'packaging==26.2',
@@ -154,7 +157,7 @@ setup_kwargs = {
         'pylint==4.0.5',
         'pytest==9.0.3',
         'pytest-cov==7.1.0',
-        'python-gitlab==8.3.0',
+        'python-gitlab==8.4.0',
         'requests==2.34.2',
         'requests-toolbelt==1.0.0',
         'ae_base==0.3.85',
@@ -171,7 +174,7 @@ setup_kwargs = {
         'ae_pythonanywhere==0.3.5',
         'aedev_base==0.3.7',
         'aedev_commands==0.3.12',
-        'aedev_project_vars==0.3.13',
+        'aedev_project_vars==0.3.14',
     ],
     'keywords': [
         'configuration',
@@ -197,7 +200,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.26',
+    'version': '0.3.27',
     'zip_safe': True,
 }
 
