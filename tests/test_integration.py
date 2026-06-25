@@ -174,7 +174,7 @@ def _itg_download_test_project(itg_test_prj: ItgTstPrj, purpose: str = "") -> tu
         clone_project(pdv, project_name)
     else:
         pdv['host_api'] = host_api = remote_connect(pdv, "fork")
-        host_api.fork_project(pdv, TEST_PROJECTS_NAMESPACE + PDV_REPO_GROUP_SUFFIX + '/' + project_name)
+        host_api.fork_project(pdv, TEST_PROJECTS_NAMESPACE + PDV_REPO_GROUP_SUFFIX + "/" + project_name)
     assert os_path_isdir(project_path)
 
     print(f"  !!! {project_state} {project_role} {purpose} test project {pdv['project_desc']} to {project_path=}")
@@ -257,6 +257,7 @@ def _refresh_managed_files_from_templates(pdv: ProjectDevVars) -> bool:
         return False
 
     with in_prj_dir_venv(project_path):
+        # noinspection PyTypeChecker
         man = check_templates(itg_pjm_app, pdv)
         if not man:
             return False
@@ -611,6 +612,7 @@ class TestFullWorkflows:
             pdv['host_api'] = host_api = remote_connect(pdv, "mtn_workflow")
 
         if itg_test_prj.state == 'forked':
+            # noinspection PyUnresolvedReferences
             host_api.merge_pushed_project(pdv)
 
         assert guess_next_action(pdv) == 'release_project'

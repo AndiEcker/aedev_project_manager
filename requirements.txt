@@ -4,7 +4,7 @@ coverage
 flake8
 mypy
 packaging
-Pillow              # for _check_resources()
+pillow              # for _check_resources()
 types-Pillow
 PyGithub
 pylint
@@ -12,10 +12,8 @@ pytest
 pytest-cov          # installs also the coverage package
 python-gitlab
 requests
-requests-toolbelt   # needed by PyGithub
 ae_base
 ae_system
-ae_files
 ae_paths
 ae_dynamicod
 ae_literal

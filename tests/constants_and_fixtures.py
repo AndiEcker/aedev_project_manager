@@ -3,7 +3,7 @@ import contextlib
 import os
 import tempfile
 
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, cast
 from unittest.mock import patch
 
 import pytest
@@ -91,7 +91,7 @@ def mocked_app_options():
             return mocked_options[opt_nam]
         return get_app_option(_pdv, opt_nam)
 
-    def _dbg_or_verbose():
+    def _dbg_or_verbose(_app_obj: ConsoleApp | None = None):
         return mocked_options.get('more_verbose', False)
 
     main_app = cast(ConsoleApp, main_app_instance())
@@ -216,8 +216,8 @@ def module_repo_path():
         yield project_path
 
 
-def remote_connect(pdv: ProjectDevVars, action: str) -> Union[GithubCom, GitlabCom]:
-    host_api: Union[GithubCom, GitlabCom] = globals()[REGISTERED_HOSTS_CLASS_NAMES[TEST_PROJECTS_REMOTE]]()
+def remote_connect(pdv: ProjectDevVars, action: str) -> GithubCom | GitlabCom:
+    host_api: GithubCom | GitlabCom = globals()[REGISTERED_HOSTS_CLASS_NAMES[TEST_PROJECTS_REMOTE]]()
     pdv['host_api'] = host_api  # pdv['host_api'] is needed by _check_action()
     assert host_api.connect(pdv), f" **** could not connect to remote host {TEST_PROJECTS_REMOTE} to {action} tst repo"
     return host_api

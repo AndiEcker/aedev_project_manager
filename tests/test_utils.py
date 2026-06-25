@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from ae.base import (
+    PY_INIT, TESTS_FOLDER,
     extend_file, in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, os_path_splitext,
     read_file, write_file)
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
@@ -24,10 +25,10 @@ from constants_and_fixtures import (
 
 from aedev.project_manager.utils import (
     EXEC_GIT_ERR_PREFIX, PIP_FREEZE_COMMENT,
-    children_desc, children_project_names, expected_args, get_app_option, get_branch, get_host_class_name,
-    get_host_config_val, get_host_domain, get_host_group, get_host_user_name, get_host_user_token, get_mirror_urls,
-    git_init_add, git_push_url, guess_next_action, ppp, project_topics, refresh_pdv,
-    update_frozen_req_file, update_frozen_req_files, write_commit_message)
+    children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
+    get_host_class_name, get_host_config_val, get_host_domain, get_host_group, get_host_user_name, get_host_user_token,
+    get_mirror_urls, git_init_add, git_push_url, guess_next_action, imported_modules, package_code_files, ppp,
+    project_topics, refresh_pdv, update_frozen_req_file, update_frozen_req_files, write_commit_message)
 
 
 ERR_PREFIX = "¡"
@@ -720,6 +721,18 @@ class TestOtherHelpers:
                                       [child_name],
                                       OrderedDict({child_name: pdv_factory({'project_type': MODULE_PRJ})}))
 
+    def test_code_file_imports(self):
+        assert isinstance(code_file_imports(""), str)
+        assert isinstance(code_file_imports("Not:Existing:File"), str)
+
+        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest.py"))
+        assert isinstance(imp_names, set)
+        assert 'pytest' in imp_names
+
+        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest.py"), 'pytest', 'ae')
+        assert isinstance(imp_names, set)
+        assert 'pytest' not in imp_names
+
     def test_expected_args(self):
         spe = {'arg_names': (('var0_arg1', 'var0_arg2'), ('varB_arg1', 'varB_arg2', 'varB_arg3'))}
         assert expected_args(spe) == "var0_arg1 var0_arg2 -or- varB_arg1 varB_arg2 varB_arg3"
@@ -770,7 +783,7 @@ class TestOtherHelpers:
         # monkeypatch.delenv('AE_OPTIONS_REPO_USER', raising=False)
         # monkeypatch.delenv('AE_OPTIONS_REPO_USER_AT_GITLAB_COM', raising=False)
         project_path = module_repo_path
-        parent_path = os_path_dirname(project_path)
+        parent_path: str = os_path_dirname(project_path)
         tst_domain = 'tst_do.main.com'
         t_domain2 = 'test.domain2.tst'
 
@@ -863,7 +876,7 @@ class TestOtherHelpers:
                 print(f"   ## temp. unload of variable {env_var} for unit test")
                 monkeypatch.delenv(env_var)
 
-        parent_path = os_path_dirname(empty_repo_path)
+        parent_path: str = os_path_dirname(empty_repo_path)
         tst_domain = 't.s.t_do.main.com'
         t_domain2 = 't.s.t.domain2.t.st'
         user_name = 'TstUserName'
@@ -1094,8 +1107,32 @@ class TestOtherHelpers:
 
         assert guess_next_action(pdv_with_email(project_path=empty_repo_path)) == 'commit_project'
 
+    def test_imported_modules(self):
+        assert isinstance(imported_modules("Invalid:NotExisting:CodeFile"), str)
+
+        imp_mods = imported_modules(os_path_join(TESTS_FOLDER, "conftest.py"))
+        assert isinstance(imp_mods, set)
+        assert 'pytest' in imp_mods
+
+    def test_package_code_files(self):
+        assert "setup.py" in package_code_files("")
+        assert "setup.py" in package_code_files(".")
+
+        assert os_path_join("aedev", "project_manager", PY_INIT) in package_code_files(".")
+
+        assert os_path_join(TESTS_FOLDER, "conftest.py") not in package_code_files(".")
+
     def test_ppp(self):
         assert ppp("") == ""
+
+        output = ppp(["errOr"])
+        assert "errOr" in output
+        assert output.count("\n") == 1
+
+        output = ppp(("err line1", "err line2"))
+        assert "err line1" in output
+        assert "err line2" in output
+        assert output.count("\n") == 2
 
     def test_project_topics(self, empty_repo_path):
         pdv = pdv_with_email(project_path=empty_repo_path)
@@ -1125,8 +1162,8 @@ class TestOtherHelpers:
         assert pdv['dev_requires']
 
         assert len(recwarn) == 2
-        assert "value of 'var_name='dev_requires'' is not of type str" in recwarn[0].message.args[0]
-        assert "value of 'var_name='dev_requires'' is not of type str" in recwarn[1].message.args[0]
+        assert "value of 'var_name='dev_requires'' is not of type str" in str(recwarn[0].message)
+        assert "value of 'var_name='dev_requires'' is not of type str" in str(recwarn[1].message)
 
     def test_update_frozen_req_files_frozen_docs_req(self, empty_repo_path):
         pdv = pdv_with_email(project_path=empty_repo_path)
