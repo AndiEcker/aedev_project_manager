@@ -833,7 +833,7 @@ class TestActionsLocal:
         assert 'codeberg.org' in output
         assert pdv['project_name'] in output
         assert CODEBERG_TOKEN_PART not in output
-        assert " ==== " in output
+        assert " ==== " in output  # sometimes: HTTP/2 stream 3 was not closed cleanly: CANCEL (err 8)
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_redirect_onto_github_user(self, capsys, app_pjm):
@@ -1080,7 +1080,7 @@ class TestHelpersLocal:
             assert _init_children_pdv_args(par_pdv, ["ps_a", "&", "ps_b"]) == [ch1_pdv]
 
     def test_init_children_pdv_args_list(self, app_pjm, empty_repo_path, mocked_app_options, recwarn):
-        par_dir = os_path_dirname(empty_repo_path)
+        par_dir: str = os_path_dirname(empty_repo_path)
         par_pdv = pdv_with_email(**{'project_path': par_dir, 'project_type': PARENT_PRJ})
         ch1_dir = os_path_join(par_dir, 'p1')
         ch1_pdv = pdv_with_email(**{'project_path': ch1_dir})
@@ -1097,7 +1097,7 @@ class TestHelpersLocal:
 
         assert _init_children_pdv_args(par_pdv, [ARG_ALL]) == list(chi_vars.values())
 
-        ch3_dir = os_path_join(os_path_dirname(empty_repo_path), 'p3')
+        ch3_dir = os_path_join(cast(str, os_path_dirname(empty_repo_path)), 'p3')
         chi_pdvs = _init_children_pdv_args(par_pdv, ['p3'])
 
         assert len(chi_pdvs) == 1
@@ -1121,7 +1121,7 @@ class TestHelpersLocal:
         assert _init_children_pdv_args(par_pdv, ["('1', ) + ('n_por2', )"]) == [ch1_pdv, ch2_pdv]
 
     def test_init_children_presets(self, empty_repo_path):
-        pkg_name = os_path_basename(empty_repo_path)
+        pkg_name: str = os_path_basename(empty_repo_path)
         par = pdv_with_email(**{'project_path': os_path_dirname(empty_repo_path),
                                 'main_app_options': {'filterBranch': DEF_MAIN_BRANCH, 'filterExpression': "True"}})
         chi = pdv_with_email(**{'project_path': empty_repo_path, 'editable_project_path': empty_repo_path})

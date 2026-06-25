@@ -51,14 +51,14 @@ import shutil
 import time
 
 from collections import OrderedDict
+from collections.abc import Callable, Collection, Container
 from fnmatch import fnmatch
 from functools import partial, wraps
 from os import makedirs as patchable_makedirs
 from traceback import format_exc
-from typing import TYPE_CHECKING, Any, Callable, Container, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 from unittest.mock import patch
 from urllib.parse import urlparse
-
 
 from anybadge import Badge                                                                  # type: ignore
 
@@ -76,13 +76,13 @@ from PIL import Image
 
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    PY_INIT, UNSET, UnsetType,
+    PY_EXT, PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     read_bin_file, read_file, url_failure, write_file,
     write_file as patchable_write_file)
-from ae.system import full_stack_trace, module_attr, project_main_file, stack_var                       # type: ignore
-from ae.files import FileObject                                                                         # type: ignore
+from ae.system import (                                                                                 # type: ignore
+    PYPI_PACKAGE_NAMES, full_stack_trace, module_attr, norm_pip_name, project_main_file, stack_var, PyMo)
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
     copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files)
@@ -105,7 +105,7 @@ from aedev.commands import (                                                    
     git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    in_prj_dir_venv, owner_project_from_url, sh_exit_if_git_err, sh_log, sh_logs)
+    in_prj_dir_venv, owner_project_from_url, sh_exit_if_git_err, sh_log, sh_logs, venv_module_var_val)
 from aedev.project_vars import (                                                                        # type: ignore
     PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ,
     ChildrenType,
@@ -122,10 +122,10 @@ from aedev.project_manager.utils import (
     ARG_ALL, ARGS_CHILDREN_DEFAULT, ARG_MULTIPLES, DJANGO_EXCLUDED_FROM_CLEANUP, PPF,
     REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES,
     ActionArgs, ActionFlags, ActionSpec, RepoType,
-    children_desc, children_project_names, expected_args, get_app_option, get_branch,
-    get_host_class_name, get_host_domain, get_host_group, get_host_user_name, get_host_user_token,
-    get_mirror_urls,
-    git_init_add, git_push_url, guess_next_action, ppp, project_topics, update_frozen_req_files, write_commit_message)
+    children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
+    get_host_class_name, get_host_domain, get_host_group, get_host_user_name, get_host_user_token, get_mirror_urls,
+    git_init_add, git_push_url, guess_next_action, package_code_files, ppp, project_topics, update_frozen_req_files,
+    write_commit_message)
 
 
 # pylint: disable-next=invalid-name
@@ -138,8 +138,8 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
         project_types = ALL_PRJ_TYPES
 
     def _deco(fun):
-        # global REGISTERED_ACTIONS
-        method_of = stack_var('__qualname__')
+        assert fun.__doc__, f"docstring missing in action callable {fun.__name__}"
+        method_of = stack_var('__qualname__')   # class name for methods or UNSET for functions
 
         if 'local_action' not in deco_kwargs:
             deco_kwargs['local_action'] = not method_of
@@ -150,7 +150,9 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
         doc_str = sep.join(_ for _ in fun.__doc__.split(sep)
                            if ':param ini_pdv:' not in _ and ':return:' not in _ and _.strip())
 
+        # noinspection PyUnresolvedReferences
         full_name = (method_of + "." if method_of else "") + fun.__name__
+        # global REGISTERED_ACTIONS
         REGISTERED_ACTIONS[full_name] = {'full_name': full_name, 'annotations': fun.__annotations__,
                                          'docstring': doc_str, 'project_types': project_types, **deco_kwargs}
 
@@ -207,7 +209,7 @@ def _act_specs(act_name: str) -> list[ActionSpec]:
     return act_specs
 
 
-def _available_actions(project_type: Union[UnsetType, str] = UNSET) -> set[str]:
+def _available_actions(project_type: UnsetType | str = UNSET) -> set[str]:
     return set(name.split(".")[-1] for name, data in REGISTERED_ACTIONS.items()
                if project_type is UNSET or project_type in data['project_types'])
 
@@ -262,13 +264,13 @@ def _check_folders_files_completeness(pdv: ProjectDevVars):
             project_path = pdv['project_path']
             for change in changes:
                 cae.po(f"    - {change[0] == 'md' and 'folder' or 'file  '} {os_path_relpath(change[1], project_path)}")
-    elif debug_or_verbose():                                                                # pragma: no cover
+    elif debug_or_verbose(cae):                                                                # pragma: no cover
         cae.po("    = project folders and files are complete")
 
 
 def _check_children_not_exist(parent_or_root_pdv: ProjectDevVars, *project_versions: str):  # pragma: no cover
     prj_path = parent_or_root_pdv['project_path']
-    parent_path = prj_path if parent_or_root_pdv['project_type'] == PARENT_PRJ else os_path_dirname(prj_path)
+    parent_path: str = prj_path if parent_or_root_pdv['project_type'] == PARENT_PRJ else os_path_dirname(prj_path)
     for pkg_and_ver in project_versions:
         project_path = os_path_join(parent_path, pkg_and_ver.split(PROJECT_VERSION_SEP)[0])
         cae.chk(12, not os_path_isdir(project_path), f"project path {project_path} does already exist")
@@ -278,9 +280,9 @@ def _check_children_to_clone(parent_root_sister_pdv: ProjectDevVars, *project_ow
                              ):                                                             # pragma: no cover
     root_or_sister = parent_root_sister_pdv['project_type'] != PARENT_PRJ
     group = get_app_option(parent_root_sister_pdv, 'repo_group') or ""
-    def_grp = group or root_or_sister and parent_root_sister_pdv['repo_group'] or ""
+    def_grp = group if group else parent_root_sister_pdv['repo_group'] if root_or_sister else ""
     nsn = get_app_option(parent_root_sister_pdv, 'namespace_name') or ""
-    def_nsn = nsn or root_or_sister and parent_root_sister_pdv['namespace_name']
+    def_nsn = nsn if nsn else parent_root_sister_pdv['namespace_name'] if root_or_sister else ""
     branch = get_app_option(parent_root_sister_pdv, 'branch') or ""
 
     prj_names = []
@@ -318,7 +320,7 @@ def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                     
             except Exception as ex:                                 # pylint: disable=broad-exception-caught
                 cae.chk(69, False, f"Pillow/PIL detected corrupt image {file_name=} {ex=}")
 
-    if debug_or_verbose():
+    if debug_or_verbose(cae):
         cae.po(f"    = passed checks of {len(local_images)} image resources ({len(file_names)} files: {file_names})")
 
     return list(local_images.values())
@@ -342,6 +344,7 @@ def _check_resources_i18n_ae(file_name: str, content: str):                     
                 cae.chk(69, isinstance(sub_key, str), f"sub-dict-keys must be strings, got {type(sub_key)}")
                 typ = float if sub_key in ('app_flow_delay', 'fade_out_app', 'next_page_delay',
                                            'page_update_delay', 'tour_start_delay', 'tour_exit_delay') else str
+                # noinspection PyStringConversionWithoutDunderMethod
                 cae.chk(69, isinstance(sub_txt, typ), f"sub-dict-values of {sub_key} must be {typ}")
 
 
@@ -387,7 +390,7 @@ def _check_resources_i18n_po(file_name: str, content: str):                     
                 in_txt += ".."
             else:
                 cae.chk(69, in_header or msg_id != "", f"empty id text in {file_name=}:{lno=}")
-                if debug_or_verbose() and not native and not msg_str:
+                if debug_or_verbose(cae) and not native and not msg_str:
                     cae.po(f"    # ignoring empty translation of \"{msg_id}\" in {file_name=}:{lno=}")
                 in_txt = msg_id = msg_str = ""
                 in_header = False
@@ -396,7 +399,7 @@ def _check_resources_i18n_po(file_name: str, content: str):                     
 
 
 def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:                          # pragma: no cover
-    def _chk_files(chk_func: Callable[[str, str], None], *path_parts: str) -> list[FileObject]:
+    def _chk_files(chk_func: Callable[[str, str], None], *path_parts: str) -> list[str]:    # -> list[FileObject]
         stem_mask = path_parts[-1]
         regs = FilesRegister(os_path_join(pdv['project_path'], *path_parts))
         file_names: list[str] = []
@@ -410,7 +413,7 @@ def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:              
         dup_files = duplicates(file_names)
         cae.chk(69, not dup_files, f"file paths duplicates of {stem_mask} translations: {dup_files}")
 
-        if debug_or_verbose():
+        if debug_or_verbose(cae):
             cae.po(f"    = passed checks of {len(regs)} {stem_mask} (with {len(file_names)} files: {file_names})")
 
         return list(regs.values())
@@ -436,7 +439,7 @@ def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:                     
         for file_name in (norm_path(str(file)) for file in files):
             cae.chk(69, bool(read_bin_file(file_name)), f"empty sound resource in {file_name}")
 
-    if debug_or_verbose():
+    if debug_or_verbose(cae):
         cae.po(f"    = passed checks of {len(local_sounds)} sound resources ({len(file_names)} files: {file_names})")
 
     return list(local_sounds.values())
@@ -447,7 +450,7 @@ def _check_resources(pdv: ProjectDevVars):                                      
     resources = _check_resources_img(pdv) + _check_resources_i18n_texts(pdv) + _check_resources_snd(pdv)
     if resources:
         cae.po(f"  === {len(resources)} image/message-text/sound resources checks passed")
-        if debug_or_verbose():
+        if debug_or_verbose(cae):
             cae.po(ppp(str(_) for _ in resources)[1:])
 
 
@@ -461,10 +464,10 @@ def _check_types_linting_tests(pdv: ProjectDevVars
     root_packages = [_ for _ in project_packages if '.' not in _]
 
     excludes = ['migrations' if project_type == DJANGO_PRJ else 'templates']    # folder names to exclude from checks
-    path_args = namespace_name and [namespace_name] or root_packages or [pdv['version_file']]
+    path_args = [namespace_name] if namespace_name else root_packages if root_packages else [pdv['version_file']]
 
     options = []
-    if debug_or_verbose():
+    if debug_or_verbose(cae):
         options.append("-v")
         if cae.verbose:
             options.append("-v")                                                            # pragma: no cover
@@ -714,16 +717,17 @@ def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> li
     else:
         chi_presets = _init_children_presets(ini_pdv, chi_vars).copy()
         pkg_names = try_eval(" ".join(act_args), ignored_exceptions=(Exception, ), glo_vars=chi_presets)
-        if pkg_names is UNSET:
+        if isinstance(pkg_names, Collection):
+            pkg_names = children_project_names(ini_pdv, pkg_names, chi_vars)
+        else:
+            assert pkg_names is UNSET
             pkg_names = children_project_names(ini_pdv, act_args, OrderedDict())
             cae.vpo(f"    # action arguments {act_args} are not evaluable with vars={PPF(chi_presets)}")
-        else:
-            pkg_names = children_project_names(ini_pdv, pkg_names, chi_vars)
 
     for preset in ('filterExpression', 'filterBranch'):  # == (preset in presets)
-        cae.chk(23, bool(get_app_option(ini_pdv, preset)) == any((preset in _) for _ in act_args),
+        cae.chk(18, bool(get_app_option(ini_pdv, preset)) == any((preset in _) for _ in act_args),
                 f"mismatch of option '{preset}' and its usage in children-sets-expression {' '.join(act_args)}")
-    cae.chk(23, len(pkg_names) == len(set(pkg_names)),
+    cae.chk(18, len(pkg_names) == len(set(pkg_names)),
             f"{len(pkg_names) - len(set(pkg_names))} duplicate children specified: {duplicates(pkg_names)}")
 
     if not bool(pkg_names) and isinstance(pkg_names, (list, set, tuple)):
@@ -741,7 +745,8 @@ def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> li
 
 def _init_children_presets(ini_pdv: ProjectDevVars, chi_vars: ChildrenType) -> dict[str, set[str]]:
     branch = get_app_option(ini_pdv, 'filterBranch')
-    expr = get_app_option(ini_pdv, 'filterExpression')
+    # noinspection PyTypeChecker
+    expr: str = cast(str, get_app_option(ini_pdv, 'filterExpression'))
 
     chi_ps: dict[str, set[str]] = {}
     ps_all = chi_ps[ARG_ALL] = set()
@@ -818,6 +823,7 @@ def _print_pdv(pdv: ProjectDevVars):
         if 'long_desc_content' in pdv:
             pdv['long_desc_content'] = skw['long_description'] = pdv['long_desc_content'][:33] + "..."
         pdv['package_data'] = ", ".join(pdv.pdv_val('package_data'))
+        # noinspection PyUnresolvedReferences
         pdv['portions_packages'] = ", ".join(_pkg[nsp_len:] for _pkg in sorted(pdv.pdv_val('portions_packages')))
         pdv['project_packages'] = ", ".join(pdv.pdv_val('project_packages'))
         pdv['tests_requires'] = ", ".join(pdv.pdv_val('tests_requires'))
@@ -933,7 +939,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
     _renew_prj_dir(ini_pdv)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
 
-    inc_part = get_app_option(ini_pdv, 'versionIncrementPart')
+    inc_part = get_app_option(ini_pdv, 'versionIncrementPart') or 0
     project_version = latest_remote_version(ini_pdv, increment_part=inc_part)
     errors = replace_file_version(ini_pdv['version_file'], version=project_version, increment_part=0)
     cae.chk(15, not bool(errors), errors)
@@ -950,7 +956,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
         man.deploy()
 
     dst_files = set(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
-    dbg_msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose() else ""
+    dbg_msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose(cae) else ""
     cae.po(f" ---- renewed {len(dst_files)} managed files{dbg_msg}")
 
     git_init_add(ini_pdv)
@@ -1003,7 +1009,7 @@ def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:       
     if not prj_instance:
         return False
 
-    verbose = debug_or_verbose()
+    verbose = debug_or_verbose(cae)
 
     for attr in sorted(prj_instance.attributes) if verbose else ('created_at', 'default_branch', 'visibility'):
         cae.po(f"    - {attr} = {getattr(prj_instance, attr, None)}")
@@ -1019,7 +1025,7 @@ def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:       
     try:                                                # raises 403 Forbidden if not owner/maintainer
         cae.po(f"   -- protected tags = {PPF(prj_instance.protectedtags.list())}")
     except (GitlabListError, Exception) as ex:          # pylint: disable=broad-exception-caught
-        if debug_or_verbose():
+        if debug_or_verbose(cae):
             cae.po(f"    # determining protected tag raises {ex=}")
 
     return True
@@ -1028,7 +1034,7 @@ def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:       
 # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements
 def _show_status(ini_pdv: ProjectDevVars) -> str:                                           # pragma: no cover
     """ show git status and a guess of the next action for the specified/current project on the local machine. """
-    verbose = debug_or_verbose()
+    verbose = debug_or_verbose(cae)
     project_path = ini_pdv['project_path']
     project_type = ini_pdv['project_type']
     main_branch = ini_pdv['MAIN_BRANCH']
@@ -1138,7 +1144,7 @@ def _update_project(ini_pdv: ProjectDevVars, remote_names: Container[str] = (), 
     :param hard_reset:          pass True to reset the local repository, while deleting all local changes.
     :return:                    list of errors. some errors get ignored and not returned.
     """
-    verbose = debug_or_verbose()
+    verbose = debug_or_verbose(cae)
     remote_names = remote_names or ini_pdv.pdv_val('remote_urls')
     if not remote_names:
         if verbose:
@@ -1200,7 +1206,7 @@ def _update_project(ini_pdv: ProjectDevVars, remote_names: Container[str] = (), 
 
 def _wait(pdv: ProjectDevVars):
     # noinspection PyUnnecessaryCast
-    wait_seconds = float(cast(Union[str, int, float], get_app_option(pdv, 'delay')))
+    wait_seconds = float(cast(str | int | float, get_app_option(pdv, 'delay')))
     cae.po(f"    . waiting {wait_seconds} seconds")
     time.sleep(wait_seconds)
 
@@ -1237,14 +1243,14 @@ class RemoteHost:                                                               
         upstream_name = ini_pdv['REMOTE_UPSTREAM']
         forked = upstream_name in remote_urls
         if forked:
-            owner_name = remote_urls[upstream_name].split('/')[-2]
+            owner_name = remote_urls[upstream_name].split("/")[-2]
             cae.chk(64, owner_name == group_name, f"upstream/owner-group mismatch: '{owner_name}' != '{group_name}'")
             user_name = get_host_user_name(ini_pdv, domain)
         else:
             user_name = group_name
 
         origin_name = ini_pdv['REMOTE_ORIGIN']
-        origin_user = remote_urls.get(origin_name, "/").split('/')[-2]
+        origin_user = remote_urls.get(origin_name, "/").split("/")[-2]
         cae.chk(64, origin_user == user_name, f"{origin_name}/user mismatch: '{origin_user}' != '{user_name}'")
 
         # target_project_id/project_id is the upstream/forked and source_project_id is the origin/fork
@@ -1335,7 +1341,7 @@ class GithubCom(RemoteHost):                                                    
         # protect the branch until GitHub Api supports wildcards in the initial push (see self.init_new_repo())
         self._protect_branches(prj, [branch_name])
 
-    def group_obj(self, user_or_org_name: str) -> Optional[Union[AuthenticatedUser, Organization]]:
+    def group_obj(self, user_or_org_name: str) -> AuthenticatedUser | Organization | None:
         """ instantiate am authenticated-user or organization object from the specified name.
 
         :param user_or_org_name:name of a user or organization.
@@ -1394,7 +1400,7 @@ class GithubCom(RemoteHost):                                                    
         except (GithubException, Exception) as gh_ex:           # pylint: disable=broad-exception-caught
             if err_code:
                 cae.shutdown(err_code, error_message=err_msg.format(name=group_repo))
-            elif debug_or_verbose():
+            elif debug_or_verbose(cae):
                 cae.po(f"   * repository '{group_repo}' not found on connected remote server (exception: {gh_ex})")
             return None
 
@@ -1458,7 +1464,7 @@ class GithubCom(RemoteHost):                                                    
         push_refs.append(_check_and_add_version_tag(ini_pdv))
 
         output = git_push(project_path, git_push_url(ini_pdv, authenticate=True), "--set-upstream", *push_refs)
-        if debug_or_verbose():
+        if debug_or_verbose(cae):
             cae.po(ppp(output))
 
         if new_repo:    # branch protection rules have to be created after branch creation done by git push
@@ -1496,7 +1502,7 @@ class GithubCom(RemoteHost):                                                    
                                                 commit_msg_file=ini_pdv['COMMIT_MSG_FILE_NAME'])
         commit_msg_title, commit_msg_body = read_file(commit_msg_file).split(os.linesep, maxsplit=1)
         merge_req = tgt_prj.create_pull(base=main_branch, head=branch, title=commit_msg_title, body=commit_msg_body)
-        if debug_or_verbose():
+        if debug_or_verbose(cae):
             diff_url = merge_req.diff_url
             cae.po(f"    . merge request diffs available at: {diff_url}")
 
@@ -1549,7 +1555,9 @@ class GitlabCom(RemoteHost):
         try:
             self.connection = Gitlab(ini_pdv['REPO_HOST_PROTOCOL'] + ini_pdv['repo_domain'], private_token=token)
             if cae.debug:
+                # noinspection PyUnresolvedReferences
                 self.connection.enable_debug()
+            # noinspection PyUnresolvedReferences
             self.connection.auth()          # authenticate and create user attribute
         except (Exception, ) as ex:         # pylint: disable=broad-exception-caught
             cae.po(f"****  Gitlab connect exception: {mask_token(str(ex))}" + ("" if token else " (empty repo_token)"))
@@ -1613,7 +1621,7 @@ class GitlabCom(RemoteHost):
                 # using UserProtectManager|owner_obj.projects.create() for user projects results in 403 Forbidden error
                 project = self.connection.projects.create(project_properties)
                 cae.po(f"   == created new remote project repository for user/group '{owner_obj.name}'")
-                if debug_or_verbose():
+                if debug_or_verbose(cae):
                     cae.po(f"    = remote project attributes={PPF(project.attributes)}")
 
                 _wait(ini_pdv)
@@ -1706,11 +1714,11 @@ class GitlabCom(RemoteHost):
             msg = f"owner/project {owner_project} not found on remote {self.connection}; exception={ex})"
             if err_code:
                 cae.shutdown(err_code, error_message=msg)
-            elif debug_or_verbose():
+            elif debug_or_verbose(cae):
                 cae.po(f"   # {msg}")
             return None
 
-    def project_owner(self, ini_pdv: ProjectDevVars) -> Union[Group, User]:                 # pragma: no cover
+    def project_owner(self, ini_pdv: ProjectDevVars) -> Group | User:                 # pragma: no cover
         """ get the owner (group|user) of the project specified by ini_pdv or quit with error if group/user not found.
 
         :param ini_pdv:         project dev vars.
@@ -1720,7 +1728,7 @@ class GitlabCom(RemoteHost):
         group_name = get_host_group(ini_pdv, domain)
         user_name = get_host_user_name(ini_pdv, domain)
 
-        owner_obj: Optional[Union[Group, User]] = None
+        owner_obj: Group | User | None = None
 
         if self.connection:
             try:
@@ -1798,7 +1806,7 @@ class GitlabCom(RemoteHost):
                                   "--delete", ini_pdv['VERSION_TAG_PREFIX'] + version, exit_on_err=False)
                 if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
                     cae.po(f"   ## deleting tag v{version} via push to remote failed with ignored error:{ppp(output)}")
-                elif debug_or_verbose():
+                elif debug_or_verbose(cae):
                     cae.po(f"    = git push output:{ppp(output)}")
 
                 deleted.append(branch_name)
@@ -1823,10 +1831,10 @@ class GitlabCom(RemoteHost):
     # pylint: disable-next=too-many-locals,too-many-branches,too-many-statements
     def fork_project(self, ini_pdv: ProjectDevVars, owner_project_path: str):               # pragma: no cover
         """ create or renew a fork of a remote repo, specified via the 1st argument, into our user namespace. """
-        cae.chk(20, (slash_count := owner_project_path.count('/')) == 1,
+        cae.chk(20, (slash_count := owner_project_path.count("/")) == 1,
                 f"exact one slash (/) expected in the specified '{owner_project_path=}' (got {slash_count} slashes)")
 
-        upstream_group, project_name = owner_project_path.split('/', maxsplit=1)
+        upstream_group, project_name = owner_project_path.split("/", maxsplit=1)
 
         if ini_pdv['project_type'] == PARENT_PRJ:
             project_path = os_path_join(ini_pdv['project_path'], project_name)
@@ -1842,7 +1850,9 @@ class GitlabCom(RemoteHost):
 
         user_name = get_host_user_name(ini_pdv, domain)
         conn = self.connection
-        if debug_or_verbose() and conn and conn.user is not None and user_name != conn.user.name:
+        # noinspection PyUnresolvedReferences
+        if debug_or_verbose(cae) and conn and conn.user is not None and conn.user.name != user_name:
+            # noinspection PyUnresolvedReferences
             cae.po(f"    # {domain} user name {conn.user.name=} differs from .env-configured-{user_name=}")
 
         host_url = f"{ini_pdv['REPO_HOST_PROTOCOL']}{domain}"
@@ -1868,7 +1878,7 @@ class GitlabCom(RemoteHost):
                       commit_msg_text=f"pjm fork_project action merged the {main_branch} branch from {upstream_name}")
             latest_version_tag = git_tag_list(project_path, tag_pattern=ini_pdv['VERSION_TAG_PREFIX'] + "*")[-1]
             output = git_push(project_path, git_push_url(ini_pdv, authenticate=True), main_branch, latest_version_tag)
-            if debug_or_verbose():
+            if debug_or_verbose(cae):
                 cae.po(f"    = git push output:{ppp(output)}")
             cae.dpo(f"    - renewed the {project_name} repo at {origin_name} and {project_path} from {upstream_name}")
 
@@ -1971,7 +1981,7 @@ class GitlabCom(RemoteHost):
             cae.po(f" **** errors in pushing project to remote {owner_project}")
             cae.po(ppp(output))
             return
-        if output and debug_or_verbose():
+        if output and debug_or_verbose(cae):
             cae.po(ppp(output))
 
         output = git_fetch(project_path, origin_name)   # because pushed to reop_url (w/ token) instead of origin_name
@@ -2049,7 +2059,7 @@ class GitlabCom(RemoteHost):
                 # 'allow_collaboration': True,
                 # 'subscribed': True,
             })
-            if debug_or_verbose():
+            if debug_or_verbose(cae):
                 cae.po(f"    . merge request diffs: {PPF([_.attributes for _ in merge_req.diffs.list()])}")
 
             action = " ==== requested merge"
@@ -2104,7 +2114,7 @@ class GitlabCom(RemoteHost):
             if owner_prj := self.repo_obj(0, owner_project_from_url(remote_url)):
                 cae.po(f"  --- {remote_name} remote attributes at {remote_url}")
                 _show_remote_gitlab(owner_prj, branch=git_current_branch(ini_pdv['project_path']))
-            elif debug_or_verbose():
+            elif debug_or_verbose(cae):
                 cae.po(f"    # {remote_name} repository unavailable at {remote_url}")
 
         # print status to console, apart from the summary/last line which gets returned
@@ -2225,7 +2235,7 @@ class PythonanywhereCom(RemoteHost):
                 dif = "is missing on both, repository and server" if src_content is None else ""
                 to_deploy.remove(pkg_file_path)
             elif src_content is None:       # and dst_content is not None:
-                dif = f"need to be deleted on server (size={len(dst_content)})"
+                dif = f"need to be deleted on server (size={len(dst_content) if dst_content else "Undeterminable"})"
                 to_delete.add(pkg_file_path)
                 to_deploy.remove(pkg_file_path)
             elif dst_content is None:       # and src_content is not None
@@ -2482,7 +2492,7 @@ def check_integrity(ini_pdv: ProjectDevVars):
     project_type = ini_pdv['project_type']
     project_path = ini_pdv['project_path']
     if project_type in (NO_PRJ, PARENT_PRJ):
-        cae.po(f" ==== no checks for {project_type or 'undefined'} project at {project_path}")
+        cae.po(f" ==== no integrity checks for {project_type or 'undefined'} project at {project_path}")
         return
 
     _check_folders_files_completeness(ini_pdv)
@@ -2492,6 +2502,125 @@ def check_integrity(ini_pdv: ProjectDevVars):
     _check_resources(ini_pdv)                                                               # pragma: no cover
     _check_types_linting_tests(ini_pdv)                                                     # pragma: no cover
     cae.po(f" ==== passed integrity checks for {ini_pdv['project_title']}")                 # pragma: no cover
+
+
+def _import_dependencies(project_path: str, project_type: str, import_name: str) -> set[str]:   # pragma: no cover
+    import_deps: set[str] = set()
+    for code_file in package_code_files(project_path):
+        deps_or_err = code_file_imports(os_path_join(project_path, code_file), import_name)
+        cae.chk(23, no_err := isinstance(deps_or_err, set), cast(str, deps_or_err))
+        if no_err:
+            import_deps.update(deps_or_err)
+
+    if project_type == DJANGO_PRJ:
+        if dj_deps := venv_module_var_val(import_name + '.settings', 'INSTALLED_APPS', cwd=project_path,
+                                          validator=lambda _val: isinstance(_val, list)):
+            # noinspection PyTypeChecker
+            import_deps.update(set(dj_deps))
+            cae.dpo(f"   !! project imports/dependencies: {import_deps}")
+        else:
+            cae.po(f"   ## Django apps dependencies NOT found at {project_path}/{import_name}/settings.py;  {dj_deps=}")
+    return import_deps
+
+
+def _installed_packages(project_path: str) -> list[str]:    # pragma: no cover
+    installed: list[str] = []
+    with in_prj_dir_venv(project_path=project_path):
+        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed, shell=True)
+    cae.vpo(f"    ! installed pip packages (in json format): {installed}")
+    installed = [norm_pip_name(_['name']) for _ in json.loads(installed[0])]
+    cae.dpo(f"   !! installed pip packages: {installed}")
+    return installed
+
+
+def _missing_imports(import_deps: set[str], project_reqs: list[str], ignore_extra_reqs: list[str]
+                     ) -> tuple[list[str], set[str]]:   # pragma: no cover
+    import_names = {norm_pip_name(_pip_name): _imp_name for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
+    cae.vpo(f"    ! irregular PyPI project names (not convertable from their import names): {import_names}")
+    # from itertools import accumulate
+    # norm_deps={_pe for _dep in deps for _pe in accumulate(_dep.replace('_', '-').split('.'), lambda x, y: f"{x}-{y}")}
+    perm_deps = set()
+    for _dep_names in import_deps:
+        _parts = _dep_names.replace('_', '-').split('.')
+        for i in range(1, len(_parts) + 1):
+            perm_deps.add('-'.join(_parts[:i]))
+    cae.vpo(f"    ! permutations of dependencies import names: {perm_deps}")
+    ignoring_reqs = [norm_pip_name(_pip_name) for _pip_name in ignore_extra_reqs]
+    cae.dpo(f"   !! ignored required PyPI projects that are not explicitly imported: {ignoring_reqs}")
+    ignored_reqs = set()
+    missing_imports = []
+    for req_pkg in project_reqs:
+        if req_pkg in import_names:
+            req_pkg = import_names[req_pkg]
+        if req_pkg not in perm_deps:
+            if req_pkg in ignoring_reqs:
+                ignored_reqs.add(req_pkg)
+            else:
+                missing_imports.append(req_pkg)
+
+    return missing_imports, ignored_reqs
+
+
+def _missing_requirements(project_path: str, import_deps: set[str], venv_packages: list[str], project_reqs: list[str],
+                          ignoring_imports: list[str]) -> tuple[list[str], list[str], set[str]]:    # pragma: no cover
+    norm_pip_names = {_imp_name: norm_pip_name(_pip_name) for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
+    cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
+    missing_reqs = []
+    uninstalled_packages: list[str] = []
+    ignored_imports = set()
+
+    def _in_packages(_packages: list[str], current_imp_names: list[str], current_pip_name: str) -> bool:
+        return any(
+            norm_pip_name(_n) in _packages
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + PY_EXT))
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), PY_INIT))
+            or norm_pip_names.get(_n, current_pip_name) in _packages
+            for _n in current_imp_names)
+
+    for imp_path in import_deps:
+        mod_obj = PyMo(imp_path)
+
+        name_parts = mod_obj.name_parts
+        imp_names = ['.'.join(name_parts[:i]) for i in range(1, len(name_parts) + 1)]
+
+        if not _in_packages(project_reqs, imp_names, mod_obj.pip_name):
+            if imp_path in ignoring_imports:
+                ignored_imports.add(imp_path)
+            else:
+                missing_reqs.append(imp_path)
+
+        if not _in_packages(venv_packages, imp_names, mod_obj.pip_name):
+            uninstalled_packages.append(imp_path)
+
+    return missing_reqs, uninstalled_packages, ignored_imports
+
+
+@_action(*ANY_PRJ_TYPE, shortcut='reqs')
+def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
+    """ check project distribution/run-time requirements by parsing the source code. """
+    project_path = ini_pdv['project_path']
+    import_deps = _import_dependencies(project_path, ini_pdv['project_type'], ini_pdv['import_name'])
+    venv_packages = _installed_packages(project_path)
+    project_reqs = [norm_pip_name(_.split(PROJECT_VERSION_SEP)[0]) for _ in ini_pdv.pdv_val('install_requires')]
+    cae.vpo(f"    ! install requires: {project_reqs}")
+
+    missing_reqs, uninstalled_packages, ignored_imports = _missing_requirements(
+        project_path, import_deps, venv_packages, project_reqs,
+        # imports to ignore: merge project-specific from .env with always ignorable imports(like setuptools in setup.py)
+        list(ini_pdv.pdv_val('IGNORE_MISSING_IMPORTS')) + ['djangocms_admin_style', 'setuptools'])
+    if missing_reqs:
+        cae.po(f"    # used/imported packages that are not required (missing in requirements.txt): {missing_reqs}")
+    if uninstalled_packages:
+        cae.po(f"    # used/imported packages that are missing in pip VENV: {uninstalled_packages}")
+    if ignored_imports and debug_or_verbose(cae):
+        cae.po(f"    . ignored not required imports: {ignored_imports}")
+
+    missing_imports, ignored_reqs = _missing_imports(import_deps, project_reqs, ini_pdv.pdv_val('IGNORE_EXTRA_REQS'))
+    if missing_imports:
+        cae.po(f"    # required projects/packages that are not imported: {missing_imports}")
+    if ignored_reqs and debug_or_verbose(cae):
+        cae.po(f"    . ignored not imported requirements: {ignored_reqs}")
+    cae.po(f"  === checked required, imported and installed PyPI packages/projects for {ini_pdv['project_title']}")
 
 
 @_action(PARENT_PRJ, ROOT_PRJ, arg_names=(('children-owner-name-versions' + ARG_MULTIPLES, ), ),
@@ -3029,8 +3158,8 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
 def init_main() -> ConsoleApp:
     """ initialize main app instance. """
     global cae          # pylint: disable=global-statement
-    cae = ConsoleApp(app_name="pjm", app_version=module_attr('aedev.project_manager', '__version__') or "",
-                     debug_level=DEBUG_LEVEL_DISABLED)  # DEBUG_LEVEL_VERBOSE is now default in ae.core/ae.console
+    app_version: str = _v if isinstance(_v := module_attr('aedev.project_manager', '__version__'), str) else ""
+    cae = ConsoleApp(app_name="pjm", app_version=app_version, debug_level=DEBUG_LEVEL_DISABLED)
 
     cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all available actions)")
     cae.add_argument('arguments',

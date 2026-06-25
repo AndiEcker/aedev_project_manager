@@ -9,7 +9,7 @@ code project management functionality.
 import os
 from difflib import context_diff, diff_bytes, ndiff, unified_diff
 from functools import partial
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from ae.base import (                                                                                   # type: ignore
     TEMPLATES_FOLDER,
@@ -134,9 +134,12 @@ def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, v
     for file_name, new_content, old_content in outdated:
         cae.po(f"    - {file_name}  ------------")
         if isinstance(new_content, bytes) or isinstance(old_content, bytes):  # old_content check for mypy
+            # noinspection PyTypeChecker
             dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]
         else:
+            # noinspection PyUnresolvedReferences
             new_lines = new_content.splitlines(keepends=True)
+            # noinspection PyUnresolvedReferences
             old_lines = old_content.splitlines(keepends=True)
             if not verbose:
                 dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
@@ -235,7 +238,7 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
     if path:
         sub_dir_parts = (*py_mo.name_parts, TEMPLATES_FOLDER)
         with in_wd(path):
-            tpl_dir = '/'.join(sub_dir_parts)   # git sparse-checkout expects *nix-path-separator also on MsWindows
+            tpl_dir = "/".join(sub_dir_parts)   # git sparse-checkout expects *nix-path-separator also on MsWindows
             output = sh_exit_if_git_err(445, "git sparse-checkout", extra_args=("add", tpl_dir), exit_on_err=False)
         path = "" if output and output[0].startswith(EXEC_GIT_ERR_PREFIX) else os_path_join(path, *sub_dir_parts)
 
@@ -284,7 +287,7 @@ PATH_PREFIXES_PARSERS = dict(DEFAULT_PATH_PREFIXES_PARSERS, **{
 def project_templates(project_type: str, namespace_name: str,
                       requested_options: dict[str, str],
                       cached_templates: CachedTemplates,
-                      dev_requires: Union[list[str], tuple[str, ...]],
+                      dev_requires: list[str] | tuple[str, ...],
                       version_tag_prefix: str = GIT_VERSION_TAG_PREFIX
                       ) -> TemplateProjectsType:
     """ get template packages (optionally clone and register) of a project with the specified project type&namespace.
@@ -321,7 +324,7 @@ def project_templates(project_type: str, namespace_name: str,
 
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def register_template(import_name: str, requested_options: dict[str, str], cached_templates: CachedTemplates,
-                      dev_requires: Union[list[str], tuple[str, ...]], template_packages: TemplateProjectsType,
+                      dev_requires: list[str] | tuple[str, ...], template_packages: TemplateProjectsType,
                       version_tag_prefix: str = GIT_VERSION_TAG_PREFIX):
     """ add/update the template register and the template packages list for the specified template package and version.
 

@@ -561,11 +561,11 @@ class TestHelpers:
         # fewer warnings if tests are running by pjm (but not w/ same command line in shell/console or in PyCharm)
         err_cnt = len(recwarn)
         assert err_cnt in (2, 4)
-        assert "author name is missing" in recwarn[0].message.args[0]
-        assert "author email address is missing" in recwarn[1].message.args[0]
+        assert "author name is missing" in str(recwarn[0].message)
+        assert "author email address is missing" in str(recwarn[1].message)
         if err_cnt == 4:
-            assert "author name is missing" in recwarn[2].message.args[0]
-            assert "author email address is missing" in recwarn[3].message.args[0]
+            assert "author name is missing" in str(recwarn[2].message)
+            assert "author email address is missing" in str(recwarn[3].message)
 
     def test_clone_template_project(self, cleanup_caches, cons_app):
         tpl_path = clone_template_project('aedev.project_tpls', GIT_VERSION_TAG_PREFIX + '0.3.36')

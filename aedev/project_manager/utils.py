@@ -1,15 +1,21 @@
 """ util/helper functions needed by __main__.py and templates.py. """
+import ast
 import os
 import pprint
-from typing import Any, Collection, Iterable, Optional, Sequence, Union
+import sys
+from collections.abc import Collection, Iterable
+from typing import Any, Optional
+
 
 from github.Repository import Repository
 from gitlab.v4.objects import Project
 from packaging.version import Version, InvalidVersion
 
 from ae.base import (                                                                                   # type: ignore
-    os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
+    DOCS_FOLDER, PY_EXT, TESTS_FOLDER,
+    in_wd, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
 from ae.system import load_env_var_defaults                                                             # type: ignore
+from ae.paths import path_files                                                                         # type: ignore
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER, get_domain_user_var, sh_exit_if_exec_err     # type: ignore
@@ -38,14 +44,14 @@ PIP_FREEZE_COMMENT = '## The following requirements were added by pip freeze:'
 ActionArgs = list[str]                                      #: action arguments specified on pjm command line
 ActionArgNames = tuple[tuple[str, ...], ...]
 # ActionFunArgs = tuple[ProjectDevVars, str, ...]           # silly mypy does not support tuple with dict, str, ...
-# silly mypy: ugly casts needed for ActionSpecification = dict[str, Union[str, ActionArgNames, bool]]
+# silly mypy: ugly casts needed for ActionSpecification = dict[str, str | ActionArgNames, bool]
 ActionFlags = dict[str, Any]                                #: action flags/kwargs specified on pjm command line
 
-# RegisteredActionValues = Union[bool, str, ActionArgNames, Sequence[str], Callable]
+# RegisteredActionValues = bool | str | ActionArgNames | Sequence[str] | Callable
 ActionSpec = dict[str, Any]                                 # mypy errors if Any get replaced by RegisteredActionValues
 RegisteredActions = dict[str, ActionSpec]
 
-RepoType = Union[Repository, Project]                       #: repo host libs repo object (PyGithub, python-gitlab)
+RepoType = Repository | Project                             #: repo host libs repo object (PyGithub, python-gitlab)
 
 # --------------- global variables - most of them are constant after app initialization/startup -----------------------
 PPF = pprint.PrettyPrinter(indent=6, width=189, depth=12).pformat   #: formatter for console printouts
@@ -78,7 +84,7 @@ def children_desc(pdv: ProjectDevVars, children_pdv: Collection[ProjectDevVars] 
     return ret
 
 
-def children_project_names(ini_pdv: ProjectDevVars, names: Sequence[str], chi_vars: ChildrenType) -> list[str]:
+def children_project_names(ini_pdv: ProjectDevVars, names: Collection[str], chi_vars: ChildrenType) -> list[str]:
     """ check and compile a list of package names of the children of a namespace root or a projects parent folder.
 
     :param ini_pdv:             project dev variables of a root project or projects parent folder.
@@ -97,6 +103,31 @@ def children_project_names(ini_pdv: ProjectDevVars, names: Sequence[str], chi_va
         assert len(names) == len(ori_names), f"length mismatch {len(names)=}!={len(ori_names)=}: {names=} {ori_names=}"
 
     return list(names)
+
+
+def code_file_imports(file_path: str, *filter_roots: str) -> set[str] | str:
+    """ determines the external/not-builtin module names imported by the specified code file.
+
+    :param file_path:           code file path.
+    :param filter_roots:        root names/namespaces of the modules to be ignored/skipped/NOT-returned.
+    :return:                    set of filtered/external import/module names, imported by the specified code file,
+                                or an error message if the code file could not be parsed.
+    """
+    imp_modules = imported_modules(file_path)
+    if isinstance(imp_modules, str):
+        return imp_modules
+
+    ignore_roots = set(sys.builtin_module_names)
+    if hasattr(sys, 'stdlib_module_names'):  # Python 3.10+ has also sys.stdlib_module_names
+        ignore_roots.update(sys.stdlib_module_names)
+    ignore_roots.update(set(filter_roots))
+
+    ext_modules = set()
+    for imp_name in imp_modules:
+        if not any(imp_name == root or imp_name.startswith(root + '.') for root in ignore_roots):
+            ext_modules.add(imp_name)
+
+    return ext_modules
 
 
 def expected_args(act_spec: ActionSpec) -> str:
@@ -375,6 +406,40 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
             return f"{prefix}multiple merge requests found for {current_branch=} {merge_requests=}"
 
     return 'release_project' if merge_requests else 'request_merge'
+
+
+def imported_modules(code_file_path: str) -> set[str] | str:
+    """ determines the module names imported by the specified code file.
+
+    :param code_file_path:      code file path.
+    :return:                    set of import/module names (imported by the specified code file),
+                                or an error message if the code file could not be parsed.
+    """
+    module_names = set()
+    try:
+        tree = ast.parse(read_file(code_file_path), filename=code_file_path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):  # import os, sys, pandas, x.y
+                for alias in node.names:
+                    module_names.add(alias.name)
+            elif isinstance(node, ast.ImportFrom):  # from x import y; level==0 for absolute imports (not from .x)
+                if node.level == 0 and node.module:
+                    module_names.add(node.module)
+    except (AttributeError, IndentationError, MemoryError, OSError, SyntaxError, SystemError) as ex:
+        return f"parsing of {code_file_path=} for imported modules raised {ex=}"
+
+    return module_names
+
+
+def package_code_files(prj_root_path: str) -> set[str]:
+    """ determines the package code files present in the specified project root path.
+
+    :param prj_root_path:       project root path.
+    :return:                    set of package code files present in the specified project root path.
+    """
+    with in_wd(prj_root_path):
+        code_files = path_files("**/*" + PY_EXT)
+    return {_ for _ in code_files if not _.startswith((DOCS_FOLDER + "/", TESTS_FOLDER + "/"))}
 
 
 def ppp(output: Iterable[str]) -> str:

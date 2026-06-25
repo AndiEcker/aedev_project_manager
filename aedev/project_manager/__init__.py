@@ -22,4 +22,4 @@ the help texts of an action gets compiled automatically from the docstring of th
 """
 
 
-__version__ = '0.3.27'
+__version__ = '0.3.28'

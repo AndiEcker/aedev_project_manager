@@ -20,7 +20,8 @@ another api endpoint example to determine the repo url:
 
 """
 import time
-from typing import TypedDict, Mapping
+from collections.abc import Mapping
+from typing import TypedDict
 
 import requests
 
