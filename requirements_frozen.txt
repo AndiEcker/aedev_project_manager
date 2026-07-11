@@ -1,6 +1,6 @@
 # aedev-project-manager requirements
 anybadge==1.16.0
-coverage==7.14.2
+coverage==7.14.3
 flake8==7.3.0
 mypy==2.1.0
 packaging==26.2
@@ -12,9 +12,9 @@ pytest==9.1.1
 pytest-cov==7.1.0
 python-gitlab==8.4.0
 requests==2.34.2
-ae_base==0.3.86
-ae_system==0.3.7
-ae_paths==0.3.45
+ae_base==0.3.88
+ae_system==0.3.8
+ae_paths==0.3.46
 ae_dynamicod==0.3.15
 ae_literal==0.3.35
 ae_updater==0.3.19

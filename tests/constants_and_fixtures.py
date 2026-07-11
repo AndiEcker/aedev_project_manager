@@ -3,7 +3,7 @@ import contextlib
 import os
 import tempfile
 
-from typing import Any, Optional, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -86,7 +86,7 @@ def mocked_app_options():
     to let ae.shell.debug_or_verbose() also behave like the value specified by the mocked option 'more_verbose',
     it will also get patched accordingly.
     """
-    def _app_option(_pdv: ProjectDevVars, opt_nam: str) -> Optional[Any]:
+    def _app_option(_pdv: ProjectDevVars, opt_nam: str) -> Any | None:
         if opt_nam in mocked_options:
             return mocked_options[opt_nam]
         return get_app_option(_pdv, opt_nam)

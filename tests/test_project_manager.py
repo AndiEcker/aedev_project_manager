@@ -45,11 +45,10 @@ from aedev.project_manager.utils import get_mirror_urls, guess_next_action
 
 from tests.constants_and_fixtures import (
     tst_tpls_register,
-    app_pjm, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, gitlab_remote, init_parent,
-    tst_mtn_name, tst_mtn_token, mocked_app_options, module_repo_path, pdv_with_email,
-    root_repo_path, skip_if_not_maintainer,
-    temp_parent_path, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx, tst_pkg_version,
-    tst_root_prj_name, uncommitted_guess_prefix)
+    app_pjm, app_pjm_debug, changed_repo_path, empty_repo_path, ensure_tst_ns_portion_version_file, gitlab_remote,
+    init_parent, mocked_app_options, module_repo_path, pdv_with_email, root_repo_path, skip_if_not_maintainer,
+    temp_parent_path, tst_mtn_name, tst_mtn_token, tst_ns_name, tst_ns_por_pfx, tst_imp_pfx, tst_pkg_pfx,
+    tst_pkg_version, tst_root_prj_name, uncommitted_guess_prefix)
 from tests.test_codeberg import CODEBERG_TOKEN_PART
 
 # noinspection PyProtectedMember
@@ -58,7 +57,7 @@ from aedev.project_manager.__main__ import (
     GitlabCom,
     _act_callable, _action, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
-    _print_pdv, _renew_prj_dir, _renew_project, _show_status, _wait,
+    _print_pdv, _renew_project, _show_status, _wait,
     add_children_file, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
     commit_project, delete_children_file, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
@@ -329,8 +328,8 @@ class TestActionsLocal:
         # noinspection PyTypeChecker
         assert REFRESHABLE_TEMPLATE_MARKER in read_file(tpl_dst_path)
 
-    def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
-                                      module_repo_path, patched_shutdown_wrapper):
+    def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path,
+                                      mocked_app_options, module_repo_path, patched_shutdown_wrapper):
         par_pdv = pdv_with_email(project_path=os_path_dirname(changed_repo_path))
 
         check_children_integrity(par_pdv, pdv_with_email(project_path=changed_repo_path))
@@ -349,6 +348,12 @@ class TestActionsLocal:
         assert capsys.readouterr().out
 
         check_integrity(pdv_with_email(project_path=empty_repo_path))
+        assert capsys.readouterr().out
+
+    def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path, mocked_app_options):
+        mocked_app_options['more_verbose'] = True
+
+        check_integrity(pdv_with_email(project_path=changed_repo_path))
         assert capsys.readouterr().out
 
     def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,
@@ -817,7 +822,7 @@ class TestActionsLocal:
         assert 'github.com' in output
         assert pdv['project_name'] in output
         assert 'ghp_' not in output   # only the first 3 chars of token ('ghp') will be there
-        assert " ==== " in output
+        assert "  === " in output
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_redirect_onto_codeberg_user(self, capsys, app_pjm):
@@ -833,7 +838,7 @@ class TestActionsLocal:
         assert 'codeberg.org' in output
         assert pdv['project_name'] in output
         assert CODEBERG_TOKEN_PART not in output
-        assert " ==== " in output  # sometimes: HTTP/2 stream 3 was not closed cleanly: CANCEL (err 8)
+        assert "  === " in output  # sometimes: HTTP/2 stream 3 was not closed cleanly: CANCEL (err 8)
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_redirect_onto_github_user(self, capsys, app_pjm):
@@ -848,7 +853,7 @@ class TestActionsLocal:
         assert 'github.com' in output
         assert pdv['project_name'] in output
         assert 'ghp_' not in output   # only the first 3 chars of token ('ghp') will be there
-        assert " ==== " in output
+        assert "  === " in output
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_onto_gitlab_group(self, capsys, app_pjm):
@@ -872,7 +877,7 @@ class TestActionsLocal:
         assert pdv['project_name'] in output
         assert auth not in output
         assert tst_mtn_token not in output
-        assert " ==== " in output
+        assert "  === " in output
 
 
 class TestHelpersLocal:
@@ -1156,47 +1161,6 @@ class TestHelpersLocal:
     def test_print_pdv(self, app_pjm):
         _print_pdv(pdv_with_email(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
         # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
-
-    def test_renew_prj_dir(self, app_pjm, mocked_app_options, tmp_path):
-        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
-        app_name = 'cpl_prj_dir_app'
-        project_path = norm_path(os_path_join(parent_dir, app_name))
-        package_path = os_path_join(project_path, 'tpl_src_no_namespace')
-        mocked_app_options['repo_group'] = "group_name"
-        mocked_app_options['project_name'] = app_name
-        mocked_app_options['project_path'] = project_path
-        pdv = pdv_with_email(**{
-            'namespace_name': '',
-            'project_path': project_path,
-            'package_path': package_path,
-            'project_type': APP_PRJ})
-
-        assert not os_path_isdir(project_path)
-
-        _renew_prj_dir(pdv.copy())
-
-        mocked_app_options['project_path'] = ""
-
-        _renew_prj_dir(pdv.copy())
-
-        assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
-
-        pdv['project_type'] = ROOT_PRJ
-        pdv['namespace_name'] = tst_ns_name
-
-        _renew_prj_dir(pdv.copy())
-
-        assert os_path_isdir(project_path)
-        assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
-        assert os_path_isdir(os_path_join(package_path, TEMPLATES_FOLDER))
-
-        assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
-        assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
-        assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-        assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
-
-        assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
-        assert not os.path.exists(APP_BUILD_CFG_FILENAME)
 
     def test_renew_project_exits_on_erroneous_pdv_value(self, app_pjm, empty_repo_path, mocked_app_options,
                                                         patched_shutdown_wrapper):

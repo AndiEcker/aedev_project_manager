@@ -24,8 +24,7 @@ from aedev.base import (
 from aedev.commands import GIT_CLONE_CACHE_CONTEXT, GIT_VERSION_TAG_PREFIX
 from aedev.project_vars import PDV_REQ_DEV_FILE_NAME, ProjectDevVars, frozen_req_file_path
 
-# noinspection PyProtectedMember
-from aedev.project_manager.__main__ import _renew_prj_dir
+from aedev.project_manager.utils import renew_project_dir
 
 from constants_and_fixtures import (
     app_pjm, app_pjm_debug, changed_repo_path, empty_repo_path, mocked_app_options, module_repo_path, pdv_with_email)
@@ -531,7 +530,7 @@ class TestHelpers:
         ]
         pdv = ProjectDevVars(**{'namespace_name': namespace, 'project_path': project_path, 'project_type': PACKAGE_PRJ,
                                 'project_templates': []})
-        _renew_prj_dir(pdv)
+        renew_project_dir(pdv)
 
         with in_wd(project_path):
             assert check_templates(cons_app, pdv) is not None

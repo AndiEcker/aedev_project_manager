@@ -1,31 +1,38 @@
 """ util/helper functions needed by __main__.py and templates.py. """
 import ast
+import json
 import os
 import pprint
 import sys
 from collections.abc import Collection, Iterable
-from typing import Any, Optional
-
+from os import makedirs as patchable_makedirs
+from typing import Any, cast
+from unittest.mock import patch
 
 from github.Repository import Repository
 from gitlab.v4.objects import Project
 from packaging.version import Version, InvalidVersion
 
 from ae.base import (                                                                                   # type: ignore
-    DOCS_FOLDER, PY_EXT, TESTS_FOLDER,
-    in_wd, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
-from ae.system import load_env_var_defaults                                                             # type: ignore
+    DOCS_FOLDER, PY_EXT, PY_INIT, TESTS_FOLDER,
+    in_wd, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, read_file, write_file)
+from ae.base import write_file as patchable_write_file                     # pylint: disable=reimported # type: ignore
+from ae.system import (                                                                                 # type: ignore
+    PYPI_PACKAGE_NAMES, load_env_var_defaults, norm_pip_name, project_main_file, PyMo)
 from ae.paths import path_files                                                                         # type: ignore
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
-from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER, get_domain_user_var, sh_exit_if_exec_err     # type: ignore
-from aedev.base import PIP_CMD, PROJECT_VERSION_SEP, ROOT_PRJ                                           # type: ignore
+from ae.console import ConsoleApp                                                                       # type: ignore
+from ae.shell import (                                                                                  # type: ignore
+    STDERR_BEG_MARKER, STDERR_END_MARKER, debug_or_verbose, get_domain_user_var, sh_exit_if_exec_err)
+from aedev.base import (                                                                                # type: ignore
+    APP_PRJ, DJANGO_PRJ, PIP_CMD, PLAYGROUND_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, VERSION_PREFIX, VERSION_QUOTE)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_FOLDER_NAME, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX, GitRemotesType,
     git_add, git_any, git_branch_remotes, git_current_branch, git_init_if_needed, git_status, git_tag_remotes,
-    in_prj_dir_venv)
+    in_prj_dir_venv, venv_module_var_val)
 from aedev.project_vars import (                                                                        # type: ignore
-    ChildrenType, ProjectDevVars, frozen_req_file_path, increment_version, latest_remote_version)
+    ChildrenType, ProjectDevVars, frozen_req_file_path, increment_version, latest_remote_version, main_file_path)
 
 
 # --------------- global constants ------------------------------------------------------------------------------------
@@ -61,6 +68,32 @@ REGISTERED_ACTIONS: RegisteredActions = {}                  #: implemented actio
 REGISTERED_HOSTS_CLASS_NAMES: dict[str, str] = {}           #: class names of all supported remote host domains
 
 # --------------- module helpers --------------------------------------------------------------------------------------
+
+
+def check_folders_files_completeness(cae: ConsoleApp, pdv: ProjectDevVars):
+    """ create or renew project folders/files while protocolling any changes to the console.
+
+    :param cae:                 main app instance.
+    :param pdv:                 project dev variables.
+    """
+    changes: list[tuple] = []
+
+    # __name__ == 'aedev.project_manager.utils'
+    with (patch(f"{__name__}." + 'patchable_write_file', new=lambda _fn, *_, **__: changes.append(('wf', _fn, _, __))),
+          patch(f"{__name__}." + 'patchable_makedirs', new=lambda _dir: changes.append(('md', _dir)))):
+        renew_project_dir(pdv)
+
+    if changes:
+        cae.po(f"  --  missing {len(changes)} basic project folders/files:")
+        if cae.verbose:
+            cae.po(PPF(changes))
+            cae.po(f"   -- use the 'new_{pdv['project_type']}' action to re-new/complete/update this project")
+        else:
+            project_path = pdv['project_path']
+            for change in changes:
+                cae.po(f"    - {change[0] == 'md' and 'folder' or 'file  '} {os_path_relpath(change[1], project_path)}")
+    elif debug_or_verbose(cae):                                                             # pragma: no cover
+        cae.po("    = project folders and files are complete")
 
 
 def children_desc(pdv: ProjectDevVars, children_pdv: Collection[ProjectDevVars] = ()) -> str:
@@ -148,7 +181,7 @@ def expected_args(act_spec: ActionSpec) -> str:
     return msg
 
 
-def get_app_option(pdv: ProjectDevVars, option_name: str) -> Optional[Any]:
+def get_app_option(pdv: ProjectDevVars, option_name: str) -> Any | None:
     """ determine command line option value from pdv object.
 
     :param pdv:                 project dev variables.
@@ -189,7 +222,7 @@ def get_host_class_name(host_domain: str) -> str:
 
 
 def get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str = "", host_user: str = ""
-                        ) -> Optional[str]:
+                        ) -> str | None:
     """ determine host/user-specific domain, group, user and token values.
 
     :param pdv:                 project dev vars with app options and project_path (to include env var values from
@@ -312,7 +345,7 @@ def git_init_add(pdv: ProjectDevVars):
         git_add(project_path)
 
 
-def git_push_url(pdv: ProjectDevVars, authenticate: bool = False, remote_urls: Optional[GitRemotesType] = None) -> str:
+def git_push_url(pdv: ProjectDevVars, authenticate: bool = False, remote_urls: GitRemotesType | None = None) -> str:
     """ determine the origin url of the repository, to push onto. """
     domain = get_host_domain(pdv)
     user_name = get_host_user_name(pdv, domain)
@@ -408,6 +441,35 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
     return 'release_project' if merge_requests else 'request_merge'
 
 
+def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, import_name: str
+                        ) -> set[str]:   # pragma: no cover
+    """ determine the import dependencies of all the package/project code files.
+
+    :param cae:                 main app instance.
+    :param project_path:        project root path.
+    :param project_type:        project type.
+    :param import_name:         project import name.
+    :return:                    set of imported package/project names.
+    """
+    import_deps: set[str] = set()
+    for code_file in package_code_files(project_path):
+        deps_or_err = code_file_imports(os_path_join(project_path, code_file), import_name)
+        cae.chk(23, no_err := isinstance(deps_or_err, set), cast(str, deps_or_err))
+        if no_err:
+            import_deps.update(deps_or_err)
+
+    if project_type == DJANGO_PRJ:
+        if dj_deps := venv_module_var_val(import_name + '.settings', 'INSTALLED_APPS', cwd=project_path,
+                                          validator=lambda _val: isinstance(_val, list)):
+            # noinspection PyTypeChecker
+            import_deps.update(set(dj_deps))
+            cae.dpo(f"   !! project imports/dependencies: {import_deps}")
+        else:
+            cae.po(f"   ## Django apps dependencies NOT found at {project_path}/{import_name}/settings.py;  {dj_deps=}")
+
+    return import_deps
+
+
 def imported_modules(code_file_path: str) -> set[str] | str:
     """ determines the module names imported by the specified code file.
 
@@ -429,6 +491,105 @@ def imported_modules(code_file_path: str) -> set[str] | str:
         return f"parsing of {code_file_path=} for imported modules raised {ex=}"
 
     return module_names
+
+
+def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:    # pragma: no cover
+    """ determine the installed pip packages from the local project repository/root and its Python environment.
+
+    :param cae:                 main app instance.
+    :param project_path:        project root path.
+    :return:                    list of installed pip packages/projects names.
+    """
+    installed: list[str] = []
+    with in_prj_dir_venv(project_path=project_path):
+        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed, shell=True)
+    cae.vpo(f"    ! installed pip packages (in json format): {installed}")
+    installed = [norm_pip_name(_['name']) for _ in json.loads(installed[0])]
+    cae.dpo(f"   !! installed pip packages: {installed}")
+    return installed
+
+
+def missing_imports(cae: ConsoleApp, import_deps: set[str], project_reqs: list[str], ignore_extra_reqs: list[str]
+                    ) -> tuple[list[str], set[str]]:   # pragma: no cover
+    """ determine pip package names that are required but not explicitly imported by a project.
+
+    :param cae:                 main app instance.
+    :param import_deps:         set of imported package/project names (determinable by :func:`import_dependencies`).
+    :param project_reqs:        list of external package/project names, required by the project.
+    :param ignore_extra_reqs:   list of packages names that will be returned in the returned as ignored.
+    :return:                    tuple of missing and missing&ignored import names.
+    """
+    import_names = {norm_pip_name(_pip_name): _imp_name for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
+    cae.vpo(f"    ! irregular PyPI project names (not convertable from their import names): {import_names}")
+    # from itertools import accumulate
+    # norm_deps={_pe for _dep in deps for _pe in accumulate(_dep.replace('_', '-').split('.'), lambda x, y: f"{x}-{y}")}
+    perm_deps = set()
+    for _dep_names in import_deps:
+        _parts = _dep_names.replace('_', '-').split('.')
+        for i in range(1, len(_parts) + 1):
+            perm_deps.add('-'.join(_parts[:i]))
+    cae.vpo(f"    ! permutations of dependencies import names: {perm_deps}")
+    ignoring_reqs = [norm_pip_name(_pip_name) for _pip_name in ignore_extra_reqs]
+    cae.dpo(f"   !! ignored required PyPI projects that are not explicitly imported: {ignoring_reqs}")
+    ignored_reqs = set()
+    missed_imports = []
+    for req_pkg in project_reqs:
+        if req_pkg in import_names:
+            req_pkg = import_names[req_pkg]
+        if req_pkg not in perm_deps:
+            if req_pkg in ignoring_reqs:
+                ignored_reqs.add(req_pkg)
+            else:
+                missed_imports.append(req_pkg)
+
+    return missed_imports, ignored_reqs
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def missing_requirements(cae: ConsoleApp, project_path: str, import_deps: set[str], venv_packages: list[str],
+                         project_reqs: list[str], ignoring_imports: list[str]
+                         ) -> tuple[list[str], list[str], set[str]]:    # pragma: no cover
+    """ determine the import names of a local project repository that are not explicitly required.
+
+    :param cae:                 main app instance.
+    :param project_path:        root path of the local project repository.
+    :param import_deps:         set of imported package/project names (determinable by :func:`import_dependencies`).
+    :param venv_packages:       list of installed pip packages/projects names (returned by :func:`installed_packages`).
+    :param project_reqs:        list of external package/project names, required by the project.
+    :param ignoring_imports:    list of external package/project import names that will be returned as missing&ignored.
+    :return:                    tuple with 3 items containing missing package/project import names partitioned as:
+                                (1) not required, (2) not installed in VENV (3) not required but ignored.
+    """
+    norm_pip_names = {_imp_name: norm_pip_name(_pip_name) for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
+    cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
+    missing_reqs = []
+    uninstalled_packages: list[str] = []
+    ignored_imports = set()
+
+    def _in_packages(_packages: list[str], current_imp_names: list[str], current_pip_name: str) -> bool:
+        return any(
+            norm_pip_name(_n) in _packages
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + PY_EXT))
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), PY_INIT))
+            or norm_pip_names.get(_n, current_pip_name) in _packages
+            for _n in current_imp_names)
+
+    for imp_path in import_deps:
+        mod_obj = PyMo(imp_path)
+
+        name_parts = mod_obj.name_parts
+        imp_names = ['.'.join(name_parts[:i]) for i in range(1, len(name_parts) + 1)]
+
+        if not _in_packages(project_reqs, imp_names, mod_obj.pip_name):
+            if imp_path in ignoring_imports:
+                ignored_imports.add(imp_path)
+            else:
+                missing_reqs.append(imp_path)
+
+        if not _in_packages(venv_packages, imp_names, mod_obj.pip_name):
+            uninstalled_packages.append(imp_path)
+
+    return missing_reqs, uninstalled_packages, ignored_imports
 
 
 def package_code_files(prj_root_path: str) -> set[str]:
@@ -471,6 +632,68 @@ def refresh_pdv(pdv: ProjectDevVars):
     :param pdv:                 project development variables.
     """
     pdv.update(ProjectDevVars(project_path=pdv['project_path'], namespace_name=pdv['namespace_name']))
+
+
+def renew_project_dir(pdv: ProjectDevVars):     # pylint: disable=too-many-branches
+    """ create&complete a project or check&protocol which files and subfolders are missing.
+
+    .. note:: to check&protocol patch :func:`patchable_makedirs` and :func:`patchable_write_file` and log their calls.
+
+    :param pdv:                 project development variables.
+    """
+    namespace_name = pdv['namespace_name']
+    project_name = pdv['project_name']
+    project_path = pdv['project_path']
+    project_type = pdv['project_type']
+
+    is_root = project_type == ROOT_PRJ
+    import_name = namespace_name + '.' + project_name[len(namespace_name) + 1:] if namespace_name else project_name
+    sep = os.linesep
+
+    if not os_path_isdir(project_path):
+        patchable_makedirs(project_path)  # needed for check_folders_files_completeness(), _renew_project() does it too
+
+    file_name = os_path_join(project_path, pdv['REQ_FILE_NAME'])
+    if not os_path_isfile(file_name):
+        patchable_write_file(file_name, f"# runtime dependencies of the {import_name} project")
+
+    main_file = project_main_file(import_name, project_path=project_path)
+    if not main_file:
+        main_file = main_file_path(project_path, project_type, namespace_name=namespace_name)
+        main_path = os_path_dirname(main_file)
+        if not os_path_isdir(main_path):
+            patchable_makedirs(main_path)
+    if not os_path_isfile(main_file):
+        patchable_write_file(main_file, f"\"\"\" {project_name} {project_type} main module \"\"\"{sep}"
+                                        f"{sep}"
+                                        f"{VERSION_PREFIX}{pdv['NULL_VERSION']}{VERSION_QUOTE}{sep}")
+
+    if project_type == PLAYGROUND_PRJ:
+        return
+
+    if not namespace_name or is_root:
+        sub_dir = os_path_join(project_path, pdv['DOCS_FOLDER'])
+        if not os_path_isdir(sub_dir):
+            patchable_makedirs(sub_dir)
+
+    if is_root:
+        sub_dir = os_path_join(pdv['package_path'], pdv['TEMPLATES_FOLDER'])
+        if not os_path_isdir(sub_dir):
+            patchable_makedirs(sub_dir)
+
+    sub_dir = os_path_join(project_path, pdv['TESTS_FOLDER'])
+    if not os_path_isdir(sub_dir):
+        patchable_makedirs(sub_dir)
+
+    if project_type == APP_PRJ:
+        file_name = os_path_join(project_path, pdv['APP_BUILD_CFG_FILENAME'])
+        if not os_path_isfile(file_name):
+            patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}[app]{sep}")
+
+    if project_type == DJANGO_PRJ:
+        file_name = os_path_join(project_path, 'manage.py')
+        if not os_path_isfile(file_name):
+            patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}")
 
 
 def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packages: bool = False,
