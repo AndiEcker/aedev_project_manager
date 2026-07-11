@@ -7,20 +7,23 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from ae.base import (
-    PY_INIT, TESTS_FOLDER,
-    extend_file, in_wd, norm_name, now_str, os_path_dirname, os_path_isfile, os_path_join, os_path_splitext,
+    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
+    extend_file, in_wd, norm_name, norm_path, now_str,
+    os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_splitext,
     read_file, write_file)
+from ae.system import APP_BUILD_CFG_FILENAME
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER
 from aedev.base import (
-    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, PROJECT_VERSION_SEP, ROOT_PRJ)
+    APP_PRJ, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, PROJECT_VERSION_SEP,
+    ROOT_PRJ)
 from aedev.commands import GIT_REMOTE_ORIGIN, GIT_REMOTE_UPSTREAM, git_add, git_checkout, git_commit, git_current_branch
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL, PDV_REQ_FILE_NAME,
     ProjectDevVars, frozen_req_file_path)
 
 from constants_and_fixtures import (
-    empty_repo_path, ensure_tst_ns_portion_version_file, mocked_app_options, module_repo_path, pdv_with_email,
+    app_pjm, empty_repo_path, ensure_tst_ns_portion_version_file, mocked_app_options, module_repo_path, pdv_with_email,
     tst_ns_name, tst_pkg_version, uncommitted_guess_prefix)
 
 from aedev.project_manager.utils import (
@@ -28,7 +31,8 @@ from aedev.project_manager.utils import (
     children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
     get_host_class_name, get_host_config_val, get_host_domain, get_host_group, get_host_user_name, get_host_user_token,
     get_mirror_urls, git_init_add, git_push_url, guess_next_action, imported_modules, package_code_files, ppp,
-    project_topics, refresh_pdv, update_frozen_req_file, update_frozen_req_files, write_commit_message)
+    project_topics, refresh_pdv, renew_project_dir, update_frozen_req_file, update_frozen_req_files,
+    write_commit_message)
 
 
 ERR_PREFIX = "¡"
@@ -1148,6 +1152,47 @@ class TestOtherHelpers:
     def test_refresh_pdv(self, mock_pdv):
         refresh_pdv(mock_pdv)
         assert mock_pdv['project_path'] == PRJ_ROOT_PATH
+
+    def test_renew_project_dir(self, app_pjm, mocked_app_options, tmp_path):
+        parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
+        app_name = 'cpl_prj_dir_app'
+        project_path = norm_path(os_path_join(parent_dir, app_name))
+        package_path = os_path_join(project_path, 'tpl_src_no_namespace')
+        mocked_app_options['repo_group'] = "group_name"
+        mocked_app_options['project_name'] = app_name
+        mocked_app_options['project_path'] = project_path
+        pdv = pdv_with_email(**{
+            'namespace_name': '',
+            'project_path': project_path,
+            'package_path': package_path,
+            'project_type': APP_PRJ})
+
+        assert not os_path_isdir(project_path)
+
+        renew_project_dir(pdv.copy())
+
+        mocked_app_options['project_path'] = ""
+
+        renew_project_dir(pdv.copy())
+
+        assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
+
+        pdv['project_type'] = ROOT_PRJ
+        pdv['namespace_name'] = tst_ns_name
+
+        renew_project_dir(pdv.copy())
+
+        assert os_path_isdir(project_path)
+        assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
+        assert os_path_isdir(os_path_join(package_path, TEMPLATES_FOLDER))
+
+        assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
+        assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
+        assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
+        assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
+
+        assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
+        assert not os.path.exists(APP_BUILD_CFG_FILENAME)
 
     def test_update_frozen_req_files_frozen_dev_req(self, empty_repo_path, recwarn):
         pdv = ProjectDevVars(project_path=empty_repo_path)

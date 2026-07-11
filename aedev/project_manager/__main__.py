@@ -41,6 +41,8 @@ the portion :mod:`ae.pythonanywhere` portion encapsulates the web API to deploy 
 to the Pythonanywhere webserver.
 """
 # pylint: disable=too-many-lines
+from __future__ import annotations  # allow type forward references (PEP 563), can be removed in Python 3.14+ (PEP 749)
+
 import ast
 import datetime
 import glob
@@ -54,10 +56,8 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection, Container
 from fnmatch import fnmatch
 from functools import partial, wraps
-from os import makedirs as patchable_makedirs
 from traceback import format_exc
-from typing import TYPE_CHECKING, Any, Optional, cast
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from anybadge import Badge                                                                  # type: ignore
@@ -79,10 +79,8 @@ from ae.base import (                                                       # ty
     PY_EXT, PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
-    read_bin_file, read_file, url_failure, write_file,
-    write_file as patchable_write_file)
-from ae.system import (                                                                                 # type: ignore
-    PYPI_PACKAGE_NAMES, full_stack_trace, module_attr, norm_pip_name, project_main_file, stack_var, PyMo)
+    read_bin_file, read_file, url_failure, write_file)
+from ae.system import full_stack_trace, module_attr, norm_pip_name, stack_var                           # type: ignore
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
     copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files)
@@ -93,11 +91,11 @@ from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                  
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.shell import (                                                                                  # type: ignore
     STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, sh_exit_if_exec_err)
-from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER, deploy_template                               # type: ignore
+from ae.managed_files import deploy_template                                                            # type: ignore
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
     ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER, VERSION_PREFIX, VERSION_QUOTE,
+    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER,
     code_version, get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME,
@@ -105,11 +103,11 @@ from aedev.commands import (                                                    
     git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    in_prj_dir_venv, owner_project_from_url, sh_exit_if_git_err, sh_log, sh_logs, venv_module_var_val)
+    in_prj_dir_venv, owner_project_from_url, sh_exit_if_git_err, sh_log, sh_logs)
 from aedev.project_vars import (                                                                        # type: ignore
     PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ,
     ChildrenType,
-    increment_version, latest_remote_version, main_file_path, project_owner_name_version,
+    increment_version, latest_remote_version, project_owner_name_version,
     replace_file_version, root_packages_masks, skip_files_lean_web,
     ProjectDevVars)
 
@@ -122,10 +120,10 @@ from aedev.project_manager.utils import (
     ARG_ALL, ARGS_CHILDREN_DEFAULT, ARG_MULTIPLES, DJANGO_EXCLUDED_FROM_CLEANUP, PPF,
     REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES,
     ActionArgs, ActionFlags, ActionSpec, RepoType,
-    children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
+    check_folders_files_completeness, children_desc, children_project_names, expected_args, get_app_option, get_branch,
     get_host_class_name, get_host_domain, get_host_group, get_host_user_name, get_host_user_token, get_mirror_urls,
-    git_init_add, git_push_url, guess_next_action, package_code_files, ppp, project_topics, update_frozen_req_files,
-    write_commit_message)
+    git_init_add, git_push_url, guess_next_action, import_dependencies, installed_packages, missing_imports,
+    missing_requirements, ppp, project_topics, renew_project_dir, update_frozen_req_files, write_commit_message)
 
 
 # pylint: disable-next=invalid-name
@@ -164,7 +162,7 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
     return _deco
 
 
-def _act_callable(host_api: Optional["RemoteHost"], act_name: str) -> Optional[Callable]:
+def _act_callable(host_api: RemoteHost | None, act_name: str) -> Callable | None:
     return globals().get(act_name) or getattr(host_api, act_name, None)
 
 
@@ -246,26 +244,6 @@ def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:                     
     cae.chk(79, not bool(errors), f"error in adding the git {tag=}:{ppp(errors)}")
 
     return tag
-
-
-def _check_folders_files_completeness(pdv: ProjectDevVars):
-    changes: list[tuple] = []
-
-    with (patch(__name__ + '.patchable_write_file', new=lambda _fn, *_, **__: changes.append(('wf', _fn, _, __))),
-          patch(__name__ + '.patchable_makedirs', new=lambda _dir: changes.append(('md', _dir)))):
-        _renew_prj_dir(pdv)
-
-    if changes:
-        cae.po(f"  --  missing {len(changes)} basic project folders/files:")
-        if cae.verbose:                                                                     # pragma: no cover
-            cae.po(PPF(changes))
-            cae.po(f"   -- use the 'new_{pdv['project_type']}' action to re-new/complete/update this project")
-        else:
-            project_path = pdv['project_path']
-            for change in changes:
-                cae.po(f"    - {change[0] == 'md' and 'folder' or 'file  '} {os_path_relpath(change[1], project_path)}")
-    elif debug_or_verbose(cae):                                                                # pragma: no cover
-        cae.po("    = project folders and files are complete")
 
 
 def _check_children_not_exist(parent_or_root_pdv: ProjectDevVars, *project_versions: str):  # pragma: no cover
@@ -465,6 +443,9 @@ def _check_types_linting_tests(pdv: ProjectDevVars
 
     excludes = ['migrations' if project_type == DJANGO_PRJ else 'templates']    # folder names to exclude from checks
     path_args = [namespace_name] if namespace_name else root_packages if root_packages else [pdv['version_file']]
+    if not path_args[0]:
+        cae.po(f"  ==# lint check skipped because {project_path=} does not contain any {PY_EXT} files")
+        return
 
     options = []
     if debug_or_verbose(cae):
@@ -854,58 +835,6 @@ def _refresh_pdv(pdv: ProjectDevVars, **pdv_kwargs):
     pdv.update(_get_pdv(**pdv_kwargs))
 
 
-def _renew_prj_dir(new_pdv: ProjectDevVars):
-    namespace_name = new_pdv['namespace_name']
-    project_name = new_pdv['project_name']
-    project_path = new_pdv['project_path']
-    project_type = new_pdv['project_type']
-
-    is_root = project_type == ROOT_PRJ
-    import_name = namespace_name + '.' + project_name[len(namespace_name) + 1:] if namespace_name else project_name
-    sep = os.linesep
-
-    if not os_path_isdir(project_path):
-        patchable_makedirs(project_path)  # needed for _check_folders_files_completeness(), _renew_project() does it too
-
-    file_name = os_path_join(project_path, new_pdv['REQ_FILE_NAME'])
-    if not os_path_isfile(file_name):
-        patchable_write_file(file_name, f"# runtime dependencies of the {import_name} project")
-
-    main_file = project_main_file(import_name, project_path=project_path)
-    if not main_file:
-        main_file = main_file_path(project_path, project_type, namespace_name=namespace_name)
-        main_path = os_path_dirname(main_file)
-        if not os_path_isdir(main_path):
-            patchable_makedirs(main_path)
-    if not os_path_isfile(main_file):
-        patchable_write_file(main_file, f"\"\"\" {project_name} {project_type} main module \"\"\"{sep}"
-                                        f"{sep}"
-                                        f"{VERSION_PREFIX}{new_pdv['NULL_VERSION']}{VERSION_QUOTE}{sep}")
-
-    if project_type == PLAYGROUND_PRJ:
-        return
-
-    sub_dir = os_path_join(project_path, new_pdv['DOCS_FOLDER'])
-    if (not namespace_name or is_root) and not os_path_isdir(sub_dir):
-        patchable_makedirs(sub_dir)
-
-    sub_dir = os_path_join(new_pdv['package_path'], new_pdv['TEMPLATES_FOLDER'])
-    if is_root and not os_path_isdir(sub_dir):
-        patchable_makedirs(sub_dir)
-
-    sub_dir = os_path_join(project_path, new_pdv['TESTS_FOLDER'])
-    if not os_path_isdir(sub_dir):
-        patchable_makedirs(sub_dir)
-
-    file_name = os_path_join(project_path, new_pdv['APP_BUILD_CFG_FILENAME'])
-    if project_type == APP_PRJ and not os_path_isfile(file_name):
-        patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}[app]{sep}")
-
-    file_name = os_path_join(project_path, 'manage.py')
-    if project_type == DJANGO_PRJ and not os_path_isfile(file_name):
-        patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}")
-
-
 def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars:
     project_path = ini_pdv['project_path']
 
@@ -936,7 +865,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
         errors = _update_project(ini_pdv, remote_names=remote_urls)
         cae.chk(15, not bool(errors), f"update errors in {project_path=}:{ppp(errors)}")
 
-    _renew_prj_dir(ini_pdv)
+    renew_project_dir(ini_pdv)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
 
     inc_part = get_app_option(ini_pdv, 'versionIncrementPart') or 0
@@ -1304,7 +1233,7 @@ class RemoteHost:                                                               
 
 class GithubCom(RemoteHost):                                                                # pragma: no cover
     """ remote connection and actions on remote repo in gitHub.com. """
-    connection: Optional[Github] = None     #: connection to GitHub host
+    connection: Github | None = None        #: connection to GitHub host
 
     def connect(self, ini_pdv: ProjectDevVars) -> bool:
         """ connect to gitHub.com remote host.
@@ -1384,7 +1313,7 @@ class GithubCom(RemoteHost):                                                    
         cae.po(f"   == initialized new project and created {len(branch_masks)} protected branch(es): {branch_masks}")
         return ""
 
-    def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Optional[Repository]:
+    def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Repository | None:
         """ convert user repo names to a repository instance of the remote api.
 
         :param err_code:        error code, pass 0 to not quit if a project is not found.
@@ -1531,7 +1460,7 @@ class GithubCom(RemoteHost):                                                    
 
 class GitlabCom(RemoteHost):
     """ remote connection and actions on gitlab.com. """
-    connection: Optional[Gitlab] = None     #: connection to Gitlab host
+    connection: Gitlab | None = None        #: connection to Gitlab host
 
     def branch_merge_requests(self, ini_pdv: ProjectDevVars, branch: str
                               ) -> list[ProjectMergeRequest]:                               # pragma: no cover
@@ -1646,7 +1575,7 @@ class GitlabCom(RemoteHost):
 
     # pylint: disable-next=too-many-locals
     def merge_pushed_project(self, pdv: ProjectDevVars,
-                             request: Optional[ProjectMergeRequest] = None, message: str = "", max_wait: float = 6.9
+                             request: ProjectMergeRequest | None = None, message: str = "", max_wait: float = 6.9
                              ) -> int:                                                      # pragma: no cover
         """ merge an MR of the specified project.
 
@@ -1699,7 +1628,7 @@ class GitlabCom(RemoteHost):
 
         return retries
 
-    def repo_obj(self, err_code: int, owner_project: str) -> Optional[Project]:             # pragma: no cover
+    def repo_obj(self, err_code: int, owner_project: str) -> Project | None:             # pragma: no cover
         """ create Project instance of a remote repository specified by its namespace path or its endswith-fragment.
 
         :param err_code:        error code, pass 0 to not quit if the project is not found.
@@ -2010,13 +1939,14 @@ class GitlabCom(RemoteHost):
                                 the version tag of the latest git repository version.
         """
         _check_action(ini_pdv, self.release_project)
-
-        msg = self.repo_release_project(ini_pdv, version_tag)
+        verbose = debug_or_verbose(cae)
 
         with in_os_env(start_dir=ini_pdv['project_path']):
+            msg = self.repo_release_project(ini_pdv, version_tag)
             for mirror_remote in get_mirror_urls(ini_pdv):
                 update_mirror(ini_pdv, mirror_remote)           # mirror this gitlab.com-hosted project onto GitHub
-                msg += f"\n      and updated mirror {mask_token(mirror_remote)}"
+                if verbose:
+                    msg += f"\n      and updated mirror {mask_token(mirror_remote)}"
 
         cae.po(msg)
 
@@ -2034,6 +1964,7 @@ class GitlabCom(RemoteHost):
     def request_merge(self, ini_pdv: ProjectDevVars):                                       # pragma: no cover
         """ request merge of the origin=fork repository into the main branch at the upstream/forked remote. """
         _check_action(ini_pdv, self.request_merge)
+        verbose = debug_or_verbose(cae)
 
         # https://docs.gitlab.com/ee/api/merge_requests.html#create-mr and https://stackoverflow.com/questions/51104622
         src_prj, tgt_prj, forked, branch = self.repo_merge_src_dst_fork_branch(ini_pdv)
@@ -2059,7 +1990,7 @@ class GitlabCom(RemoteHost):
                 # 'allow_collaboration': True,
                 # 'subscribed': True,
             })
-            if debug_or_verbose(cae):
+            if verbose:
                 cae.po(f"    . merge request diffs: {PPF([_.attributes for _ in merge_req.diffs.list()])}")
 
             action = " ==== requested merge"
@@ -2070,7 +2001,8 @@ class GitlabCom(RemoteHost):
         except (GitlabError, GitlabHttpError, Exception) as ex:     # pylint: disable=broad-exception-caught
             action = f" **** exception {ex} on merge request"
 
-        cae.po(f"{action} of branch {branch} from fork/origin ({src_prj=}) into forked/upstream ({tgt_prj=})")
+        cae.po(f"{action} of branch {branch}" + (
+            f" from fork/origin ({src_prj=}) into forked/upstream ({tgt_prj=})" if verbose else ""))
 
     @_action(*ANY_PRJ_TYPE, arg_names=((), ('fragment', ), ))
     def search_repos(self, ini_pdv: ProjectDevVars, fragment: str = ""):                    # pragma: no cover
@@ -2483,129 +2415,47 @@ def check_children_integrity(parent_pdv: ProjectDevVars, *children_pdv: ProjectD
         cae.po(f"  --- integrity check of {chi_pdv['project_title']}")
         check_integrity(chi_pdv)
 
-    cae.po(f" ==== passed integrity checks of {children_desc(parent_pdv, children_pdv)}")
+    cae.po(f"===== run integrity checks of {children_desc(parent_pdv, children_pdv)}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='check')
 def check_integrity(ini_pdv: ProjectDevVars):
     """ integrity check of files/folders completeness, managed/template files update-state, and CI tests. """
-    project_type = ini_pdv['project_type']
-    project_path = ini_pdv['project_path']
-    if project_type in (NO_PRJ, PARENT_PRJ):
-        cae.po(f" ==== no integrity checks for {project_type or 'undefined'} project at {project_path}")
-        return
-
-    _check_folders_files_completeness(ini_pdv)
+    check_folders_files_completeness(cae, ini_pdv)
     if not on_ci_host():                                                                    # pragma: no cover
-        with in_prj_dir_venv(project_path):
+        with in_prj_dir_venv(ini_pdv['project_path']):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
     _check_resources(ini_pdv)                                                               # pragma: no cover
     _check_types_linting_tests(ini_pdv)                                                     # pragma: no cover
-    cae.po(f" ==== passed integrity checks for {ini_pdv['project_title']}")                 # pragma: no cover
+    cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")                    # pragma: no cover
 
 
-def _import_dependencies(project_path: str, project_type: str, import_name: str) -> set[str]:   # pragma: no cover
-    import_deps: set[str] = set()
-    for code_file in package_code_files(project_path):
-        deps_or_err = code_file_imports(os_path_join(project_path, code_file), import_name)
-        cae.chk(23, no_err := isinstance(deps_or_err, set), cast(str, deps_or_err))
-        if no_err:
-            import_deps.update(deps_or_err)
-
-    if project_type == DJANGO_PRJ:
-        if dj_deps := venv_module_var_val(import_name + '.settings', 'INSTALLED_APPS', cwd=project_path,
-                                          validator=lambda _val: isinstance(_val, list)):
-            # noinspection PyTypeChecker
-            import_deps.update(set(dj_deps))
-            cae.dpo(f"   !! project imports/dependencies: {import_deps}")
-        else:
-            cae.po(f"   ## Django apps dependencies NOT found at {project_path}/{import_name}/settings.py;  {dj_deps=}")
-    return import_deps
+@_action(*ANY_PRJ_TYPE)
+def check_managed_files(ini_pdv: ProjectDevVars):                                           # pragma: no cover
+    """ check if all managed files (generated from templates) of a project are uptodate. """
+    with in_prj_dir_venv(ini_pdv['project_path']):
+        check_templates(cae, ini_pdv)
+    cae.po(f"  === checked managed files/templates for {ini_pdv['project_title']}")
 
 
-def _installed_packages(project_path: str) -> list[str]:    # pragma: no cover
-    installed: list[str] = []
-    with in_prj_dir_venv(project_path=project_path):
-        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed, shell=True)
-    cae.vpo(f"    ! installed pip packages (in json format): {installed}")
-    installed = [norm_pip_name(_['name']) for _ in json.loads(installed[0])]
-    cae.dpo(f"   !! installed pip packages: {installed}")
-    return installed
-
-
-def _missing_imports(import_deps: set[str], project_reqs: list[str], ignore_extra_reqs: list[str]
-                     ) -> tuple[list[str], set[str]]:   # pragma: no cover
-    import_names = {norm_pip_name(_pip_name): _imp_name for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
-    cae.vpo(f"    ! irregular PyPI project names (not convertable from their import names): {import_names}")
-    # from itertools import accumulate
-    # norm_deps={_pe for _dep in deps for _pe in accumulate(_dep.replace('_', '-').split('.'), lambda x, y: f"{x}-{y}")}
-    perm_deps = set()
-    for _dep_names in import_deps:
-        _parts = _dep_names.replace('_', '-').split('.')
-        for i in range(1, len(_parts) + 1):
-            perm_deps.add('-'.join(_parts[:i]))
-    cae.vpo(f"    ! permutations of dependencies import names: {perm_deps}")
-    ignoring_reqs = [norm_pip_name(_pip_name) for _pip_name in ignore_extra_reqs]
-    cae.dpo(f"   !! ignored required PyPI projects that are not explicitly imported: {ignoring_reqs}")
-    ignored_reqs = set()
-    missing_imports = []
-    for req_pkg in project_reqs:
-        if req_pkg in import_names:
-            req_pkg = import_names[req_pkg]
-        if req_pkg not in perm_deps:
-            if req_pkg in ignoring_reqs:
-                ignored_reqs.add(req_pkg)
-            else:
-                missing_imports.append(req_pkg)
-
-    return missing_imports, ignored_reqs
-
-
-def _missing_requirements(project_path: str, import_deps: set[str], venv_packages: list[str], project_reqs: list[str],
-                          ignoring_imports: list[str]) -> tuple[list[str], list[str], set[str]]:    # pragma: no cover
-    norm_pip_names = {_imp_name: norm_pip_name(_pip_name) for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
-    cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
-    missing_reqs = []
-    uninstalled_packages: list[str] = []
-    ignored_imports = set()
-
-    def _in_packages(_packages: list[str], current_imp_names: list[str], current_pip_name: str) -> bool:
-        return any(
-            norm_pip_name(_n) in _packages
-            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + PY_EXT))
-            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), PY_INIT))
-            or norm_pip_names.get(_n, current_pip_name) in _packages
-            for _n in current_imp_names)
-
-    for imp_path in import_deps:
-        mod_obj = PyMo(imp_path)
-
-        name_parts = mod_obj.name_parts
-        imp_names = ['.'.join(name_parts[:i]) for i in range(1, len(name_parts) + 1)]
-
-        if not _in_packages(project_reqs, imp_names, mod_obj.pip_name):
-            if imp_path in ignoring_imports:
-                ignored_imports.add(imp_path)
-            else:
-                missing_reqs.append(imp_path)
-
-        if not _in_packages(venv_packages, imp_names, mod_obj.pip_name):
-            uninstalled_packages.append(imp_path)
-
-    return missing_reqs, uninstalled_packages, ignored_imports
+@_action(*ANY_PRJ_TYPE)
+def check_missing(ini_pdv: ProjectDevVars):                                                 # pragma: no cover
+    """ check if project has missing files or folders. """
+    check_folders_files_completeness(cae, ini_pdv)
+    cae.po(f"  === checked missing file or folders for {ini_pdv['project_title']}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='reqs')
 def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
     """ check project distribution/run-time requirements by parsing the source code. """
     project_path = ini_pdv['project_path']
-    import_deps = _import_dependencies(project_path, ini_pdv['project_type'], ini_pdv['import_name'])
-    venv_packages = _installed_packages(project_path)
+    import_deps = import_dependencies(cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'])
+    venv_packages = installed_packages(cae, project_path)
     project_reqs = [norm_pip_name(_.split(PROJECT_VERSION_SEP)[0]) for _ in ini_pdv.pdv_val('install_requires')]
     cae.vpo(f"    ! install requires: {project_reqs}")
 
-    missing_reqs, uninstalled_packages, ignored_imports = _missing_requirements(
-        project_path, import_deps, venv_packages, project_reqs,
+    missing_reqs, uninstalled_packages, ignored_imports = missing_requirements(
+        cae, project_path, import_deps, venv_packages, project_reqs,
         # imports to ignore: merge project-specific from .env with always ignorable imports(like setuptools in setup.py)
         list(ini_pdv.pdv_val('IGNORE_MISSING_IMPORTS')) + ['djangocms_admin_style', 'setuptools'])
     if missing_reqs:
@@ -2615,12 +2465,19 @@ def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
     if ignored_imports and debug_or_verbose(cae):
         cae.po(f"    . ignored not required imports: {ignored_imports}")
 
-    missing_imports, ignored_reqs = _missing_imports(import_deps, project_reqs, ini_pdv.pdv_val('IGNORE_EXTRA_REQS'))
-    if missing_imports:
-        cae.po(f"    # required projects/packages that are not imported: {missing_imports}")
+    missed_imports, ignored_reqs = missing_imports(cae, import_deps, project_reqs, ini_pdv.pdv_val('IGNORE_EXTRA_REQS'))
+    if missed_imports:
+        cae.po(f"    # required projects/packages that are not imported: {missed_imports}")
     if ignored_reqs and debug_or_verbose(cae):
         cae.po(f"    . ignored not imported requirements: {ignored_reqs}")
     cae.po(f"  === checked required, imported and installed PyPI packages/projects for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE)
+def check_resources(ini_pdv: ProjectDevVars):                                               # pragma: no cover
+    """ check if project has missing files or folders. """
+    _check_resources(ini_pdv)
+    cae.po(f"  === checked image, sound and other resources for {ini_pdv['project_title']}")
 
 
 @_action(PARENT_PRJ, ROOT_PRJ, arg_names=(('children-owner-name-versions' + ARG_MULTIPLES, ), ),
@@ -2980,36 +2837,49 @@ def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: P
     cae.po(f" ==== run command '{command}' for {children_desc(ini_pdv, children_pdv)}")
 
 
-@_action(local_action=False, shortcut='actions')    # local_action=False sets host_api to display remote actions
-def show_actions(ini_pdv: ProjectDevVars):
+@_action(local_action=False, shortcut='actions')        # local_action=False sets host_api to display remote actions
+def show_actions(ini_pdv: ProjectDevVars):              # pylint: disable=too-many-branches
     """ get available/registered/implemented actions info of the specified/current project and remote. """
-    host_api = ini_pdv.pdv_val('host_api')
+    repo_api = ini_pdv.pdv_val('host_api')
     repo_domain = get_host_domain(ini_pdv)
-    actions = sorted(_available_actions())
+    web_domain = ini_pdv['web_domain']
+    web_api = globals()[get_host_class_name(web_domain)]() if web_domain else None
+    actions = [(_n, _act_callable(repo_api, _n) or _act_callable(web_api, _n)) for _n in sorted(_available_actions())]
 
-    prefix = f"  --- found {len(actions)} available actions"
-    if not get_app_option(ini_pdv, 'more_verbose'):    # compact output
+    prefix = f"  --- {sum(1 for _ in actions if _[1])} of {len(actions)} registered actions available for this project"
+    if debug_or_verbose(cae):
+        cae.po(prefix + f" (locally and at {'|'.join(REGISTERED_HOSTS_CLASS_NAMES)})")
+
+        unavail_host_actions = []
+        for act_name, act_fun in actions:
+            if act_fun:
+                cae.po(f"    - {act_name} " + "-" * (120 - len(act_name)))
+                for spec in _act_specs(act_name):
+                    _act_help_print(spec)
+            else:
+                unavail_host_actions.append(act_name)
+
+        if unavail_host_actions:
+            msg = f"  --- {len(unavail_host_actions)} registered host/remote actions are not available"
+            if not repo_api:
+                msg += f"; unsupported {repo_domain=}"                                      # pragma: no cover
+            elif not repo_api.connection:
+                msg += f"; credentials {ini_pdv['repo_user']} : {mask_token(ini_pdv['repo_token'])} @ {repo_domain=}"
+            if web_domain and not web_api:                                                  # pragma: no cover
+                msg += f"; credentials: {ini_pdv['web_user']} : {mask_token(ini_pdv['web_token'])} @ {web_domain=}"
+            if (project_type := ini_pdv['project_type']) != DJANGO_PRJ and web_domain:
+                msg += f"; unsuitable {project_type=} for {web_domain=}"                    # pragma: no cover
+
+            cae.po(msg)
+            cae.po(f"      {', '.join(unavail_host_actions)}")
+
+    else:           # compact output
         cae.po(prefix + "; add the --more_verbose (-v) option for action details:")
-        for act_name in actions:
-            if act_fun := _act_callable(host_api, act_name):
+        for act_name, act_fun in actions:
+            if act_fun:
                 cae.po(f"    - {act_fun.__name__: <30} {(act_fun.__doc__ or ' ').splitlines()[0]}")
 
-    else:
-        cae.po(prefix + f" (locally and at {'|'.join(REGISTERED_HOSTS_CLASS_NAMES)}):")
-
-        for act_name in actions:
-            cae.po(f"    - {act_name} " + "-" * (120 - len(act_name)))
-            for spec in _act_specs(act_name):
-                _act_help_print(spec)
-
-        if other_host_actions := [_ for _ in actions if not _act_callable(host_api, _)]:
-            fail_msg = ("" if host_api.connection else f"(due to missing/wrong {mask_token(ini_pdv['repo_token'])=})"
-                        ) if host_api else f"(due to invalid {repo_domain=})"
-            # noinspection PyUnboundLocalVariable
-            cae.po(f"  --- {len(other_host_actions)} actions registered but not available for this project {fail_msg}")
-            cae.po(f"      {', '.join(other_host_actions)}")
-
-    cae.po(f" ==== project manager actions for {ini_pdv['project_title']}")
+    cae.po(f" ==== registered/available project manager actions for {ini_pdv['project_title']}")
 
 
 @_action(PARENT_PRJ, ROOT_PRJ)
@@ -3110,13 +2980,13 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):                 
                       *[f"+refs/{ref_group}/*:refs/{ref_group}/*" for ref_group in ('heads', 'tags', 'notes')],
                       exit_on_err=False)
     if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
-        cae.po(f" **** update mirror error:{ppp(mask_token(output))}")
+        cae.po(f"  *** update mirror error:{ppp(mask_token(output))}")
     else:
         if ini_rep is not None:
             cae.chk(74, not (_err := ini_rep()), _err)
             if _err:
                 return  # do not show success message on force/ignored ini_rep() error
-        cae.po(f" ==== successfully updated mirror at remote {mask_token(mirror_remote)}")
+        cae.po(f"  === successfully updated mirror at remote {mask_token(mirror_remote)}")
 
 
 @_action(*ANY_PRJ_TYPE, flags={'MASKS': [], 'EDITABLE': False}, shortcut='upgrade')
@@ -3161,7 +3031,8 @@ def init_main() -> ConsoleApp:
     app_version: str = _v if isinstance(_v := module_attr('aedev.project_manager', '__version__'), str) else ""
     cae = ConsoleApp(app_name="pjm", app_version=app_version, debug_level=DEBUG_LEVEL_DISABLED)
 
-    cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all available actions)")
+    cae.add_argument('action', help="action to execute (run `pjm -v show_actions` to display all registered actions"
+                                    " or `pjm -h <action name>` for a brief description of a single action)")
     cae.add_argument('arguments',
                      help="additional arguments and optional flags, depending on specified action, e.g. all children"
                           " actions expecting either a list of package/portion names or an expression using one of the"
