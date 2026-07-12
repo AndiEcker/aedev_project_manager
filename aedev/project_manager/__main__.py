@@ -2418,9 +2418,16 @@ def check_children_integrity(parent_pdv: ProjectDevVars, *children_pdv: ProjectD
     cae.po(f"===== run integrity checks of {children_desc(parent_pdv, children_pdv)}")
 
 
+@_action(*ANY_PRJ_TYPE, shortcut='files')
+def check_files(ini_pdv: ProjectDevVars):
+    """ CI integrity check/tests of files/folders completeness and managed/templates/resources files update-state. """
+    check_folders_files_completeness(cae, ini_pdv)
+    cae.po(f" ==== run project files/folders completeness for {ini_pdv['project_title']}")
+
+
 @_action(*ANY_PRJ_TYPE, shortcut='check')
 def check_integrity(ini_pdv: ProjectDevVars):
-    """ integrity check of files/folders completeness, managed/template files update-state, and CI tests. """
+    """ CI integrity check/tests of files/folders completeness and managed/templates/resources files update-state. """
     check_folders_files_completeness(cae, ini_pdv)
     if not on_ci_host():                                                                    # pragma: no cover
         with in_prj_dir_venv(ini_pdv['project_path']):
@@ -2474,7 +2481,7 @@ def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
 
 
 @_action(*ANY_PRJ_TYPE)
-def check_resources(ini_pdv: ProjectDevVars):                                               # pragma: no cover
+def check_resources(ini_pdv: ProjectDevVars):
     """ check if project has missing files or folders. """
     _check_resources(ini_pdv)
     cae.po(f"  === checked image, sound and other resources for {ini_pdv['project_title']}")
