@@ -58,8 +58,9 @@ from aedev.project_manager.__main__ import (
     _act_callable, _action, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
     _print_pdv, _renew_project, _show_status, _wait,
-    add_children_file, check_children_integrity, check_integrity, clone_children, clone_project, commit_children,
-    commit_project, delete_children_file, install_children_editable, install_editable,
+    add_children_file, check_children_integrity, check_files, check_integrity, check_resources,
+    clone_children, clone_project, commit_children, commit_project,
+    delete_children_file, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
     prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children,
     run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
@@ -343,6 +344,13 @@ class TestActionsLocal:
         assert cl[0]['exit_code'] == 46 if on_ci_host() else 44  # (44, tplsChk) (46, pytest-exec w/ CI_PROJECT_ID set)
         assert capsys.readouterr().out
 
+    def test_check_files(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
+        check_files(pdv_with_email(project_path=changed_repo_path))
+        assert capsys.readouterr().out
+
+        check_files(pdv_with_email(project_path=empty_repo_path))
+        assert capsys.readouterr().out
+
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_integrity(pdv_with_email(project_path=changed_repo_path))
         assert capsys.readouterr().out
@@ -372,6 +380,13 @@ class TestActionsLocal:
 
         assert len(calls) == 1
         assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (44, ) (46, )
+        assert capsys.readouterr().out
+
+    def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
+        check_resources(pdv_with_email(project_path=changed_repo_path))
+        assert capsys.readouterr().out
+
+        check_resources(pdv_with_email(project_path=empty_repo_path))
         assert capsys.readouterr().out
 
     def test_clone_children_of_ae_namespace(self, app_pjm):
