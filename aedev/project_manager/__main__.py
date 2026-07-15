@@ -76,7 +76,7 @@ from PIL import Image
 
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    PY_EXT, PY_INIT, UNSET, UnsetType,
+    PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     read_bin_file, read_file, url_failure, write_file)
@@ -275,6 +275,143 @@ def _check_children_to_clone(parent_root_sister_pdv: ProjectDevVars, *project_ow
     _check_children_not_exist(parent_root_sister_pdv, *prj_names)
 
 
+def _check_code_arg_excludes(pdv: ProjectDevVars) -> list[str]:
+    excludes = ['migrations' if pdv['project_type'] == DJANGO_PRJ else 'templates']
+    cae.dpo(f"    - excludes code argument: {ppp(excludes)}")
+    return excludes             # folder names to exclude from checks
+
+
+def _check_code_arg_line_len(pdv: ProjectDevVars) -> int:
+    return int(pdv['max_code_line_length'] or 120)
+
+
+def _check_code_arg_options() -> list[str]:
+    options = []
+    if debug_or_verbose(cae):
+        options.append("-v")
+        if cae.verbose:
+            options.append("-v")                                                            # pragma: no cover
+    cae.dpo(f"    - command line options: {ppp(options)}")
+    return options
+
+
+def _check_code_arg_paths(pdv: ProjectDevVars) -> list[str]:
+    namespace_name = pdv['namespace_name']
+    project_path = pdv['project_path']
+    project_packages = pdv.pdv_val('project_packages')
+    root_packages = [_ for _ in project_packages if '.' not in _]
+    path_args = [namespace_name] if namespace_name else root_packages if root_packages else [pdv['version_file']]
+
+    cae.vpo(f"    - project packages:      {ppp(project_packages)}")
+    cae.vpo(f"    - project root packages: {ppp(root_packages)}")
+    cae.dpo(f"    - checked files/paths:   {ppp(path_args)}")
+
+    valid_args = bool(path_args and path_args[0])
+    cae.chk(59, valid_args, f"{project_path=} does not contain any code files to check")
+
+    return path_args if valid_args else ["."]
+
+
+def _check_code_flake8(pdv: ProjectDevVars, path_args: tuple[str, ...]):
+    with in_prj_dir_venv(pdv['project_path']):
+        extra_args = [f"--max-line-length={_check_code_arg_line_len(pdv)}"] \
+            + ["--exclude=" + _ for _ in _check_code_arg_excludes(pdv)] \
+            + _check_code_arg_options() \
+            + (list(path_args) or _check_code_arg_paths(pdv))
+        sh_exit_if_exec_err(60, "flake8", extra_args=extra_args)
+
+    cae.po("  === flake8 linter checks done")
+
+
+def _check_code_mypy(pdv: ProjectDevVars, path_args: tuple[str, ...]):
+    with in_prj_dir_venv(pdv['project_path']):
+        os.makedirs("mypy_report", exist_ok=True)                   # sh_exit_if_exec_err(61, "mkdir -p ./mypy_report")
+        # added "/" and + "/" to excludes to exclude template folder but not files like e.g. ae/templates.py
+        extra_args = ["--exclude=/" + _exclude + "/" for _exclude in _check_code_arg_excludes(pdv)] \
+            + ["--lineprecision-report=mypy_report", "--pretty", "--show-absolute-path", "--show-error-codes",
+               "--show-error-context", "--show-column-numbers", "--warn-redundant-casts", "--warn-unused-ignores"] \
+            + (["--namespace-packages", "--explicit-package-bases"] if pdv['namespace_name'] else []) \
+            + _check_code_arg_options() \
+            + (list(path_args) or _check_code_arg_paths(pdv))
+        # refactor/extend to the --strict option/level, equivalent to the following:  ( [*] == already used )
+        # check-untyped-defs, disallow-any-generics, disallow-incomplete-defs, disallow-subclassing-any,
+        # disallow-untyped-calls, disallow-untyped-decorators, disallow-untyped-defs, no-implicit-optional,
+        # no-implicit-reexport, strict-equality, warn-redundant-casts [*], warn-return-any, warn-unused-configs,
+        # warn-unused-ignores [*], """
+        sh_exit_if_exec_err(61, "mypy", extra_args=extra_args)
+
+        Badge("MyPy", "passed").write_badge("mypy_report/mypy.svg", overwrite=True)
+
+    cae.po("  === mypy typing checks done")
+
+
+def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
+    with in_prj_dir_venv(pdv['project_path']):
+        os.makedirs(".pylint", exist_ok=True)
+        out: list[str] = []
+        # disabling false-positive pylint errors E0401(unable to import) and E0611(no name in module) caused by name
+        # clash for packages kivy and ae.kivy (see https://github.com/PyCQA/pylint/issues/5226 of user hmc-cs-mdrissi).
+        extra_args = [f"--max-line-length={_check_code_arg_line_len(pdv)}", "--output-format=text", "--recursive=y",
+                      "--disable=E0401,E0611"] \
+            + ["--ignore=" + _ for _ in _check_code_arg_excludes(pdv)] \
+            + _check_code_arg_options() \
+            + (list(path_args) or _check_code_arg_paths(pdv))
+        if pdv['project_type'] == DJANGO_PRJ:
+            extra_args.insert(0, "--load-plugins=pylint_django")
+        # alternatively to exit_on_err=False: using pylint option --exit-zero
+        sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False, lines_output=out)
+        matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
+        if get_app_option(pdv, 'more_verbose') and (not cae.debug or not matcher):
+            if not matcher:
+                cae.po(f"  ##  pylint {extra_args=} failed with:")
+            cae.po(ppp(out))
+        cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
+        if STDERR_BEG_MARKER in out:
+            out = out[:out.index(STDERR_BEG_MARKER)]
+        write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
+        score = matcher.group(1) if matcher else "<undetermined>"
+
+        badge = Badge("Pylint", score, thresholds={6: 'orange', 9: 'yellow', 10: 'green'}, default_color='red')
+        badge.write_badge(".pylint/pylint.svg", overwrite=True)
+
+    cae.po(f"  === pylint checks done; score={score}")
+
+
+def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
+    project_path = pdv['project_path']
+    project_type = pdv['project_type']
+    test_paths = path_args or _check_code_arg_paths(pdv)
+
+    with in_prj_dir_venv(project_path):
+        os.makedirs(".pytest_cache", exist_ok=True)
+        extra_args = [f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)] \
+            + [f"--cov={_}" for _ in test_paths or ["."]] \
+            + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"] \
+            + _check_code_arg_options() \
+            + [pdv['TESTS_FOLDER'] + "/"]
+        if not pdv['namespace_name'] or project_type != PACKAGE_PRJ:
+            # --doctest-glob="...*.py" does not work for .py files (only collectable via --doctest-modules).
+            # doctest fails on namespace packages even with --doctest-ignore-import-errors (modules are ok).
+            # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
+            # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
+            extra_args = ["--doctest-modules"] + extra_args + list(path_args)
+        if project_type == DJANGO_PRJ:
+            extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
+        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
+        try:
+            perc = json.loads(read_file(".pytest_cache/coverage.json"))['totals']['percent_covered_display']
+        except (FileNotFoundError, KeyError, ValueError, Exception) as ex:   # pylint: disable=broad-exception-caught
+            perc = f"<coverage percentage undetermined> {ex=}"
+        # pragma: no cover
+        badge = Badge("coverage", perc, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
+        badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
+        # anybadge alternativ: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
+        # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
+        # write_bin_file("coverage.svg", urlopen(cov_badge_url).read())
+
+    cae.po(f"  === pytest done; coverage: {perc}% - check coverage report in file:///{project_path}/htmlcov/index.html")
+
+
 def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                                 # pragma: no cover
     """ check images, message texts and sounds of the specified project. """
     local_images = FilesRegister(os_path_join(pdv['project_path'], "img", "**"))
@@ -430,100 +567,6 @@ def _check_resources(pdv: ProjectDevVars):                                      
         cae.po(f"  === {len(resources)} image/message-text/sound resources checks passed")
         if debug_or_verbose(cae):
             cae.po(ppp(str(_) for _ in resources)[1:])
-
-
-def _check_types_linting_tests(pdv: ProjectDevVars
-                               ):  # pylint: disable=too-many-locals,too-many-statements # pragma: no cover
-    mll = 120   # maximal length of code lines
-    namespace_name = pdv['namespace_name']
-    project_path = pdv['project_path']
-    project_type = pdv['project_type']
-    project_packages = pdv.pdv_val('project_packages')
-    root_packages = [_ for _ in project_packages if '.' not in _]
-
-    excludes = ['migrations' if project_type == DJANGO_PRJ else 'templates']    # folder names to exclude from checks
-    path_args = [namespace_name] if namespace_name else root_packages if root_packages else [pdv['version_file']]
-    if not path_args[0]:
-        cae.po(f"  ==# lint check skipped because {project_path=} does not contain any {PY_EXT} files")
-        return
-
-    options = []
-    if debug_or_verbose(cae):
-        options.append("-v")
-        if cae.verbose:
-            options.append("-v")                                                            # pragma: no cover
-        cae.dpo(f"    - project packages: {ppp(project_packages)}")
-        cae.dpo(f"    - project root packages: {ppp(root_packages)}")
-        cae.dpo(f"    - command line options: {ppp(options)}")
-        cae.dpo(f"    - command line arguments: {ppp(path_args)}")
-
-    with in_prj_dir_venv(project_path):
-        extra_args = [f"--max-line-length={mll}"] + ["--exclude=" + _ for _ in excludes] + options + path_args
-        sh_exit_if_exec_err(60, "flake8", extra_args=extra_args)
-
-        os.makedirs("mypy_report", exist_ok=True)                   # sh_exit_if_exec_err(61, "mkdir -p ./mypy_report")
-        extra_args = ["--exclude=/" + _ + "/" for _ in excludes] + [  # added / and +"/" to not exclude ae/templates.py
-            "--lineprecision-report=mypy_report", "--pretty", "--show-absolute-path", "--show-error-codes",
-            "--show-error-context", "--show-column-numbers", "--warn-redundant-casts", "--warn-unused-ignores"
-        ] + (["--namespace-packages", "--explicit-package-bases"] if namespace_name else []) + options + path_args
-        # refactor/extend to the --strict option/level, equivalent to the following:  ( [*] == already used )
-        # check-untyped-defs, disallow-any-generics, disallow-incomplete-defs, disallow-subclassing-any,
-        # disallow-untyped-calls, disallow-untyped-decorators, disallow-untyped-defs, no-implicit-optional,
-        # no-implicit-reexport, strict-equality, warn-redundant-casts [*], warn-return-any, warn-unused-configs,
-        # warn-unused-ignores [*], """
-        sh_exit_if_exec_err(61, "mypy", extra_args=extra_args)
-        Badge("MyPy", "passed").write_badge("mypy_report/mypy.svg", overwrite=True)
-
-        os.makedirs(".pylint", exist_ok=True)
-        out: list[str] = []
-        # disabling false-positive pylint errors E0401(unable to import) and E0611(no name in module) caused by name
-        # clash for packages kivy and ae.kivy (see https://github.com/PyCQA/pylint/issues/5226 of user hmc-cs-mdrissi).
-        extra_args = [f"--max-line-length={mll}", "--output-format=text", "--recursive=y", "--disable=E0401,E0611"] \
-            + ["--ignore=" + _ for _ in excludes] + options + path_args
-        if project_type == DJANGO_PRJ:
-            extra_args.insert(0, "--load-plugins=pylint_django")
-        # alternatively to exit_on_err=False: using pylint option --exit-zero
-        sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False, lines_output=out)
-        matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
-        if get_app_option(pdv, 'more_verbose') and (not cae.debug or not matcher):
-            if not matcher:
-                cae.po(f"  ##  pylint {extra_args=} failed with:")
-            cae.po(ppp(out))
-        cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
-        if STDERR_BEG_MARKER in out:
-            out = out[:out.index(STDERR_BEG_MARKER)]
-        write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
-        score = matcher.group(1) if matcher else "<undetermined>"
-        badge = Badge("Pylint", score, thresholds={6: 'orange', 9: 'yellow', 10: 'green'}, default_color='red')
-        badge.write_badge(".pylint/pylint.svg", overwrite=True)
-        cae.po(f"  === pylint score: {score}")
-
-        os.makedirs(".pytest_cache", exist_ok=True)
-        extra_args = [f"--ignore-glob=**/{_}/*" for _ in excludes] \
-            + [f"--cov={_}" for _ in namespace_name and [namespace_name] or root_packages or ["."]] \
-            + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"] \
-            + options \
-            + [pdv['TESTS_FOLDER'] + "/"]
-        if not namespace_name or project_type != PACKAGE_PRJ:
-            # --doctest-glob="...*.py" does not work for .py files (only collectable via --doctest-modules).
-            # doctest fails on namespace packages even with --doctest-ignore-import-errors (modules are ok).
-            # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
-            # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
-            extra_args = ["--doctest-modules"] + extra_args + path_args
-        if project_type == DJANGO_PRJ:
-            extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
-        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
-        try:
-            perc = json.loads(read_file(".pytest_cache/coverage.json"))['totals']['percent_covered_display']
-        except (FileNotFoundError, KeyError, ValueError, Exception) as ex:   # pylint: disable=broad-exception-caught
-            perc = f"<coverage percentage undetermined> {ex=}"
-        # pragma: no cover
-        badge = Badge("coverage", perc, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
-        badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
-        # anybadge alternativ: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
-        # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
-        # write_bin_file("coverage.svg", urlopen(cov_badge_url).read())
-        cae.po(f"  === pytest coverage: {perc}% - check coverage report in file:///{project_path}/htmlcov/index.html")
 
 
 def _check_version(version_number: str, prefix_to_check: str = "") -> str:                  # pragma: no cover
@@ -2425,16 +2468,31 @@ def check_files(ini_pdv: ProjectDevVars):
     cae.po(f" ==== run project files/folders completeness for {ini_pdv['project_title']}")
 
 
-@_action(*ANY_PRJ_TYPE, shortcut='check')
-def check_integrity(ini_pdv: ProjectDevVars):
+@_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='flake8')
+def check_flake8(ini_pdv: ProjectDevVars, *path_args: str):         # pragma: no cover
+    """ flake8 linting checks of all the code files of the specified project. """
+    _check_code_flake8(ini_pdv, path_args)
+
+    cae.po(f" ==== run `flake8 {' '.join(path_args)}` linting checks for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='check')
+def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     """ CI integrity check/tests of files/folders completeness and managed/templates/resources files update-state. """
     check_folders_files_completeness(cae, ini_pdv)
-    if not on_ci_host():                                                                    # pragma: no cover
+
+    if not on_ci_host():                                            # pragma: no cover
         with in_prj_dir_venv(ini_pdv['project_path']):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
-    _check_resources(ini_pdv)                                                               # pragma: no cover
-    _check_types_linting_tests(ini_pdv)                                                     # pragma: no cover
-    cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")                    # pragma: no cover
+
+    _check_resources(ini_pdv)
+
+    _check_code_flake8(ini_pdv, path_args)
+    _check_code_mypy(ini_pdv, path_args)
+    _check_code_pylint(ini_pdv, path_args)
+    _check_code_pytest(ini_pdv, path_args)
+
+    cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")
 
 
 @_action(*ANY_PRJ_TYPE)
@@ -2450,6 +2508,30 @@ def check_missing(ini_pdv: ProjectDevVars):                                     
     """ check if project has missing files or folders. """
     check_folders_files_completeness(cae, ini_pdv)
     cae.po(f"  === checked missing file or folders for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='mypy')
+def check_mypy(ini_pdv: ProjectDevVars, *path_args: str):           # pragma: no cover
+    """ check mypy typing of all the code files of the specified project. """
+    _check_code_mypy(ini_pdv, path_args)
+
+    cae.po(f" ==== run `mypy {' '.join(path_args)}` typing checks for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='pylint')
+def check_pylint(ini_pdv: ProjectDevVars, *path_args: str):         # pragma: no cover
+    """ check pylint linting of all the code files of the specified project. """
+    _check_code_pylint(ini_pdv, path_args)
+
+    cae.po(f" ==== run `pylint {' '.join(path_args)}` linting checks for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='pytest')
+def check_pytest(ini_pdv: ProjectDevVars, *path_args: str):         # pragma: no cover
+    """ run pytest unit/integration tests of all the code files of the specified project. """
+    _check_code_pytest(ini_pdv, path_args)
+    cae.po(f" ==== run `pytest {' '.join(path_args)}` unit"
+           f"{'' if os.getenv('RUN_INTEGRATION_TESTS') else ' and integration'} tests for {ini_pdv['project_title']}")
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='reqs')

@@ -764,7 +764,7 @@ class TestHelpers:
         assert len(reg_tpls) == len(CACHED_TPL_PROJECTS) + 3    # added aedev.aedev root, module and aedev.project_tpls
 
     def test_register_template_aedev_root(self, cleanup_caches, cons_app):
-        nsn = "aedev"
+        nsn = 'aedev'
         tpl_imp_name = nsn + "." + nsn
         pkg_name = norm_name(tpl_imp_name)
         tpl_path = os_path_join(pkg_name, nsn, nsn, TEMPLATES_FOLDER)
@@ -796,7 +796,7 @@ class TestHelpers:
 
     @skip_gitlab_ci
     def test_register_template_aedev_root_local(self, cleanup_caches):
-        nsn = "aedev"
+        nsn = 'aedev'
         tpl_imp_name = nsn + "." + nsn
         pkg_name = norm_name(tpl_imp_name)
         pkg_path = "../" + pkg_name
@@ -828,7 +828,7 @@ class TestHelpers:
         assert version in reg_tpls[tpl_imp_name + PROJECT_VERSION_SEP + version]['register_message']
 
     def test_register_template_aedev_root_version(self, cleanup_caches, cons_app):
-        nsn = "aedev"
+        nsn = 'aedev'
         version = "0.3.24"
         tpl_imp_name = nsn + "." + nsn
         pkg_name = norm_name(tpl_imp_name)

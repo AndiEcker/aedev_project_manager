@@ -1,7 +1,7 @@
 """ unit and integration tests for the aedev.project_manager.__main__ portion.
 
 to run integration tests (~40 minutes), implemented in this test module:
-* set the variable INTEGRATION_TESTS, declared at the top of this module, to True
+* set the OS env variable os.getenv('RUN_INTEGRATION_TESTS') to a non-empty value.
 * request a maintainer and contributor account in the test project group https://gitlab.com/aetst-group
 * put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
 * put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
@@ -330,7 +330,9 @@ class TestActionsLocal:
         assert REFRESHABLE_TEMPLATE_MARKER in read_file(tpl_dst_path)
 
     def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path,
-                                      mocked_app_options, module_repo_path, patched_shutdown_wrapper):
+                                      mocked_app_options, module_repo_path):
+        mocked_app_options['force'] = 12
+
         par_pdv = pdv_with_email(project_path=os_path_dirname(changed_repo_path))
 
         check_children_integrity(par_pdv, pdv_with_email(project_path=changed_repo_path))
@@ -339,10 +341,8 @@ class TestActionsLocal:
         check_children_integrity(par_pdv, pdv_with_email(project_path=empty_repo_path))
         assert " ==== " in capsys.readouterr().out
 
-        cl = patched_shutdown_wrapper(check_children_integrity, par_pdv, pdv_with_email(project_path=module_repo_path))
-        assert len(cl) == 1
-        assert cl[0]['exit_code'] == 46 if on_ci_host() else 44  # (44, tplsChk) (46, pytest-exec w/ CI_PROJECT_ID set)
-        assert capsys.readouterr().out
+        check_children_integrity(par_pdv, pdv_with_email(project_path=module_repo_path))
+        assert " ==== " in capsys.readouterr().out
 
     def test_check_files(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_files(pdv_with_email(project_path=changed_repo_path))
@@ -351,17 +351,33 @@ class TestActionsLocal:
         check_files(pdv_with_email(project_path=empty_repo_path))
         assert capsys.readouterr().out
 
-    def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
-        check_integrity(pdv_with_email(project_path=changed_repo_path))
+    def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, mocked_app_options):
+        mocked_app_options['force'] = 6
+
+        check_integrity(pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
         assert capsys.readouterr().out
 
-        check_integrity(pdv_with_email(project_path=empty_repo_path))
+        write_file(os_path_join(empty_repo_path, 'manage.py'), "# any content")   # fake DJANGO_PRJ
+        check_integrity(pdv_with_email(project_path=empty_repo_path), 'manage.py')
         assert capsys.readouterr().out
 
-    def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path, mocked_app_options):
+    def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
+                                               mocked_app_options, patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = True
 
-        check_integrity(pdv_with_email(project_path=changed_repo_path))
+        cl = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
+        assert len(cl) == 1
+        assert cl[0]['exit_code']
+        print(cl[0]['exit_code'])
+        # assert cl[0]['exit_code'] == 46 if on_ci_host() else 44     # (44, tplsChk) (46, pytest w/ CI_PROJECT_ID set)
+        assert cl[0]['exit_code'] == 60     # (60, early fail in flake8 w/ "W292 no newline at end of file")
+        output = capsys.readouterr().out
+        assert 'W292' in output
+
+        mocked_app_options['force'] = 6
+        write_file(os_path_join(changed_repo_path, 'manage.py'), "# valid empty code file content\n")
+
+        check_integrity(pdv_with_email(project_path=changed_repo_path), 'manage.y')
         assert capsys.readouterr().out
 
     def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,

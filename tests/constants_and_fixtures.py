@@ -11,7 +11,7 @@ import pytest
 from ae.base import (
     DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT,
     os_path_basename, os_path_isfile, os_path_join, read_file, write_file)
-from ae.system import load_env_var_defaults 
+from ae.system import load_env_var_defaults
 from ae.core import DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE, main_app_instance
 from ae.console import ConsoleApp
 
@@ -162,7 +162,7 @@ def changed_repo_path():
     """ provide a git repository with uncommitted changes, yielding the project's temporary working tree root path. """
     with _init_repo(tst_ns_name + '_' + tst_ns_por_pfx + 'changed') as project_path:
         with in_prj_dir_venv(project_path):
-            write_file(os_path_join(project_path, 'deleteD.x'), "--will be deleted")
+            write_file(os_path_join(project_path, 'deleteD.x'), "# will be deleted")
             write_file(os_path_join(project_path, 'ChangeD.y'), "# will be changed")
             sh_exit_if_git_err(969, "git add", extra_args=["-A"], exit_on_err=False)
             sh_exit_if_git_err(969, "git commit", extra_args=["-m", "git commit message"], exit_on_err=False)
