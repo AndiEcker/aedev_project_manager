@@ -194,7 +194,7 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
     :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
                                 and synced from templates. e.g. to retrieve a set of the destination project file paths
                                 that would be created/updated use set(<this return value>.deploy_files.keys()).
-                                ``None`` will be returned if no project type gets specified by the argument
+                                ``None`` will be returned if no project type gets specified via the argument
                                 :paramref:`~check_templates.pdv`.
 
     .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
@@ -203,6 +203,7 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
 
     project_type = pdv['project_type']
     if project_type == NO_PRJ:
+        cae.dpo(f"    # no or unknown project type at path {pdv['project_path']}")
         return None
 
     pdv['pypi_versions'] = get_pypi_versions(pdv['pip_name'],

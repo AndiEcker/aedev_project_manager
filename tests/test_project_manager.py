@@ -57,7 +57,7 @@ from aedev.project_manager.__main__ import (
     GitlabCom,
     _act_callable, _action, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
-    _print_pdv, _renew_project, _show_status, _wait,
+    _print_pdv, _refresh_project, _renew_project, _show_status, _wait,
     add_children_file, check_children_integrity, check_files, check_integrity, check_resources,
     clone_children, clone_project, commit_children, commit_project,
     delete_children_file, install_children_editable, install_editable,
@@ -726,12 +726,12 @@ class TestActionsLocal:
     def test_refresh_children_managed(self, module_repo_path):
         par_pdv = pdv_with_email(projecT_path=os_path_dirname(module_repo_path))
         chi_pdv = pdv_with_email(project_path=module_repo_path)
-        tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
-        assert not os_path_isdir(tst_dir)
+        tests_dir = os_path_join(module_repo_path, TESTS_FOLDER)
+        assert not os_path_isdir(tests_dir)
 
         refresh_children_managed(par_pdv, chi_pdv)
 
-        assert os_path_isdir(tst_dir)
+        assert os_path_isdir(tests_dir)
 
     def test_rename_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
@@ -1192,6 +1192,9 @@ class TestHelpersLocal:
     def test_print_pdv(self, app_pjm):
         _print_pdv(pdv_with_email(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
         # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
+
+    def test_refresh_project(self, app_pjm, empty_repo_path):
+        assert _refresh_project(ProjectDevVars(**{'project_path': empty_repo_path})) == []  # no updates because NO_PRJ
 
     def test_renew_project_exits_on_erroneous_pdv_value(self, app_pjm, empty_repo_path, mocked_app_options,
                                                         patched_shutdown_wrapper):
