@@ -1,4 +1,4 @@
-aedev_project_tpls==0.3.81
+aedev_project_tpls==0.3.82
 aedev_aedev==0.3.33
 ## The following requirements were added by pip freeze:
 ae-parse-date==0.3.5
@@ -26,9 +26,10 @@ certifi==2026.6.17
 cffi==2.0.0
 charset-normalizer==3.4.7
 click==8.4.1
-coverage==7.15.1
+coverage==7.15.2
 cryptography==49.0.0
 dill==0.4.1
+filelock==3.30.0
 flake8==7.3.0
 idna==3.18
 iniconfig==2.3.0
@@ -40,7 +41,7 @@ mypy_extensions==1.1.0
 packaging==26.2
 pathspec==1.1.1
 pillow==12.3.0
-pipx==1.15.0
+pipx==1.16.0
 platformdirs==4.10.0
 pluggy==1.6.0
 pyasn1==0.6.4
@@ -63,7 +64,7 @@ setuptools==83.0.0
 tomlkit==0.15.0
 types-Pillow==10.2.0.20240822
 types-requests==2.33.0.20260712
-types-setuptools==83.0.0.20260706
+types-setuptools==83.0.0.20260716
 typing==3.7.4.3
 typing_extensions==4.16.0
 urllib3==2.7.0

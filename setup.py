@@ -1,15 +1,14 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.81
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.82
 """ setup of aedev namespace package portion project_manager: maintain Python projects locally and remotely. """
-import sys
-# noinspection PyUnresolvedReferences
 import pathlib
-# noinspection PyUnresolvedReferences
+import sys
+from typing import Any
 import setuptools
 
 
 print("SetUp " + __name__ + ": " + sys.executable + str(sys.argv) + f" {sys.path=}")
 
-setup_kwargs = {
+setup_kwargs: dict[str, Any] = {
     'author': 'AndiEcker',
     'author_email': 'aecker2@gmail.com',
     'classifiers': [
@@ -31,7 +30,7 @@ setup_kwargs = {
     },
     'extras_require': {
         'dev': [
-            'aedev_project_tpls==0.3.81',
+            'aedev_project_tpls==0.3.82',
             'aedev_aedev==0.3.33',
             'ae-parse-date==0.3.5',
             'ae_app_log==0.3.3',
@@ -58,9 +57,10 @@ setup_kwargs = {
             'cffi==2.0.0',
             'charset-normalizer==3.4.7',
             'click==8.4.1',
-            'coverage==7.15.1',
+            'coverage==7.15.2',
             'cryptography==49.0.0',
             'dill==0.4.1',
+            'filelock==3.30.0',
             'flake8==7.3.0',
             'idna==3.18',
             'iniconfig==2.3.0',
@@ -72,7 +72,7 @@ setup_kwargs = {
             'packaging==26.2',
             'pathspec==1.1.1',
             'pillow==12.3.0',
-            'pipx==1.15.0',
+            'pipx==1.16.0',
             'platformdirs==4.10.0',
             'pluggy==1.6.0',
             'pyasn1==0.6.4',
@@ -95,7 +95,7 @@ setup_kwargs = {
             'tomlkit==0.15.0',
             'types-Pillow==10.2.0.20240822',
             'types-requests==2.33.0.20260712',
-            'types-setuptools==83.0.0.20260706',
+            'types-setuptools==83.0.0.20260716',
             'typing==3.7.4.3',
             'typing_extensions==4.16.0',
             'urllib3==2.7.0',
@@ -107,7 +107,7 @@ setup_kwargs = {
             'pytest==9.1.1',
             'pytest-cov==7.1.0',
             'typing==3.7.4.3',
-            'types-setuptools==83.0.0.20260706',
+            'types-setuptools==83.0.0.20260716',
         ],
         'docs': [],
         'tests': [
@@ -118,12 +118,12 @@ setup_kwargs = {
             'pytest==9.1.1',
             'pytest-cov==7.1.0',
             'typing==3.7.4.3',
-            'types-setuptools==83.0.0.20260706',
+            'types-setuptools==83.0.0.20260716',
         ],
     },
     'install_requires': [
         'anybadge==1.16.0',
-        'coverage==7.15.1',
+        'coverage==7.15.2',
         'flake8==7.3.0',
         'mypy==2.3.0',
         'packaging==26.2',
@@ -174,10 +174,10 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.31',
+    'version': '0.3.32',
     'zip_safe': True,
 }
 
 if __name__ == "__main__":
     setuptools.setup(**setup_kwargs)
-    pass
+    ...

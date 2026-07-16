@@ -878,6 +878,26 @@ def _refresh_pdv(pdv: ProjectDevVars, **pdv_kwargs):
     pdv.update(_get_pdv(**pdv_kwargs))
 
 
+def _refresh_project(pdv: ProjectDevVars) -> list[str]:
+    project_path = pdv['project_path']
+    dst_files: set[str] = set()
+    for refresh_pass in range(2):   # needed to update e.g. setup.py after *requirements*.txt get updated from templates
+        errors = update_frozen_req_files(pdv)  # check|update frozen *requirements.txt and refresh pdv
+        cae.chk(16, not errors, f"requirements_frozen update errors in {project_path=}/{refresh_pass=}: {ppp(errors)}")
+
+        with in_prj_dir_venv(project_path):
+            man = check_templates(cae, pdv)
+            if not man:
+                return []
+            man.deploy()
+
+        dst_files.update(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
+
+        _refresh_pdv(pdv)
+
+    return list(dst_files)
+
+
 def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars:
     project_path = ini_pdv['project_path']
 
@@ -918,18 +938,10 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
     # refresh ini_pdv (project_version and related project dev variables like project_title)
     _refresh_pdv(ini_pdv, remote_urls=remote_urls)
 
-    errors = update_frozen_req_files(ini_pdv)  # check|update **/*requirements_frozen.txt files
-    cae.chk(15, not bool(errors), f"frozen requirements files update errors:{ppp(errors)}")
-
-    with in_prj_dir_venv(project_path):
-        man = check_templates(cae, ini_pdv)
-        if not man:
-            return ini_pdv                                                                  # pragma: no cover
-        man.deploy()
-
-    dst_files = set(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
-    dbg_msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose(cae) else ""
-    cae.po(f" ---- renewed {len(dst_files)} managed files{dbg_msg}")
+    dst_files = _refresh_project(ini_pdv)
+    if dst_files:
+        _msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose(cae) else ""
+        cae.po(f" ---- renewed {len(dst_files)} managed files{_msg}")
 
     git_init_add(ini_pdv)
     git_renew_remotes(project_path, git_push_url(ini_pdv, remote_urls=remote_urls), upstream_url=ini_pdv['repo_url'],
@@ -940,7 +952,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
     if ini_pdv['namespace_name'] and project_type != ROOT_PRJ:     # is namespace portion
         _renew_local_root_req_file(ini_pdv)
 
-    cae.po(f" ==== successfully {action} {ini_pdv['project_title']}")
+    cae.po(f" ==== {action} {ini_pdv['project_title']}")
 
     return ini_pdv
 
@@ -1418,7 +1430,7 @@ class GithubCom(RemoteHost):                                                    
         owner_project = owner_project_from_url(ini_pdv.pdv_val('remote_urls')[ini_pdv['REMOTE_ORIGIN']])
 
         changed = git_uncommitted(project_path)
-        cae.chk(16, not changed, f"{project_name} has {len(changed)} uncommitted files: {changed}")
+        cae.chk(17, not changed, f"{project_name} has {len(changed)} uncommitted files: {changed}")
 
         new_repo = False
         push_refs = []
@@ -2515,7 +2527,7 @@ def check_mypy(ini_pdv: ProjectDevVars, *path_args: str):           # pragma: no
     """ check mypy typing of all the code files of the specified project. """
     _check_code_mypy(ini_pdv, path_args)
 
-    cae.po(f" ==== run `mypy {' '.join(path_args)}` typing checks for {ini_pdv['project_title']}")
+    cae.po(f" ==== run `mypy {' '.join(path_args) or '[<path_args>]'}` typing checks for {ini_pdv['project_title']}")
 
 
 @_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='pylint')
@@ -2826,18 +2838,13 @@ def refresh_children_managed(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevV
 def refresh_project(ini_pdv: ProjectDevVars):                                               # pragma: no cover
     """ refresh/renew all the *requirements_frozen.txt files and all the managed files of the specified project. """
     project_path = ini_pdv['project_path']
+    dst_files = _refresh_project(ini_pdv)
+    if dst_files:
+        dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose() else ""
+    else:
+        dst_files = []
+        dbg_msg = f"; could not detect project type at {project_path=}" if debug_or_verbose() else ""
 
-    errors = update_frozen_req_files(ini_pdv)  # check|update frozen *requirements.txt
-    cae.chk(41, not errors, f"frozen requirements files update errors:{ppp(errors)}")
-
-    with in_prj_dir_venv(project_path):
-        man = check_templates(cae, ini_pdv)
-        if not man:
-            return
-        man.deploy()
-
-    dst_files = list(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date)
-    dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose() else ""
     cae.po(f" ==== refreshed *_frozen.txt and {len(dst_files)} managed files of {ini_pdv['project_title']}{dbg_msg}")
 
 

@@ -1,6 +1,6 @@
 # aedev-project-manager requirements
 anybadge==1.16.0
-coverage==7.15.1
+coverage==7.15.2
 flake8==7.3.0
 mypy==2.3.0
 packaging==26.2
