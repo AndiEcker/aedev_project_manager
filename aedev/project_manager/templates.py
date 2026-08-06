@@ -46,7 +46,7 @@ MOVE_INTO_PACKAGE_PATH_PFX = 'MovPkg-'
 SKIP_FOR_PORTIONS_PATH_PFX = 'SkpPor-'
 """ template file/path prefix to skip deployment of templates to a namespace portion. """
 SKIP_PRJ_TYPE_PATH_PFX = 'SkpTyp-'
-""" template file name prefix followed by a project type id arg (see *_PRJ constants). file creation/update from
+""" template file name prefix followed by a project type id arg (see `*_PRJ` constants). file creation/update from
 template will be skipped if it the project type id in the template file name matches the destination project type.
 """
 
@@ -73,7 +73,7 @@ def _get_and_log_project_templates(cae: ConsoleApp, pdv: ProjectDevVars) -> Temp
     if 'project_templates' not in pdv:
         project_tpls = pdv['project_templates'] = project_templates(
             project_type, namespace_name, _get_app_tpl_options(cae, pdv), CACHED_TPL_PROJECTS,
-            dev_requires if add_dev_req else tuple(dev_requires), version_tag_prefix=pdv['VERSION_TAG_PREFIX'])
+            dev_requires if add_dev_req else tuple(dev_requires), version_tag_prefix=pdv['GIT_VERSION_TAG_PREFIX'])
         for tpl_prj in project_tpls:
             cae.dpo(tpl_prj['register_message'])
     else:
@@ -211,7 +211,7 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
 
     prj_tpls = _get_and_log_project_templates(cae, pdv)
     tpl_cnt = len(prj_tpls)
-    tpl_files = _get_template_files(prj_tpls, pdv['VERSION_TAG_PREFIX'])
+    tpl_files = _get_template_files(prj_tpls, pdv['GIT_VERSION_TAG_PREFIX'])
     tpl_vars = _get_template_vars(pdv)
 
     man = TemplateMngr(tpl_files, PATH_PREFIXES_PARSERS, tpl_vars)
@@ -293,7 +293,7 @@ def project_templates(project_type: str, namespace_name: str,
                       ) -> TemplateProjectsType:
     """ get template packages (optionally clone and register) of a project with the specified project type&namespace.
 
-    :param project_type:        type of the project (declared as *_PRJ constants in :mod:`aedev.base`).
+    :param project_type:        type of the project (declared as `*_PRJ` constants in :mod:`aedev.base`).
     :param namespace_name:      name of the namespace if the project is a portion, else an empty string.
     :param requested_options:   dict with explicitly requested template packages via their version or their local path.
                                 if not specified for a template package then the version specified by the

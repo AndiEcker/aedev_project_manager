@@ -186,7 +186,7 @@ def get_app_option(pdv: ProjectDevVars, option_name: str) -> Any | None:
 
     :param pdv:                 project dev variables.
     :param option_name:         name of the command line option to determine.
-    :return:                    command line option value or None if not found.
+    :return:                    command line option value or `None` if not found.
     """
     if 'main_app_options' in pdv:
         options = pdv.pdv_val('main_app_options')
@@ -233,7 +233,7 @@ def get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str 
                                 got specified then the search for a host-specific variable will be skipped.
     :param host_user:           username at the host. if not passed or :paramref:`~get_host_config_val.host_domain` is
                                 empty, then skip the search for a user-specific variable value.
-    :return:                    config variable value or None if not found.
+    :return:                    config variable value or `None` if not found.
     """
     project_path = pdv['project_path']
     val = get_app_option(pdv, option_name)
@@ -609,7 +609,7 @@ def ppp(output: Iterable[str]) -> str:
     :param output:              output iterable to format for pretty printing.
     :return:                    pretty printing formatted string.
     """
-    sep = (os.linesep + "      ") if output else ""
+    sep = os.linesep + "      " if output else ""
     return sep + sep.join(str(_) for _ in (output.items() if isinstance(output, dict) else output))
 
 
@@ -696,6 +696,15 @@ def renew_project_dir(pdv: ProjectDevVars):     # pylint: disable=too-many-branc
             patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}")
 
 
+def stripped_pip_name(project_name_version: str) -> str:
+    """ convert PyPI project/distribution/package into a normalized pip name.
+
+    :param project_name_version: PyPI project/distribution/package with an optional version string.
+    :return:                    stripped and normalized pip name of the specified PyPI project/distribution/package.
+    """
+    return norm_pip_name(project_name_version.split(PROJECT_VERSION_SEP)[0])
+
+
 def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packages: bool = False,
                            integrate_pip_errors: bool = False) -> list[str]:
     """ update frozen requirements file
@@ -756,18 +765,12 @@ def update_frozen_req_files(pdv: ProjectDevVars) -> list[str]:
     :param pdv:                 project dev variables of the project to update.
     :return:                    list of errors or an empty list.
     """
-    req_file_name = pdv['REQ_FILE_NAME']
-    req_file_paths = (
-        req_file_name,
-        pdv['REQ_DEV_FILE_NAME'],
-        os_path_join(pdv['DOCS_FOLDER'], req_file_name),
-        os_path_join(pdv['TESTS_FOLDER'], req_file_name),
-    )
+    req_file_paths = pdv.pdv_val('REQ_FILE_PATHS')
+    dev_req_file_path = pdv['REQ_DEV_FILE_NAME']
+    pip_name = pdv['pip_name']
 
     errors = []
     with in_prj_dir_venv(pdv['project_path']):
-        pip_name = pdv['pip_name']
-        dev_req_file_path = pdv['REQ_DEV_FILE_NAME']
         for req_file_path in req_file_paths:
             errors += update_frozen_req_file(pip_name, req_file_path, all_packages=req_file_path == dev_req_file_path)
 
@@ -789,5 +792,5 @@ def write_commit_message(pdv: ProjectDevVars, pkg_version: str = "{project_versi
     file_name = os_path_join(project_path, pdv['COMMIT_MSG_FILE_NAME'])
     if not title:
         title = git_current_branch(project_path).replace("_", " ")
-    write_file(file_name, f"{pdv['VERSION_TAG_PREFIX']}{pkg_version}: {title}{sep}{sep}"
+    write_file(file_name, f"{pdv['GIT_VERSION_TAG_PREFIX']}{pkg_version}: {title}{sep}{sep}"
                           f"{sep.join(git_status(project_path))}{sep}")
