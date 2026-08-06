@@ -50,11 +50,12 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Container
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from functools import partial, wraps
 from traceback import format_exc
 from typing import TYPE_CHECKING, Any, cast
@@ -80,7 +81,7 @@ from ae.base import (                                                       # ty
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     read_bin_file, read_file, url_failure, write_file)
-from ae.system import full_stack_trace, module_attr, norm_pip_name, stack_var                           # type: ignore
+from ae.system import full_stack_trace, module_attr, stack_var                                          # type: ignore
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
     copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files)
@@ -90,27 +91,26 @@ from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_P
 from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                                          # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.shell import (                                                                                  # type: ignore
-    STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, sh_exit_if_exec_err)
+    STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, sh_exec, sh_exit_if_exec_err)
 from ae.managed_files import deploy_template                                                            # type: ignore
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
     ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PIP_CMD, PIP_INSTALL_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER,
+    PIP_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER,
     code_version, get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME,
-    bytes_file_diff, check_commit_msg_file,
+    active_venv, bytes_file_diff, check_commit_msg_file,
     git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    in_prj_dir_venv, owner_project_from_url, sh_exit_if_git_err, sh_log, sh_logs)
+    in_prj_dir_venv, owner_project_from_url, pip_install, sh_exit_if_git_err, sh_log, sh_logs)
 from aedev.project_vars import (                                                                        # type: ignore
     PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ,
     ChildrenType,
     increment_version, latest_remote_version, project_owner_name_version,
     replace_file_version, root_packages_masks, skip_files_lean_web,
     ProjectDevVars)
-
 
 from aedev.project_manager.codeberg import ensure_repo, set_main_branch
 from aedev.project_manager.templates import (
@@ -123,11 +123,13 @@ from aedev.project_manager.utils import (
     check_folders_files_completeness, children_desc, children_project_names, expected_args, get_app_option, get_branch,
     get_host_class_name, get_host_domain, get_host_group, get_host_user_name, get_host_user_token, get_mirror_urls,
     git_init_add, git_push_url, guess_next_action, import_dependencies, installed_packages, missing_imports,
-    missing_requirements, ppp, project_topics, renew_project_dir, update_frozen_req_files, write_commit_message)
-
+    missing_requirements, ppp, project_topics, renew_project_dir, stripped_pip_name, update_frozen_req_files,
+    write_commit_message)
 
 # pylint: disable-next=invalid-name
 cae = cast(ConsoleApp, cast(object, None))    #: main app instance of this pjm tool, initialized by :func:`init_main`
+
+action_forces = 0               # pylint: disable=invalid-name
 
 
 def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Callable], Callable]:
@@ -145,8 +147,8 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
             deco_kwargs['arg_names'] = ARGS_CHILDREN_DEFAULT
 
         sep = os.linesep
-        doc_str = sep.join(_ for _ in fun.__doc__.split(sep)
-                           if ':param ini_pdv:' not in _ and ':return:' not in _ and _.strip())
+        doc_str = sep.join(_ for _ in fun.__doc__.split(':return:')[0].split(sep)
+                           if ':param ini_pdv:' not in _ and _.strip())
 
         # noinspection PyUnresolvedReferences
         full_name = (method_of + "." if method_of else "") + fun.__name__
@@ -164,6 +166,15 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
 
 def _act_callable(host_api: RemoteHost | None, act_name: str) -> Callable | None:
     return globals().get(act_name) or getattr(host_api, act_name, None)
+
+
+def _act_force_opt(pdv: ProjectDevVars) -> bool:
+    """ determine if the --force option is set and count the number of usages in actions (not to skip error quits). """
+    global action_forces        # pylint: disable=global-statement
+    force = bool(get_app_option(pdv, 'force'))
+    if force:
+        action_forces += 1
+    return force
 
 
 def _act_help_print(spec: ActionSpec, indent: int = 9):
@@ -234,12 +245,12 @@ def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:                     
     cae.chk(75, bool(try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, ))),
             f"local project version '{local_ver}' has invalid format not conform to PEP 440")
 
-    if git_tag_list(project_path, tag_pattern=pdv['VERSION_TAG_PREFIX'] + "*"):  # not the first/initial project version
+    if git_tag_list(project_path, tag_pattern=pdv['GIT_VERSION_TAG_PREFIX'] + "*"):  # not the 1st/init. project version
         next_version = latest_remote_version(pdv, increment_part=increment_part)
         version_match = _check_version(next_version) == _check_version(local_ver)
         cae.chk(77, version_match, f"version mismatch: local={local_ver} next-remote={next_version}")
 
-    tag = pdv['VERSION_TAG_PREFIX'] + local_ver
+    tag = pdv['GIT_VERSION_TAG_PREFIX'] + local_ver
     errors = git_tag_add(project_path, tag, commit_msg_file=pdv['COMMIT_MSG_FILE_NAME'])
     cae.chk(79, not bool(errors), f"error in adding the git {tag=}:{ppp(errors)}")
 
@@ -281,10 +292,6 @@ def _check_code_arg_excludes(pdv: ProjectDevVars) -> list[str]:
     return excludes             # folder names to exclude from checks
 
 
-def _check_code_arg_line_len(pdv: ProjectDevVars) -> int:
-    return int(pdv['max_code_line_length'] or 120)
-
-
 def _check_code_arg_options() -> list[str]:
     options = []
     if debug_or_verbose(cae):
@@ -314,7 +321,7 @@ def _check_code_arg_paths(pdv: ProjectDevVars) -> list[str]:
 
 def _check_code_flake8(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     with in_prj_dir_venv(pdv['project_path']):
-        extra_args = [f"--max-line-length={_check_code_arg_line_len(pdv)}"] \
+        extra_args = [f"--max-line-length={pdv.pdv_val('CODE_LINE_LENGTH')}"] \
             + ["--exclude=" + _ for _ in _check_code_arg_excludes(pdv)] \
             + _check_code_arg_options() \
             + (list(path_args) or _check_code_arg_paths(pdv))
@@ -351,7 +358,7 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
         out: list[str] = []
         # disabling false-positive pylint errors E0401(unable to import) and E0611(no name in module) caused by name
         # clash for packages kivy and ae.kivy (see https://github.com/PyCQA/pylint/issues/5226 of user hmc-cs-mdrissi).
-        extra_args = [f"--max-line-length={_check_code_arg_line_len(pdv)}", "--output-format=text", "--recursive=y",
+        extra_args = [f"--max-line-length={pdv.pdv_val('CODE_LINE_LENGTH')}", "--output-format=text", "--recursive=y",
                       "--disable=E0401,E0611"] \
             + ["--ignore=" + _ for _ in _check_code_arg_excludes(pdv)] \
             + _check_code_arg_options() \
@@ -380,15 +387,15 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     project_path = pdv['project_path']
     project_type = pdv['project_type']
-    test_paths = path_args or _check_code_arg_paths(pdv)
+    cov_paths = path_args or _check_code_arg_paths(pdv) or ["."]
 
     with in_prj_dir_venv(project_path):
         os.makedirs(".pytest_cache", exist_ok=True)
-        extra_args = [f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)] \
-            + [f"--cov={_}" for _ in test_paths or ["."]] \
-            + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"] \
-            + _check_code_arg_options() \
-            + [pdv['TESTS_FOLDER'] + "/"]
+        extra_args = ([f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)]
+                      + [f"--cov={_}" for _ in cov_paths]
+                      + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"]
+                      + _check_code_arg_options()
+                      + [pdv['TESTS_FOLDER'] + "/"])
         if not pdv['namespace_name'] or project_type != PACKAGE_PRJ:
             # --doctest-glob="...*.py" does not work for .py files (only collectable via --doctest-modules).
             # doctest fails on namespace packages even with --doctest-ignore-import-errors (modules are ok).
@@ -399,17 +406,77 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
             extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
         sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
         try:
-            perc = json.loads(read_file(".pytest_cache/coverage.json"))['totals']['percent_covered_display']
-        except (FileNotFoundError, KeyError, ValueError, Exception) as ex:   # pylint: disable=broad-exception-caught
-            perc = f"<coverage percentage undetermined> {ex=}"
-        # pragma: no cover
+            totals = json.loads(read_file(".pytest_cache/coverage.json"))['totals']
+            perc = totals['percent_covered_display']
+            msg = f"{perc}%" + (f" - lines covered={totals['covered_lines']}/excluded={totals['excluded_lines']}"
+                                if debug_or_verbose(cae) else "")
+        except (FileNotFoundError, KeyError, ValueError, Exception) as ex:      # pylint: disable=broad-exception-caught
+            perc = "?"
+            msg = f"undetermined {ex=}"
         badge = Badge("coverage", perc, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
         badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
-        # anybadge alternativ: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
+        # alternative to Badge: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
         # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
-        # write_bin_file("coverage.svg", urlopen(cov_badge_url).read())
+        # write_bin_file(".pytest_cache/coverage.svg", urlopen(cov_badge_url).read())
 
-    cae.po(f"  === pytest done; coverage: {perc}% - check coverage report in file:///{project_path}/htmlcov/index.html")
+    cae.po(f"  === pytest coverage {msg} - check coverage report in file:///{project_path}/htmlcov/index.html")
+
+
+def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
+    """ check/renew venv of a project; used for the actions check_venv and renew_venv. """
+    project_path = pdv['project_path']
+    verbose = debug_or_verbose(cae)
+    install_options = {'dry_run': check_only}
+    if not check_only and _act_force_opt(pdv):
+        install_options['force_reinstall'] = True       # pragma: no cover
+    if verbose:
+        install_options['return_implicits'] = True
+    act = "found" if check_only else "installed"
+
+    # 'docs_requires' not installed on repo remote/CI; frozen 'dev_requires' adds not explicitely required venv-projects
+    reqs = pdv.pdv_val('install_requires') + pdv.pdv_val('tests_requires')
+    if verbose:
+        cae.po(f"  --- {act} {len(reqs)} required PyPI projects:{ppp(sorted(reqs))}")
+
+    with in_prj_dir_venv(project_path=project_path):
+        venv = active_venv()
+    cae.chk(22, bool(venv), "no valid Python VENV configured or activated")
+    cae.vpo(f"    - using Python {venv=}")
+
+    if verbose:
+        installed: list[str] = [""]   # prevent merge pip warnings
+        with in_prj_dir_venv(project_path=project_path):
+            sh_exit_if_exec_err(22, PIP_CMD, extra_args=["list", "--format=json"], lines_output=installed)
+        installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + _.get("editable_project_location", "")
+                     for _ in json.loads("".join(installed))]
+        cae.po(f"   -- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
+
+    # ISO 8601 datetime (e.g., '2026-01-02T03:04:05Z') or period (e.g., 'P6D' for uploaded at least 6 days ago)
+    out = pip_install(project_path, *reqs, cooldown_period=pdv['PYPI_COOLDOWN_PERIOD'], **install_options)
+    if verbose:     # includes implicit/not-directly-required projects
+        deps = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in out.items() if _v["requested"]]
+        cae.po(f"  --- {act} {len(deps)} outdated and cooled-down required dependencies:{ppp(sorted(deps))}")
+        deps = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in out.items() if not _v["requested"]]
+        cae.po(f"   -- {act} {len(deps)} outdated and cooled-down implicit dependencies:{ppp(sorted(deps))}")
+    else:           # pragma: no cover
+        deps = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in out.items()]
+        cae.po(f"  --- {act} {len(out)} outdated cooled-down of {len(reqs)} required dependencies:{ppp(sorted(deps))}")
+
+    hot_pkg_names = [stripped_pip_name(_pv) for _pv in pdv.pdv_val('cooldown_excluded_projects')]
+    hot_reqs = [_pv for _pv in reqs if stripped_pip_name(_pv) in hot_pkg_names]
+    if cae.debug:   # pragma: no cover
+        cae.po(f"   -- {len(hot_reqs)} required hot (excluded from cooldown) projects found:{ppp(sorted(hot_reqs))}")
+    hot_outs = pip_install(project_path, *hot_reqs, **install_options)
+    if verbose:
+        deps = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_outs.items() if _v["requested"]]
+        cae.po(f"  --- {act} {len(deps)} outdated of {len(hot_reqs)} hot required dependencies:{ppp(sorted(deps))}")
+        deps = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_outs.items() if not _v["requested"]]
+        cae.po(f"  --- {act} {len(deps)} outdated of {len(hot_reqs)} hot implicit dependencies:{ppp(sorted(deps))}")
+    else:           # pragma: no cover
+        deps = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_outs.items()]
+        cae.po(f"  --- {act} {len(hot_outs)} outdated of {len(hot_reqs)} hot dependencies:{ppp(sorted(deps))}")
+
+    cae.po(f" ==== {act} {len(set(out) & set(hot_outs))} outdated projects in {venv=} for {pdv['project_title']}")
 
 
 def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                                 # pragma: no cover
@@ -921,7 +988,7 @@ def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars
             renew_branch = f"{norm_name(action)}_{project_type}_{ini_pdv['project_name']}_{now_str()}"
         co_args = ("--merge", "--track") \
             if f"remotes/{ini_pdv['REMOTE_ORIGIN']}/{renew_branch}" in git_branches(project_path) else ()
-        git_checkout(project_path, *co_args, new_branch=renew_branch, force=bool(get_app_option(ini_pdv, 'force')),
+        git_checkout(project_path, *co_args, new_branch=renew_branch, force=_act_force_opt(ini_pdv),
                      remote_names=remote_urls)
 
     if not new_repo:
@@ -989,6 +1056,38 @@ def _required_package(import_or_package_name: str, packages_versions: list[str])
     return bool(project_name)
 
 
+def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
+    period = (f"--uploaded-prior-to={pdv['PYPI_COOLDOWN_PERIOD']}", ) if pdv['PYPI_COOLDOWN_PERIOD'] else ()
+
+    with in_prj_dir_venv(pdv['project_path']):
+        output: list[str] = []
+        sh_exec(f"{sys.executable} -m pip", extra_args=("list", "--editable"), lines_output=output, app_obj=cae,
+                env_vars=os.environ.copy())
+        cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
+        for line in output:
+            cae.po(f"      {line}")
+
+        output = []
+        sh_exec(PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, app_obj=cae)
+        cae.po(f"  --- found {max(0, len(output) - 2)} outdated {'hot ' if period else ''}projects:")
+        for line in output:
+            cae.po(f"      {line}")
+
+        if period:
+            output = []
+            # needs pip version > 26.1.2 (created issue #14189, fixed by #14190/v26.2)
+            sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, lines_output=output, app_obj=cae)
+            cae.po(f"  --- found {max(0, len(output) - 2)} outdated cooled-down projects:")
+            for line in output:
+                cae.po(f"      {line}")
+
+        output = []
+        sh_exec(PIP_CMD, extra_args=("list", "--not-required"), lines_output=output, app_obj=cae)
+        cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
+        for line in output:
+            cae.po(f"      {line}")
+
+
 def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:                   # pragma: no cover
     if not prj_instance:
         return False
@@ -1026,22 +1125,14 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:                               
     remote_urls = ini_pdv.pdv_val('remote_urls')
 
     if verbose:
-        sh_kwargs = {'exit_on_err': False, 'app_obj': cae}
-
-        cae.dpo("  --- setup.py check:")
-        sh_exit_if_exec_err(14, "python setup.py check", **sh_kwargs)           # prints output if cae.debug
-
-        cae.po("  --- editable packages:")
+        cae.po("  --- setup.py check:")
         output: list[str] = []
-        sh_exit_if_exec_err(14, PIP_CMD, extra_args=("list", "--editable"), lines_output=output, **sh_kwargs)
-        for line in [] if cae.debug else output:                                # sh_exit*() prints output if cae.debug
+        with in_prj_dir_venv(project_path):
+            sh_exec("python setup.py check", lines_output=output, app_obj=cae)
+        for line in output:
             cae.po(f"      {line}")
 
-        cae.po("  --- outdated packages:")
-        output = []
-        sh_exit_if_exec_err(14, PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, **sh_kwargs)
-        for line in [] if cae.debug else output:
-            cae.po(f"      {line}")
+        _show_editable_and_outdated_and_not_required(ini_pdv)
 
         cae.po("  --- project vars:")
         _print_pdv(ini_pdv)
@@ -1096,11 +1187,11 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:                               
                 cae.po(f"   -- the current local branch is commits ahead={ahead_count[0]} behind={behind_count[0]}")
 
         local_version = ini_pdv['project_version']
-        version_tag = ini_pdv['VERSION_TAG_PREFIX'] + local_version
+        version_tag = ini_pdv['GIT_VERSION_TAG_PREFIX'] + local_version
         version_remotes = git_tag_remotes(project_path, version_tag, remote_names=remote_urls)
         if version_remotes:
             cae.po(f"   -- remotes having local version tag {version_tag}={version_remotes}")
-        release_branch = ini_pdv['RELEASE_REF_PREFIX'] + local_version
+        release_branch = ini_pdv['GIT_RELEASE_REF_PREFIX'] + local_version
         release_remotes = git_tag_remotes(project_path, release_branch, remote_names=remote_urls)
         if release_remotes:
             cae.po(f"   -- remotes having release tag {release_branch}={release_remotes}")
@@ -1260,22 +1351,21 @@ class RemoteHost:                                                               
             'pjm', self.release_project, " later to retry if server is currently unavailable, or check remotes config"))
 
         # switch back to local main_branch and then merge-in the release-branch&-tag from remotes/origin/main_branch
-        git_checkout(project_path, "-B", main_branch, force=bool(get_app_option(ini_pdv, 'force')),
-                     remote_names=remote_names)
+        git_checkout(project_path, "-B", main_branch, force=_act_force_opt(ini_pdv), remote_names=remote_names)
         git_merge(project_path, remote_branch, commit_msg_file=ini_pdv['COMMIT_MSG_FILE_NAME'])
 
         if version_tag == 'LATEST':
             pkg_version = latest_remote_version(ini_pdv, increment_part=0)
-            version_tag = ini_pdv['VERSION_TAG_PREFIX'] + pkg_version
+            version_tag = ini_pdv['GIT_VERSION_TAG_PREFIX'] + pkg_version
         else:
-            pkg_version = _check_version(version_tag, prefix_to_check=ini_pdv['VERSION_TAG_PREFIX'])
+            pkg_version = _check_version(version_tag, prefix_to_check=ini_pdv['GIT_VERSION_TAG_PREFIX'])
 
         tag_remotes = set(git_tag_remotes(project_path, version_tag, remote_names=remote_names))
         cae.chk(85, set(remote_names) == tag_remotes, f"missing {version_tag=} at {set(remote_names) - tag_remotes}")
 
         msg = f"updated local {main_branch} branch"
         if ini_pdv['pip_name']:  # create release*ver branch only for projects available in PyPi via pip
-            release_branch = ini_pdv['RELEASE_REF_PREFIX'] + pkg_version
+            release_branch = ini_pdv['GIT_RELEASE_REF_PREFIX'] + pkg_version
             cae.chk(85, not git_ref_in_branch(project_path, release_branch, branch=remote_branch),
                     f"release branch {release_branch} already exists in the {remote_branch=}")
             cae.dpo(f"   -- creating branch '{release_branch}' for tag '{version_tag}' at {remote_branch=}")
@@ -1328,8 +1418,8 @@ class GithubCom(RemoteHost):                                                    
     def group_obj(self, user_or_org_name: str) -> AuthenticatedUser | Organization | None:
         """ instantiate am authenticated-user or organization object from the specified name.
 
-        :param user_or_org_name:name of a user or organization.
-        :return:                instantiated user/organization object or None if name not found as user/org.
+        :param user_or_org_name: name of a user or organization.
+        :return:                instantiated user/organization object or `None` if name not found as user/org.
         """
         if not self.connection:
             return None
@@ -1359,7 +1449,7 @@ class GithubCom(RemoteHost):                                                    
         cae.dpo(f"    - setting remote project properties of new repository '{group_repo}'")
         project_repo.edit(default_branch=main_branch, description=project_desc, visibility='public')
 
-        branch_masks = [main_branch]      # , f'{ini_pdv['RELEASE_REF_PREFIX']}*']
+        branch_masks = [main_branch]      # , f'{ini_pdv['GIT_RELEASE_REF_PREFIX']}*']
         self._protect_branches(project_repo, branch_masks)
         # the GitHub REST api does still not allow creating branch protection with a wildcard (for release*)
         # .. see https://github.com/orgs/community/discussions/24703
@@ -1375,7 +1465,7 @@ class GithubCom(RemoteHost):                                                    
         :param err_msg:         error message to display on error. will be extended with
                                 the group and project names from the :paramref:`~repo_obj.group_repo` argument.
         :param group_repo:      string with owner-user-name/repo-name of the repository, e.g. "UserName/RepositoryName".
-        :return:                GitHub repository if found, else return None if err_code is zero else quit.
+        :return:                GitHub repository if found, else return `None` if err_code is zero else quit.
         """
         try:
             assert self.connection  # mypy
@@ -1610,7 +1700,7 @@ class GitlabCom(RemoteHost):
 
                 _wait(ini_pdv)
 
-                release_branch_mask = ini_pdv['RELEASE_REF_PREFIX'] + '*'
+                release_branch_mask = ini_pdv['GIT_RELEASE_REF_PREFIX'] + '*'
                 for branch_mask in (main_branch, release_branch_mask):
                     protected_branch_properties = {'name': branch_mask,
                                                    'merge_access_level': MAINTAINER_ACCESS,
@@ -1672,7 +1762,7 @@ class GitlabCom(RemoteHost):
             cae.po(f"    * ignored post merge update errors: {ppp(errors)}")
 
         if forked and retries:  # for forked repos create version tag; they don't get it (like origin) per git push
-            version_tag = pdv['VERSION_TAG_PREFIX'] + pdv['project_version']
+            version_tag = pdv['GIT_VERSION_TAG_PREFIX'] + pdv['project_version']
             try:
                 project = self.connection.projects.get(request.project_id)
                 project.tags.create({'tag_name': version_tag, 'ref': request.sha})
@@ -1689,7 +1779,8 @@ class GitlabCom(RemoteHost):
         :param err_code:        error code, pass 0 to not quit if the project is not found.
         :param owner_project:   identifies the remote repository by its owner (group|user) and its project name,
                                 separated by a slash.
-        :return:                python-gitlab project instance if found, else return None if err_code is zero else quit.
+        :return:                python-gitlab project instance if found,
+                                else return `None` if err_code is zero else quit.
         """
         try:                                        # e.g., GitlabGetError: 404: 404 Project Not Found
             assert self.connection                  # mypy
@@ -1770,7 +1861,7 @@ class GitlabCom(RemoteHost):
                 continue
             version = ver[0]
             if chk == f"remotes/{ini_pdv['REMOTE_ORIGIN']}/":   # un-deployed remote release branch found
-                # protected release branch (ini_pdv['RELEASE_REF_PREFIX'] + '*') raises error on git push command:
+                # protected release branch (ini_pdv['GIT_RELEASE_REF_PREFIX'] + '*') raises error on git push command:
                 # git_push(project_path, _git_repo_url(ini_pdv, authentic=True), branch_name, extra_args=("--delete",))
                 group_repo = f"{get_host_group(ini_pdv, get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
                 project = self.repo_obj(33, group_repo)
@@ -1787,7 +1878,7 @@ class GitlabCom(RemoteHost):
                         cae.po(f"   ## ignoring error deleting release branch {branch_name} on origin remote: {ex2}")
 
                 output = git_push(project_path, git_push_url(ini_pdv, authenticate=True),
-                                  "--delete", ini_pdv['VERSION_TAG_PREFIX'] + version, exit_on_err=False)
+                                  "--delete", ini_pdv['GIT_VERSION_TAG_PREFIX'] + version, exit_on_err=False)
                 if output and output[0].startswith(EXEC_GIT_ERR_PREFIX):
                     cae.po(f"   ## deleting tag v{version} via push to remote failed with ignored error:{ppp(output)}")
                 elif debug_or_verbose(cae):
@@ -1860,7 +1951,7 @@ class GitlabCom(RemoteHost):
             git_checkout(project_path, main_branch, remote_names=remote_urls)
             git_merge(project_path, f"{upstream_name}/{main_branch}",
                       commit_msg_text=f"pjm fork_project action merged the {main_branch} branch from {upstream_name}")
-            latest_version_tag = git_tag_list(project_path, tag_pattern=ini_pdv['VERSION_TAG_PREFIX'] + "*")[-1]
+            latest_version_tag = git_tag_list(project_path, tag_pattern=ini_pdv['GIT_VERSION_TAG_PREFIX'] + "*")[-1]
             output = git_push(project_path, git_push_url(ini_pdv, authenticate=True), main_branch, latest_version_tag)
             if debug_or_verbose(cae):
                 cae.po(f"    = git push output:{ppp(output)}")
@@ -2111,7 +2202,7 @@ class GitlabCom(RemoteHost):
 def web_app_version(connection: PythonanywhereApi) -> str:                                  # pragma: no cover
     """ determine the version of a deployed django project package.
 
-    :param connection:      established connection to the *.pythonanywhere.com server.
+    :param connection:      established connection to the `*.pythonanywhere.com` server.
     :return:                version string of the package deployed to the web host/server
                             or empty string if package version file or version-in-file not found.
     """
@@ -2166,7 +2257,7 @@ class PythonanywhereCom(RemoteHost):
         cae.po(f" ---- {action} {version_tag}{lean_msg} against host/project {prj_desc} {deployed_ver}")
 
         project_path = ini_pdv['project_path']
-        prefix = ini_pdv['VERSION_TAG_PREFIX']
+        prefix = ini_pdv['GIT_VERSION_TAG_PREFIX']
         if version_tag == 'WORKTREE':
             include_untracked = True
             branch_or_tag = prefix + deployed_ver if deployed_ver else ini_pdv['MAIN_BRANCH']
@@ -2494,6 +2585,7 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     check_folders_files_completeness(cae, ini_pdv)
 
     if not on_ci_host():                                            # pragma: no cover
+        check_venv(ini_pdv)
         with in_prj_dir_venv(ini_pdv['project_path']):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
 
@@ -2507,7 +2599,7 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")
 
 
-@_action(*ANY_PRJ_TYPE)
+@_action(*ANY_PRJ_TYPE, shortcut="managed")
 def check_managed_files(ini_pdv: ProjectDevVars):                                           # pragma: no cover
     """ check if all managed files (generated from templates) of a project are uptodate. """
     with in_prj_dir_venv(ini_pdv['project_path']):
@@ -2552,7 +2644,7 @@ def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
     project_path = ini_pdv['project_path']
     import_deps = import_dependencies(cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'])
     venv_packages = installed_packages(cae, project_path)
-    project_reqs = [norm_pip_name(_.split(PROJECT_VERSION_SEP)[0]) for _ in ini_pdv.pdv_val('install_requires')]
+    project_reqs = [stripped_pip_name(_req) for _req in ini_pdv.pdv_val('install_requires')]
     cae.vpo(f"    ! install requires: {project_reqs}")
 
     missing_reqs, uninstalled_packages, ignored_imports = missing_requirements(
@@ -2579,6 +2671,14 @@ def check_resources(ini_pdv: ProjectDevVars):
     """ check if project has missing files or folders. """
     _check_resources(ini_pdv)
     cae.po(f"  === checked image, sound and other resources for {ini_pdv['project_title']}")
+
+
+@_action(*ANY_PRJ_TYPE, shortcut='venv')
+def check_venv(ini_pdv: ProjectDevVars):
+    """ check the installed package versions of the VENV of an existing project. """
+    if debug_or_verbose(cae):
+        _show_editable_and_outdated_and_not_required(ini_pdv)
+    _check_or_install_outdated_reqs(ini_pdv, True)
 
 
 @_action(PARENT_PRJ, ROOT_PRJ, arg_names=(('children-owner-name-versions' + ARG_MULTIPLES, ), ),
@@ -2637,14 +2737,14 @@ def clone_project(ini_pdv: ProjectDevVars, owner_name_version: str) -> str:
     req_branch = get_app_option(ini_pdv, 'branch') or ""
     project_owner, project_name, project_version = project_owner_name_version(
         owner_name_version, owner_default=ini_pdv['repo_group'], namespace_default=ini_pdv['namespace_name'])
-    branch_or_version = ini_pdv['VERSION_TAG_PREFIX'] + project_version if project_version else req_branch
+    branch_or_version = ini_pdv['GIT_VERSION_TAG_PREFIX'] + project_version if project_version else req_branch
     repo_root = f"{ini_pdv['REPO_HOST_PROTOCOL']}{get_host_domain(ini_pdv)}/{project_owner}"
 
     project_path = git_clone(repo_root, project_name, branch_or_tag=branch_or_version, parent_path=parent_path,
                              enable_log=bool(get_app_option(ini_pdv, 'git_log')))
 
     if project_path and req_branch:
-        git_checkout(project_path, new_branch=req_branch, force=bool(get_app_option(ini_pdv, 'force')))
+        git_checkout(project_path, new_branch=req_branch, force=_act_force_opt(ini_pdv))
         owner_name_version += f" (branch: {req_branch})"
 
     if project_path:
@@ -2743,7 +2843,7 @@ def install_children_editable(ini_pdv: ProjectDevVars, *children_pdv: ProjectDev
 def install_editable(ini_pdv: ProjectDevVars):
     """ install the project as editable from the source/project root folder. """
     with in_prj_dir_venv(project_path := ini_pdv['project_path']):
-        sh_exit_if_exec_err(90, PIP_INSTALL_CMD, extra_args=["--editable", project_path],
+        sh_exit_if_exec_err(90, PIP_CMD, extra_args=["install", "--editable", project_path],
                             exit_msg=f"package installation from local {project_path=} failed")
 
     cae.po(f" ==== installed as editable: {ini_pdv['project_title']}")
@@ -2836,14 +2936,14 @@ def refresh_children_managed(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevV
 
 @_action(*ANY_PRJ_TYPE, shortcut='refresh')
 def refresh_project(ini_pdv: ProjectDevVars):                                               # pragma: no cover
-    """ refresh/renew all the *requirements_frozen.txt files and all the managed files of the specified project. """
+    """ refresh/renew all the `*requirements_frozen.txt` files and all the managed files of the specified project. """
     project_path = ini_pdv['project_path']
     dst_files = _refresh_project(ini_pdv)
     if dst_files:
-        dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose() else ""
+        dbg_msg = ": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files) if debug_or_verbose(cae) else ""
     else:
         dst_files = []
-        dbg_msg = f"; could not detect project type at {project_path=}" if debug_or_verbose() else ""
+        dbg_msg = f"; could not detect project type at {project_path=}" if debug_or_verbose(cae) else ""
 
     cae.po(f" ==== refreshed *_frozen.txt and {len(dst_files)} managed files of {ini_pdv['project_title']}{dbg_msg}")
 
@@ -2911,6 +3011,15 @@ def renew_project(ini_pdv: ProjectDevVars) -> ProjectDevVars:
     return _renew_project(ini_pdv, ini_pdv['project_type'])
 
 
+@_action(*ANY_PRJ_TYPE)
+def renew_venv(ini_pdv: ProjectDevVars):
+    """ renew/update the installed package versions of the VENV of an existing project.
+
+    specify the ``--force`` option to add the --force-reinstall option to the used ``pip install`` commands.
+    """
+    _check_or_install_outdated_reqs(ini_pdv, False)
+
+
 @_action(PARENT_PRJ, ROOT_PRJ, arg_names=tuple(tuple(('command', ) + _) for _ in ARGS_CHILDREN_DEFAULT), shortcut='run')
 def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: ProjectDevVars):
     """ run console command for the specified portions/children of a namespace/parent.
@@ -2924,7 +3033,7 @@ def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: P
 
         output: list[str] = []
         with in_prj_dir_venv(chi_pdv['project_path']):
-            sh_exit_if_exec_err(98, command, lines_output=output, exit_on_err=not get_app_option(ini_pdv, 'force'))
+            sh_exit_if_exec_err(98, command, lines_output=output, exit_on_err=not _act_force_opt(ini_pdv))
         cae.po(ppp(output)[1:])
 
         if chi_pdv != children_pdv[-1]:
@@ -2991,7 +3100,7 @@ def show_versions(ini_pdv: ProjectDevVars):             # pylint: disable=too-ma
     """ display package versions of worktree, remote repo(s), latest PyPI release and default app/web host. """
     project_path = ini_pdv['project_path']
     project_version = ini_pdv['project_version']
-    tag_pattern = ini_pdv['VERSION_TAG_PREFIX'] + "*"
+    tag_pattern = ini_pdv['GIT_VERSION_TAG_PREFIX'] + "*"
 
     msg = f" ==== local:{project_version: <9}"
     loc_tags = git_tag_list(project_path, tag_pattern=tag_pattern)
@@ -3100,19 +3209,23 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
     packages = ini_pdv.pdv_val('install_requires')
     pkg_masks = optional_flags['MASKS']
     editable = optional_flags['EDITABLE']
+    force_reinstall = _act_force_opt(ini_pdv)
 
     with in_prj_dir_venv(ini_pdv['project_path']):
         upgraded = []
         for pkg_name in packages:
-            if not pkg_masks or any(fnmatch(pkg_name, mask) for mask in pkg_masks):
-                pip_args = ["--upgrade"]
+            if not pkg_masks or any(fnmatchcase(pkg_name, mask) for mask in pkg_masks):
+                args = ["--upgrade"]
                 if editable and os_path_isdir(pgk_path := os_path_join("..", pkg_name)):
-                    pip_args.append("--editable")
-                    pip_args.append(pgk_path)
+                    args.append("--editable")
+                    args.append(pgk_path)
                 else:
-                    pip_args.append(pkg_name)
-                sh_exit_if_exec_err(91, PIP_INSTALL_CMD, extra_args=pip_args, exit_msg="upgrade_requirements failed")
-                upgraded.append(pip_args[-1])
+                    if force_reinstall:
+                        args.append("--force-reinstall")
+                    args.append(f"--uploaded-prior-to={ini_pdv['PYPI_COOLDOWN_PERIOD']}")
+                    args.append(pkg_name)
+                sh_exit_if_exec_err(91, PIP_CMD, extra_args=["install"] + args, exit_msg="upgrade_requirements failed")
+                upgraded.append(args[-1])
 
     mask_msg = f" matching one of {pkg_masks}" if pkg_masks else ""
     cae.po(f" ==== upgraded {len(upgraded)} packages{mask_msg}: {' '.join(upgraded)}")
@@ -3185,8 +3298,9 @@ def prepare_and_run_main():                                                     
         temp_context_cleanup()                                      # cleanup default context and git clone context
         temp_context_cleanup(GIT_CLONE_CACHE_CONTEXT)
 
-    if left_forces := cae.get_option('force'):
-        cae.po(f"    # ignoring {left_forces} unused --force options")
+    if (left_forces := cae.get_option('force')) - action_forces:
+        cae.po(f"    # ignoring {left_forces - action_forces} unused --force options"
+               + (f" (while using {action_forces} action forces)" if action_forces else ""))
 
 
 def main():                                                         # pragma: no cover
@@ -3196,7 +3310,7 @@ def main():                                                         # pragma: no
         cae.run_app()               # parse command line arguments
         prepare_and_run_main()
     except Exception as main_ex:                                    # pylint: disable=broad-exception-caught
-        debug_info = f":\n{full_stack_trace(main_ex) if cae.debug else format_exc()}" if debug_or_verbose() else ""
+        debug_info = f":\n{full_stack_trace(main_ex) if cae.debug else format_exc()}" if debug_or_verbose(cae) else ""
         cae.shutdown(99, error_message=f"unexpected exception {main_ex} raised{debug_info}")
 
 

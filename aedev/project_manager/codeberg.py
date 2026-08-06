@@ -3,16 +3,17 @@ helpers to access codeberg.org via its V1 API
 =============================================
 
 Codeberg is based on `Forgejo <https://forgejo.org>`__ (a fork of `Gitea <https://gitea.com>`__) and its API
-(documented at `https://codeberg.org/api/swagger`__).
+(documented at <https://codeberg.org/api/swagger>).
 
 this module is a first start, currently only to allow an initial push of a repo to codeberg.org, used as 2nd mirror.
 (similar to GitHub, also not allowing initial pushes of a new repository). the plan is to move all my repositories from
 GitLab to Codeberg (and then using GitLab as mirror).
 
-created this module because the Python libraries pygitea (https://github.com/jo-nas/pygitea and
-https://github.com/h44z/pygitea) were in 2026 no longer maintained (since ~2019).
+created this module because the Python libraries pygitea (<https://github.com/jo-nas/pygitea> and
+<https://github.com/h44z/pygitea>) were in 2026 no longer maintained (since ~2019).
 
-another api endpoint example to determine the repo url:
+another api endpoint example to determine the repo url::
+
     url = f'https://codeberg.org/api/v1/repos/{user_or_org_name}/{repo_name}'
     response = requests.get(url, headers={"Authorization": f"token {token}", "Accept": "application/json"}, timeout=10)
     if response.status_code == 200:

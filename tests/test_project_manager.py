@@ -6,6 +6,7 @@ to run integration tests (~40 minutes), implemented in this test module:
 * put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
 * put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
 """
+import json
 import os
 
 from collections import OrderedDict
@@ -30,7 +31,7 @@ from ae.managed_files import (
 from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
-    PIP_INSTALL_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
+    PIP_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
     code_file_version)
 from aedev.commands import (
     GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
@@ -55,14 +56,14 @@ from tests.test_codeberg import CODEBERG_TOKEN_PART
 from aedev.project_manager.__main__ import (
     ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     GitlabCom,
-    _act_callable, _action, _available_actions,
+    _action, _act_callable, _act_force_opt, _available_actions,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
     _print_pdv, _refresh_project, _renew_project, _show_status, _wait,
-    add_children_file, check_children_integrity, check_files, check_integrity, check_resources,
+    add_children_file, check_children_integrity, check_files, check_integrity, check_resources, check_venv,
     clone_children, clone_project, commit_children, commit_project,
     delete_children_file, install_children_editable, install_editable,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
-    prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children,
+    prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children, renew_venv,
     run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
 
 
@@ -357,9 +358,16 @@ class TestActionsLocal:
         check_integrity(pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
         assert capsys.readouterr().out
 
-        write_file(os_path_join(empty_repo_path, 'manage.py'), "# any content")   # fake DJANGO_PRJ
+        write_file(os_path_join(empty_repo_path, 'manage.py'), "# any content")     # fake DJANGO_PRJ
+        write_file(os_path_join(empty_repo_path, '.pytest_cache/coverage.json'),    # test coverage results load&display
+                   json.dumps({'totals': {'percent_covered_display': "99", 'covered_lines': 96, 'excluded_lines': 9}}),
+                   make_dirs=True)
         check_integrity(pdv_with_email(project_path=empty_repo_path), 'manage.py')
-        assert capsys.readouterr().out
+
+        out = capsys.readouterr().out
+        assert "99%" in out
+        assert " covered=96"
+        assert "/excluded=9"
 
     def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
                                                mocked_app_options, patched_shutdown_wrapper):
@@ -403,6 +411,19 @@ class TestActionsLocal:
         assert capsys.readouterr().out
 
         check_resources(pdv_with_email(project_path=empty_repo_path))
+        assert capsys.readouterr().out
+
+    def test_check_venv(self, capsys):
+        def _exec_mock(*_args, lines_output: list[str] | None = None, **_kwargs):
+            if lines_output is None:
+                lines_output = []
+            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.0", "latest_version": "1.2.3"},
+                                            {"name": "tst_pkg2", "version": "3.6.6", "latest_version": "3.6.9"},
+                                            ]))
+
+        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_exec_mock):
+            check_venv(ProjectDevVars())
+
         assert capsys.readouterr().out
 
     def test_clone_children_of_ae_namespace(self, app_pjm):
@@ -534,7 +555,7 @@ class TestActionsLocal:
         assert call_mock.call_count == 1
         args = call_mock.call_args.args
         assert args[0] == 90
-        assert args[1].startswith(PIP_INSTALL_CMD)
+        assert args[1] == PIP_CMD
 
     def test_install_editable(self, module_repo_path):
         call_mock = MagicMock()
@@ -543,7 +564,7 @@ class TestActionsLocal:
         assert call_mock.call_count == 1
         args = call_mock.call_args.args
         assert args[0] == 90
-        assert args[1].startswith(PIP_INSTALL_CMD)
+        assert args[1] == PIP_CMD
 
     def test_new_app(self, app_pjm):
         with init_parent() as par_path:
@@ -721,6 +742,19 @@ class TestActionsLocal:
             assert os_path_isfile(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME']))
             assert uncommitted_files == git_uncommitted(prj_path)
             assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).splitlines()[0]
+
+    def test_renew_venv(self, capsys):
+        def _exec_mock(*_args, lines_output: list[str] | None = None, **_kwargs):
+            if lines_output is None:
+                lines_output = []
+            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.0", "latest_version": "1.2.3"},
+                                            {"name": "tst_pkg2", "version": "3.6.6", "latest_version": "3.6.9"},
+                                            ]))
+
+        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_exec_mock):
+            renew_venv(ProjectDevVars())
+
+        assert capsys.readouterr().out
 
     @skip_gitlab_ci
     def test_refresh_children_managed(self, module_repo_path):
@@ -940,6 +974,13 @@ class TestHelpersLocal:
         assert callable(_act_callable(None, 'new_app'))
         assert not callable(_act_callable(None, 'fork'))
         assert callable(_act_callable(GitlabCom(), 'fork_project'))
+
+    def test_act_force_opt(self):
+        import aedev.project_manager.__main__ as main
+        curr_val = main.action_forces
+        with patch('aedev.project_manager.__main__.get_app_option', return_value=True):
+            _act_force_opt(cast(ProjectDevVars, cast(object, None)))
+        assert main.action_forces == curr_val + 1
 
     def test_available_actions(self):
         assert _available_actions()
