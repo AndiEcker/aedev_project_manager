@@ -50,7 +50,6 @@ import json
 import os
 import re
 import shutil
-import sys
 import time
 
 from collections import OrderedDict
@@ -76,11 +75,11 @@ from packaging.version import Version, InvalidVersion
 from PIL import Image
 
 
-from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    PY_INIT, UNSET, UnsetType,
+from ae.base import (  # type: ignore # pylint: disable=reimported
+    PY_INIT, TESTS_FOLDER, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
-    read_bin_file, read_file, url_failure, write_file)
+    pep8_format, read_bin_file, read_file, url_failure, write_file)
 from ae.system import full_stack_trace, module_attr, stack_var                                          # type: ignore
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
@@ -92,7 +91,7 @@ from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                  
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.shell import (                                                                                  # type: ignore
     STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, sh_exec, sh_exit_if_exec_err)
-from ae.managed_files import deploy_template                                                            # type: ignore
+from ae.managed_files import deploy_template, TemplateMngr                                              # type: ignore
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
     ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
@@ -115,7 +114,7 @@ from aedev.project_vars import (                                                
 from aedev.project_manager.codeberg import ensure_repo, set_main_branch
 from aedev.project_manager.templates import (
     PATH_PREFIXES_PARSERS, TPL_IMPORT_NAMES,
-    check_templates, project_templates, template_path_option, template_version_option)
+    check_templates, get_template_vars, project_templates, template_path_option, template_version_option)
 from aedev.project_manager.utils import (
     ARG_ALL, ARGS_CHILDREN_DEFAULT, ARG_MULTIPLES, DJANGO_EXCLUDED_FROM_CLEANUP, PPF,
     REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES,
@@ -190,6 +189,29 @@ def _act_help_print(spec: ActionSpec, indent: int = 9):
 
     if 'shortcut' in spec:
         cae.po(f"{ind}- shortcut: {spec['shortcut']}")
+
+
+def _act_name(act_name: str, project_type: UnsetType | str, act_args: list[str]) -> str:
+    """ check and possibly correct act_name and act_args.
+
+    :param act_name:            initial action name.
+    :param project_type:        project type to check only actions available for that project type
+                                or pass UNSET to check in all registered/implemented actions (in help mode).
+    :param act_args:            initial action arguments (will get changed if act_name gets extended/corrected).
+    :return:                    final action name or empty string on invalid/unregistered action name.
+    """
+    initial_action = act_name = norm_name(act_name)
+    initial_args = act_args.copy()
+    actions = _available_actions(project_type=project_type)
+    while act_name not in actions:
+        if not act_args:
+            if act_name := _init_act_args_shortcut(project_type, initial_action):
+                act_args[:] = initial_args
+            break
+        act_name += '_' + norm_name(act_args[0])
+        act_args[:] = act_args[1:]
+
+    return act_name
 
 
 def _act_spec(pdv: ProjectDevVars, act_name: str) -> tuple[dict[str, Any], str]:   # ActionSpecification
@@ -387,12 +409,12 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     project_path = pdv['project_path']
     project_type = pdv['project_type']
-    cov_paths = path_args or _check_code_arg_paths(pdv) or ["."]
+    cov_paths = path_args or _check_code_arg_paths(pdv) or [project_path]
 
     with in_prj_dir_venv(project_path):
         os.makedirs(".pytest_cache", exist_ok=True)
         extra_args = ([f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)]
-                      + [f"--cov={_}" for _ in cov_paths]
+                      + [f"--cov={os_path_splitext(os_path_relpath(_pckg, project_path))[0]}" for _pckg in cov_paths]
                       + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"]
                       + _check_code_arg_options()
                       + [pdv['TESTS_FOLDER'] + "/"])
@@ -719,52 +741,37 @@ def _init_act_args_check(ini_pdv: ProjectDevVars, act_spec: Any, act_name: str, 
     cae.dpo("    = passed checks of basic command line options and arguments")
 
 
-def _init_act_args_shortcut(ini_pdv: ProjectDevVars, ini_act_name: str) -> str:             # pragma: no cover
-    project_type = ini_pdv['project_type']
-    found_actions: list[str] = []
+def _init_act_args_shortcut(project_type: UnsetType | str, shortcut: str) -> str:
+    """ check if action shortcut exists for all project types or the specified one.
+
+    :param project_type:        specify type of the project to check action shortcut for or UNSET for all actions.
+    :param shortcut:            initial normalized action shortcut name.
+    :return:                    normalized full action name or an empty string if the action is either
+                                not implemented or not registered for the specified project type.
+    """
+    found_actions: set[str] = set()
     for act_name, act_spec in REGISTERED_ACTIONS.items():
-        if project_type in act_spec['project_types'] and act_spec.get('shortcut') == ini_act_name:
-            found_actions.append(act_name.split(".")[-1])
+        if project_type in act_spec['project_types'] + (UNSET, ) and act_spec.get('shortcut') == shortcut:
+            found_actions.add(act_name.split(".")[-1])  # duplicate shortcuts can exist e.g. for each host_api
+
     count = len(found_actions)
-    if not count:
-        return ""
-
-    assert count in (1, 2), f"duplicate shortcut declaration for {found_actions}; correct _action() shortcut kwargs"
-    if count > 1:   # happens for a namespace-root project type, where action is available for a project and children
-        found_actions = sorted(found_actions, key=len)      # 'project'/7 is shorter than 'children'/8
-    return found_actions[0]
+    assert count <= 1, f"duplicate {found_actions} for {shortcut=}; correct _action() shortcut kwargs in declaration"
+    return found_actions.pop() if count else ""
 
 
-def _init_act_exec_args() -> tuple[ProjectDevVars, str, tuple, dict[str, Any]]:     # pylint: disable=too-many-locals
-    """ prepare execution of an action requested via command line arguments and options.
+def _init_act_exec_args(ini_pdv: ProjectDevVars) -> tuple[str, tuple, dict[str, Any]]:
+    """ check action and its arguments, run optional pre-action and prepare action execution.
 
-    * init project dev vars
-    * checks if action is implemented
-    * check action arguments
-    * run optional pre_action.
-
-    :return:                    tuple of project pdv, action name to execute, a tuple with additional action args
+    :param ini_pdv:             project dev vars, for remote actions extended with 'host_api' instance.
+    :return:                    tuple of action name to execute, a tuple with additional action args
                                 and a dict of optional action flag arguments.
     """
-    ini_pdv = _init_pdv()
-
-    act_name = initial_action = norm_name(cae.get_argument('action'))
+    act_name = cae.get_argument('action')
     act_args = cae.get_argument('arguments').copy()
-    initial_args = act_args.copy()
     project_type = ini_pdv['project_type']
-    actions = _available_actions(project_type=project_type)
-    while act_name not in actions:
-        if not act_args:
-            found_act_name = _init_act_args_shortcut(ini_pdv, initial_action)
-            if found_act_name:                                                              # pragma: no cover
-                act_name = found_act_name
-                act_args[:] = initial_args
-                break
-            prj = ("undefined/new" if project_type is NO_PRJ else project_type) + f" project {ini_pdv['project_path']}"
-            cae.shutdown(6, error_message=f"invalid action '{act_name}' for {prj}. valid actions: {actions}")
-            return ini_pdv, "request exit of unit test with patched shutdown()", (), {}     # pragma: no cover
-        act_name += '_' + norm_name(act_args[0])
-        act_args[:] = act_args[1:]
+    if not (act_name := _act_name(act_name, project_type, act_args)):
+        prj = ("undefined/new" if project_type is NO_PRJ else project_type) + f" project {ini_pdv['project_path']}"
+        cae.shutdown(6, error_message=f"{prj} allows only the actions: {_available_actions(project_type=project_type)}")
 
     act_spec, var_prefix = _act_spec(ini_pdv, act_name)
     if not act_spec['local_action']:
@@ -796,7 +803,7 @@ def _init_act_exec_args() -> tuple[ProjectDevVars, str, tuple, dict[str, Any]]: 
 
     cae.po(f"----- {act_name}{extra_children_args} on {ini_pdv['project_title']}{extra_msg}")
 
-    return ini_pdv, act_name, act_args, act_flags
+    return act_name, act_args, act_flags
 
 
 def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> list[ProjectDevVars]:
@@ -948,12 +955,12 @@ def _refresh_pdv(pdv: ProjectDevVars, **pdv_kwargs):
 def _refresh_project(pdv: ProjectDevVars) -> list[str]:
     project_path = pdv['project_path']
     dst_files: set[str] = set()
-    for refresh_pass in range(2):   # needed to update e.g. setup.py after *requirements*.txt get updated from templates
+    for refresh_pass in range(1, 3):  # needed to update setup.py after *requirements*.txt get updated from templates
         errors = update_frozen_req_files(pdv)  # check|update frozen *requirements.txt and refresh pdv
         cae.chk(16, not errors, f"requirements_frozen update errors in {project_path=}/{refresh_pass=}: {ppp(errors)}")
 
         with in_prj_dir_venv(project_path):
-            man = check_templates(cae, pdv)
+            man = check_templates(cae, pdv, refresh_pass=refresh_pass)
             if not man:
                 return []
             man.deploy()
@@ -1061,7 +1068,15 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
 
     with in_prj_dir_venv(pdv['project_path']):
         output: list[str] = []
-        sh_exec(f"{sys.executable} -m pip", extra_args=("list", "--editable"), lines_output=output, app_obj=cae,
+        sh_exec(PIP_CMD, extra_args=("check", "--quiet"), lines_output=output, app_obj=cae,
+                env_vars=os.environ.copy())
+        if output:              # pragma: no cover
+            cae.po(f"  --- found {len(output)} broken requirements:")
+            for line in output:
+                cae.po(f"      {line}")
+
+        output = []
+        sh_exec(PIP_CMD, extra_args=("list", "--editable"), lines_output=output, app_obj=cae,
                 env_vars=os.environ.copy())
         cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
         for line in output:
@@ -2582,11 +2597,12 @@ def check_flake8(ini_pdv: ProjectDevVars, *path_args: str):         # pragma: no
 @_action(*ANY_PRJ_TYPE, arg_names=((), ('files-or-paths-to-check' + ARG_MULTIPLES, ), ), shortcut='check')
 def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     """ CI integrity check/tests of files/folders completeness and managed/templates/resources files update-state. """
+    project_path = ini_pdv['project_path']
     check_folders_files_completeness(cae, ini_pdv)
 
     if not on_ci_host():                                            # pragma: no cover
         check_venv(ini_pdv)
-        with in_prj_dir_venv(ini_pdv['project_path']):
+        with in_prj_dir_venv(project_path):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
 
     _check_resources(ini_pdv)
@@ -2594,7 +2610,9 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     _check_code_flake8(ini_pdv, path_args)
     _check_code_mypy(ini_pdv, path_args)
     _check_code_pylint(ini_pdv, path_args)
-    _check_code_pytest(ini_pdv, path_args)
+    if (os_path_isdir(os_path_join(project_path, TESTS_FOLDER)) or
+            any(os.path.exists(os_path_join(project_path, file_or_dir)) for file_or_dir in path_args)):
+        _check_code_pytest(ini_pdv, path_args)
 
     cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")
 
@@ -2926,7 +2944,7 @@ def prepare_commit(ini_pdv: ProjectDevVars, title: str = ""):
 
 
 @_action(PARENT_PRJ, ROOT_PRJ)
-def refresh_children_managed(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):       # pragma: no cover
+def refresh_children(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVars):       # pragma: no cover
     """ refresh frozen requirements and managed files from templates in all the children projects. """
     for chi_pdv in children_pdv:
         cae.po(f" ---  {chi_pdv['project_name']}  ---  {chi_pdv['project_title']}")
@@ -3093,6 +3111,27 @@ def show_children_versions(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVar
     for chi_pdv in children_pdv:
         show_versions(chi_pdv)
     cae.po(f" ==== versions shown of {children_desc(ini_pdv, children_pdv)}")
+
+
+@_action(*ANY_PRJ_TYPE, arg_names=(('expression-or-project-dev-var-name', ), ), shortcut='show')
+def show_expression_value(ini_pdv: ProjectDevVars, expr: str):
+    """ show the value of the specified expression/template-variable (like e.g. project_version, "os.getcwd()" ...). """
+    tpl_vars = TemplateMngr([], {}, get_template_vars(ini_pdv)).context_vars
+    try:
+        exp_val = try_eval(expr, glo_vars=tpl_vars)
+    except (NameError, SyntaxError, ValueError, Exception) as exc:   # pylint: disable=broad-exception-caught
+        if cae.debug:           # pragma: no cover
+            cae.po(f"  *** full stack trace:\n{full_stack_trace(exc, frames_with_locals=6 if cae.verbose else 1)}")
+            cae.po("")
+        if cae.verbose:         # pragma: no cover
+            cae.po("    = predefined template variables and helpers:")
+            cae.po(f"        {pep8_format(tpl_vars, indent_level=2, debug_mode=True)}")
+            cae.po("")
+        cae.po(f'***** evaluation of the template expression "{expr}" has thrown exception: {exc}')
+    else:
+        if debug_or_verbose(cae):
+            cae.po(f'===== value literal of "{expr}":')
+        cae.po(pep8_format(exp_val, debug_mode=cae.debug))
 
 
 @_action(*ANY_PRJ_TYPE, shortcut='versions')
@@ -3279,19 +3318,25 @@ def init_main() -> ConsoleApp:
 
 def prepare_and_run_main():                                                                # pragma: no cover
     """ prepare and run app """
-    ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()  # init globals, check action, compile args
-    host_api = ini_pdv.pdv_val('host_api')                          # determine optional host API client instance
-    action_callable = _act_callable(host_api, act_name)             # determine action function|method
-
-    if get_app_option(ini_pdv, 'help'):
+    ini_pdv = _init_pdv()
+    if get_app_option(ini_pdv, 'help'):                             # help mode
         cae.po()
         cae.show_help()
-        if act_specs := _act_specs(act_name):
-            cae.po()
-            cae.po(f"found {len(act_specs)} {act_name} actions:" if len(act_specs) > 1 else "action details:")
-            for spec in act_specs:
-                _act_help_print(spec, indent=2)                     # show help for action
+        action_argument = cae.get_argument('action')
+        if action_argument:
+            cae.po()                                                # show extra info on specified action
+            act_name = _act_name(action_argument, UNSET, cae.get_argument('arguments').copy())
+            if act_name and (act_specs := _act_specs(act_name)):
+                cae.po(f"found {len(act_specs)} {act_name} host actions:" if len(act_specs) > 1 else "action details:")
+                for spec in act_specs:
+                    _act_help_print(spec, indent=2)
+            else:
+                cae.po(f"***** invalid {action_argument=}; run `pjm show_actions` to display all supported actions.")
     else:
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)  # init globals, check action, compile args
+        host_api = ini_pdv.pdv_val('host_api')                      # determine optional host API client instance
+        action_callable = _act_callable(host_api, act_name)         # determine action function|method
+
         action_callable(ini_pdv, *act_args, **act_flags)            # execute action
 
     if not cae.verbose:                                             # if not in verbose debug mode then

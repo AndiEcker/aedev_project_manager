@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.96
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.98
 # ae:additional exludes for Sphinx, mypy, pylint, PyCharm, kivy, enaml
 bin
 .buildozer

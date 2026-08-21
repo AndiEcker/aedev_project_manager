@@ -15,34 +15,35 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from conftest import logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
+from conftest import delete_files, logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
+    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER, UNSET,
     in_wd, norm_name, norm_path, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
 from ae.system import APP_BUILD_CFG_FILENAME, project_main_file
 from ae.paths import path_items
 from ae.core import main_app_instance, temp_context_cleanup
-from ae.shell import debug_or_verbose
+from ae.shell import debug_or_verbose, in_os_env
 from ae.pythonanywhere import PythonanywhereApi
 from ae.managed_files import (
     PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER)
 from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
-    ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
+    ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ, PLAYGROUND_PRJ, ROOT_PRJ,
     PIP_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
     code_file_version)
 from aedev.commands import (
     GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
-    git_add, git_checkout, git_current_branch, git_remotes,
-    git_uncommitted, in_os_env)
+    git_add, git_checkout, git_current_branch, git_remotes, git_uncommitted)
 from aedev.project_vars import (
-    PDV_NULL_VERSION, PLAYGROUND_PRJ, ROOT_PRJ,
+    PDV_NULL_VERSION,
     ProjectDevVars, latest_remote_version, main_file_path)
 
-from aedev.project_manager.templates import CACHED_TPL_PROJECTS, register_template
-from aedev.project_manager.utils import get_mirror_urls, guess_next_action
+from aedev.project_manager.templates import CACHED_TPL_PROJECTS, TPL_IMPORT_NAMES, register_template
+from aedev.project_manager.utils import (
+    ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES,
+    get_mirror_urls, guess_next_action)
 
 from tests.constants_and_fixtures import (
     tst_tpls_register,
@@ -54,17 +55,17 @@ from tests.test_codeberg import CODEBERG_TOKEN_PART
 
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import (
-    ARG_ALL, ARG_MULTIPLES, REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     GitlabCom,
-    _action, _act_callable, _act_force_opt, _available_actions,
-    _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets,
+    _action, _act_callable, _act_force_opt, _act_name, _available_actions,
+    _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets, _init_pdv,
     _print_pdv, _refresh_project, _renew_project, _show_status, _wait,
     add_children_file, check_children_integrity, check_files, check_integrity, check_resources, check_venv,
     clone_children, clone_project, commit_children, commit_project,
     delete_children_file, install_children_editable, install_editable,
-    new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground, renew_project,
-    prepare_children_commit, prepare_commit, refresh_children_managed, rename_children_file, renew_children, renew_venv,
-    run_children_command, show_actions, show_children_versions, update_mirror, web_app_version)
+    new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground,
+    prepare_children_commit, prepare_commit, refresh_children, rename_children_file,
+    renew_children, renew_project, renew_venv,
+    run_children_command, show_actions, show_children_versions, show_expression_value, update_mirror, web_app_version)
 
 
 def setup_module():
@@ -352,8 +353,9 @@ class TestActionsLocal:
         check_files(pdv_with_email(project_path=empty_repo_path))
         assert capsys.readouterr().out
 
-    def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, mocked_app_options):
-        mocked_app_options['force'] = 6
+    def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, module_repo_path,
+                             mocked_app_options):
+        mocked_app_options['force'] = 12
 
         check_integrity(pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
         assert capsys.readouterr().out
@@ -368,6 +370,16 @@ class TestActionsLocal:
         assert "99%" in out
         assert " covered=96"
         assert "/excluded=9"
+
+        mocked_app_options['more_verbose'] = False
+        check_integrity(pdv_with_email(project_path=module_repo_path))
+
+        assert capsys.readouterr().out
+
+        mocked_app_options['more_verbose'] = True
+        check_integrity(pdv_with_email(project_path=module_repo_path))
+
+        assert capsys.readouterr().out
 
     def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
                                                mocked_app_options, patched_shutdown_wrapper):
@@ -390,21 +402,46 @@ class TestActionsLocal:
 
     def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,
                                     patched_shutdown_wrapper):
-        mocked_app_options['more_verbose'] = False
+        if not on_ci_host():
+            mocked_app_options['force'] = 1  # skip the only locally running template-chk-len(missing)=11 error (44, )
+        tst_fil = os_path_join(module_repo_path, TESTS_FOLDER, 'test_test' + PY_EXT)
+        write_file(tst_fil, "def test_failing():\n    assert False\n", make_dirs=True)
 
         calls = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=module_repo_path))
 
         assert len(calls) == 1
-        assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (13, ) (44, ) (46, w/ CI_PROJECT_ID set)
-        assert capsys.readouterr().out
+        assert calls[0]['exit_code'] == 46  # failed unit test assert (46, )
+        output = capsys.readouterr().out
+        assert "  --  missing 1 basic project folders/files" in output
+        if not on_ci_host():
+            assert "   -- 11 managed files missing: " in output
+            assert "  ### forced to ignore/skip error 44" in output
+        assert "  === flake8 linter checks done" in output
+        assert "  === mypy typing checks done" in output
+        assert "  === pylint checks done" in output
+        assert "tests/test_test.py::test_failing FAILED" in output
+        assert "no-data-collected" in output
 
+        if not on_ci_host():
+            mocked_app_options['force'] = 1  # RENEW force-skip of locally running template-check error (44, )
         mocked_app_options['more_verbose'] = True
+        delete_files(tst_fil)
 
         calls = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=module_repo_path))
 
         assert len(calls) == 1
-        assert calls[0]['exit_code'] == 46 if on_ci_host() else 44    # (44, ) (46, )
-        assert capsys.readouterr().out
+        assert calls[0]['exit_code'] == 46  # empty unit tests folder (46, )
+        output = capsys.readouterr().out
+        assert output
+        assert "  --  missing 1 basic project folders/files" in output
+        if not on_ci_host():
+            assert "   -- 11 managed files missing: " in output
+            assert "  ### forced to ignore/skip error 44" in output
+        assert "  === flake8 linter checks done" in output
+        assert "  === mypy typing checks done" in output
+        assert "  === pylint checks done" in output
+        assert "tests/test_test.py::test_failing" not in output  # unit tests module got deleted
+        assert "no-data-collected" in output
 
     def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_resources(pdv_with_email(project_path=changed_repo_path))
@@ -757,13 +794,13 @@ class TestActionsLocal:
         assert capsys.readouterr().out
 
     @skip_gitlab_ci
-    def test_refresh_children_managed(self, module_repo_path):
+    def test_refresh_children(self, module_repo_path):
         par_pdv = pdv_with_email(projecT_path=os_path_dirname(module_repo_path))
         chi_pdv = pdv_with_email(project_path=module_repo_path)
         tests_dir = os_path_join(module_repo_path, TESTS_FOLDER)
         assert not os_path_isdir(tests_dir)
 
-        refresh_children_managed(par_pdv, chi_pdv)
+        refresh_children(par_pdv, chi_pdv)
 
         assert os_path_isdir(tests_dir)
 
@@ -837,6 +874,47 @@ class TestActionsLocal:
 
         output = capsys.readouterr().out
         assert output.count(echo_word) == 3  # one for each child and a final one on action complete
+
+    def test_show_expression_value(self, capsys, app_pjm, empty_repo_path: str):
+        pdv = pdv_with_email(project_path=empty_repo_path)
+
+        show_expression_value(pdv, "project_path")
+        assert empty_repo_path in capsys.readouterr().out
+
+        show_expression_value(pdv, "project_path == project_path")
+        assert capsys.readouterr().out.endswith("True\n")
+
+        show_expression_value(pdv, "os_path_relpath(version_file, project_path)")
+        assert os_path_basename(empty_repo_path) in capsys.readouterr().out
+
+        show_expression_value(pdv, 'invalid_expression')
+        output = capsys.readouterr().out
+        assert 'invalid_expression' in output
+        assert 'is not defined' in output
+
+    def test_show_expression_value_recursive_data(self, capsys, app_pjm, empty_repo_path):
+        from ae.dynamicod import base_globals   # base_globals kann von :func:`ae.dynamicod.try_eval()` verwendet werden
+        pdv = pdv_with_email(project_path=empty_repo_path)
+
+        show_expression_value(pdv, 'base_globals')
+        output = capsys.readouterr().out
+        assert 'base_globals' in output
+        assert "'base_globals': {...}" in output    # recursion dedected by Python repr
+
+        rec_a = [[]]
+        rec_b = [rec_a]
+        rec_a[0] = rec_b
+        base_globals['recursive__hook__'] = rec_a
+        show_expression_value(pdv, 'base_globals')
+        output = capsys.readouterr().out
+
+        assert "'base_globals': {" + os.linesep in output   # 1st occurance shows the value of base_globals
+        assert "'base_globals': {...}" in output    # Python repr recursion guard replaced base_globals value with "..."
+
+        sep = os.linesep
+        assert ("    'recursive__hook__': [" + sep +
+                "        []," + sep +
+                "    ]") in output
 
     def test_show_actions(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
         pdv = pdv_with_email(**{'host_api': GitlabCom()})
@@ -982,6 +1060,17 @@ class TestHelpersLocal:
             _act_force_opt(cast(ProjectDevVars, cast(object, None)))
         assert main.action_forces == curr_val + 1
 
+    def test_act_name(self):
+        assert _act_name("check-integrity", UNSET, []) == "check_integrity"
+        assert _act_name("check", UNSET, ["integrity"]) == "check_integrity"
+        assert _act_name("check", MODULE_PRJ, ["integrity"]) == "check_integrity"
+        assert _act_name("check", PACKAGE_PRJ, []) == "check_integrity"
+
+        assert _act_name("check-pytest", UNSET, []) == "check_pytest"
+        assert _act_name("check", UNSET, ["pytest"]) == "check_pytest"
+        assert _act_name("check", MODULE_PRJ, ["pytest"]) == "check_pytest"
+        assert _act_name("pytest", PLAYGROUND_PRJ, []) == "check_pytest"
+
     def test_available_actions(self):
         assert _available_actions()
         assert 'show_status' in _available_actions()
@@ -1048,7 +1137,8 @@ class TestHelpersLocal:
         mocked_app_options['project_path'] = empty_repo_path
         write_file(os_path_join(empty_repo_path, 'manage.py'), "content")   # to be recognized as a django project type
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)
 
         assert isinstance(ini_pdv, dict)    # ProjectDevVars
         assert 'host_api' in ini_pdv
@@ -1062,13 +1152,14 @@ class TestHelpersLocal:
         mocked_app_options['action'] = 'what_ever_not_existing_action'
         mocked_app_options['arguments'] = ['what_ever_invalid_action_arg']
 
-        assert patched_shutdown_wrapper(_init_act_exec_args)
+        assert patched_shutdown_wrapper(_init_act_exec_args, _init_pdv())
 
     def test_init_act_exec_args_new_app(self, app_pjm, mocked_app_options):
         mocked_app_options['action'] = 'new_app'
         mocked_app_options['arguments'] = []
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)
 
         assert isinstance(ini_pdv, dict)    # ProjectDevVars
         assert 'host_api' not in ini_pdv
@@ -1081,7 +1172,8 @@ class TestHelpersLocal:
         mocked_app_options['arguments'] = []
         mocked_app_options['project_path'] = module_repo_path
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)
 
         assert isinstance(ini_pdv, dict)    # ProjectDevVars
         assert act_name == 'show_versions'
@@ -1337,7 +1429,8 @@ class TestHelpersRemote:
 
         mocked_app_options['repo_token'] = "anyInvalidTstToken"
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()  # no exit_app but fails on authenticating
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)  # no exit_app but fails on authenticating
 
         output = capsys.readouterr().out
         assert "401 Unauthorized" in output
@@ -1353,7 +1446,8 @@ class TestHelpersRemote:
 
         mocked_app_options['repo_token'] = tst_mtn_token   # use token from local .env file
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)
 
         assert isinstance(ini_pdv, dict)    # ProjectDevVars
         assert act_name == mocked_app_options['action']
@@ -1365,7 +1459,8 @@ class TestHelpersRemote:
 
         del mocked_app_options['repo_token']
 
-        ini_pdv, act_name, act_args, act_flags = _init_act_exec_args()
+        ini_pdv = _init_pdv()
+        act_name, act_args, act_flags = _init_act_exec_args(ini_pdv)
 
         assert isinstance(ini_pdv, dict)    # ProjectDevVars
         assert act_name == mocked_app_options['action']

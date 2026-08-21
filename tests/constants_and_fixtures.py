@@ -94,9 +94,13 @@ def mocked_app_options():
     def _dbg_or_verbose(_app_obj: ConsoleApp | None = None):
         return mocked_options.get('more_verbose', False)
 
+    def _set_option(name: str, value: Any, **_kwargs):
+        mocked_options[name] = value
+
     main_app = cast(ConsoleApp, main_app_instance())
     ori_get_arg = main_app.get_argument
     ori_get_opt = main_app.get_option
+    ori_set_opt = main_app.set_option
 
     mocked_options: dict[str, Any] = {}
     mocked_options.update({template_path_option(import_name): ""
@@ -105,6 +109,7 @@ def mocked_app_options():
                            for import_name in tst_namespaces_roots + TPL_IMPORT_NAMES})
 
     main_app.get_argument = main_app.get_option = lambda opt: mocked_options.get(opt, None)
+    main_app.set_option = _set_option
 
     with (patch('aedev.project_manager.utils.get_app_option', new=_app_option),
           patch('aedev.project_manager.__main__.get_app_option', new=_app_option),
@@ -118,6 +123,7 @@ def mocked_app_options():
     mocked_options.clear()
     main_app.get_argument = ori_get_arg
     main_app.get_option = ori_get_opt
+    main_app.set_option = ori_set_opt
 
 
 @contextlib.contextmanager

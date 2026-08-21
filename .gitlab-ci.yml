@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.96
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.98
 image: python:3.12
 
 
@@ -26,7 +26,7 @@ integrity:
       pip install --upgrade --force-reinstall --uploaded-prior-to=P9D
       -r requirements_frozen.txt
       -r tests/requirements_frozen.txt
-    - pip install --upgrade --force-reinstall ae_base==0.3.91 ae_system==0.3.12 ae_paths==0.3.46 ae_dynamicod==0.3.16 ae_literal==0.3.36 ae_updater==0.3.20 ae_core==0.3.88 ae_console==0.3.97 ae_shell==0.3.15 ae_managed_files==0.3.7 ae_pythonanywhere==0.3.9 aedev_base==0.3.10 aedev_commands==0.3.16 aedev_project_vars==0.3.22
+    - pip install --upgrade --force-reinstall ae_base==0.3.93 ae_system==0.3.15 ae_paths==0.3.46 ae_dynamicod==0.3.16 ae_literal==0.3.36 ae_updater==0.3.20 ae_core==0.3.88 ae_console==0.3.97 ae_shell==0.3.15 ae_managed_files==0.3.9 ae_pythonanywhere==0.3.9 aedev_base==0.3.10 aedev_commands==0.3.16 aedev_project_vars==0.3.22
   script:
     - pipx run --spec aedev_project_manager project-manager -v check-integrity
   artifacts:
