@@ -111,23 +111,13 @@ def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]
 
 def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: str) -> TemplateFiles:
     get_files = partial(path_items, selector=lambda _path: not skip_py_cache_files(_path) and os_path_isfile(_path))
-    tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and relative sub-paths
+    tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and destinationpaths relative to cwd
     for tpl_prj in project_tpls:
         tpl_path = tpl_prj['tpl_path']
         patcher = f"by the project {tpl_prj['import_name']} {version_tag_prefix}{tpl_prj['version']}"
         for tpl_file_path in get_files(os_path_join(tpl_path, "**/.*")) + get_files(os_path_join(tpl_path, "**/*")):
             tpl_files.append((patcher, tpl_file_path, os_path_relpath(tpl_file_path, tpl_path)))
     return tpl_files
-
-
-def _get_template_vars(pdv: ProjectDevVars) -> ContextVars:
-    tpl_vars = pdv.as_dict()
-    tpl_vars['DJANGO_PRJ'] = DJANGO_PRJ
-    tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
-    tpl_vars['frozen_req_file_path'] = frozen_req_file_path
-    tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
-    tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates
-    return tpl_vars
 
 
 def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, verbose: bool):
@@ -183,7 +173,8 @@ def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on
             cae.po(log_line)
 
 
-def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False) -> TemplateMngr | None:
+def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False, refresh_pass: int = 0
+                    ) -> TemplateMngr | None:
     """ check the project files that are outdated or missing from the registered namespace/project templates.
 
     :param cae:                 ConsoleApp instance.
@@ -191,6 +182,8 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
                                 providing values for (1) f-string template replacements, and (2) to control the template
                                 registering, patching, and deployment.
     :param fail_on_outdated:    pass True to quit app if there are missing/outdated managed files (skip-able with -f).
+    :param refresh_pass:        pass 1 or 2 to reflect double-/multi-pass refresh of the managed files (used for
+                                refresh/renew actions to ensure proper updated of setup.py and requirements.txt files).
     :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
                                 and synced from templates. e.g. to retrieve a set of the destination project file paths
                                 that would be created/updated use set(<this return value>.deploy_files.keys()).
@@ -212,13 +205,14 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
     prj_tpls = _get_and_log_project_templates(cae, pdv)
     tpl_cnt = len(prj_tpls)
     tpl_files = _get_template_files(prj_tpls, pdv['GIT_VERSION_TAG_PREFIX'])
-    tpl_vars = _get_template_vars(pdv)
+    tpl_vars = get_template_vars(pdv)
 
     man = TemplateMngr(tpl_files, PATH_PREFIXES_PARSERS, tpl_vars)
 
     cae.dpo(f"   -- checked {tpl_cnt} of {len(CACHED_TPL_PROJECTS)} registered/cached template projects: "
             + (PPF(prj_tpls) if cae.verbose else " ".join(_['import_name'] + " v" + _['version'] for _ in prj_tpls)))
-    _log_check_summary(cae, man, f"managed files of {tpl_cnt} associated template projects", fail_on_outdated)
+    pass_msg = f" (pass {refresh_pass} of 2)" if refresh_pass else ""
+    _log_check_summary(cae, man, f"managed files of {tpl_cnt} associated template projects{pass_msg}", fail_on_outdated)
 
     return man
 
@@ -244,6 +238,21 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
         path = "" if output and output[0].startswith(EXEC_GIT_ERR_PREFIX) else os_path_join(path, *sub_dir_parts)
 
     return path
+
+
+def get_template_vars(pdv: ProjectDevVars) -> ContextVars:
+    """ compile a mapping with the dev vars and callables used to generate project files from templates with f-strings.
+
+    :param pdv:                 project development variables of the project to create/update files from templates.
+    :return:                    mapping with the dev vars and callables used to generate project files from templates.
+    """
+    tpl_vars = pdv.as_dict()
+    tpl_vars['DJANGO_PRJ'] = DJANGO_PRJ
+    tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
+    tpl_vars['frozen_req_file_path'] = frozen_req_file_path
+    tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
+    tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates
+    return tpl_vars
 
 
 def path_pfx_place_into_package_path(mf: ManagedFile):

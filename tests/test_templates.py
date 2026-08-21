@@ -33,7 +33,7 @@ from constants_and_fixtures import (
 from aedev.project_manager.templates import (
     CACHED_TPL_PROJECTS, PATH_PREFIXES_PARSERS, SKIP_FOR_PORTIONS_PATH_PFX, SKIP_PRJ_TYPE_PATH_PFX,
     TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    check_templates, clone_template_project, _get_template_vars, _log_check_outdated,
+    check_templates, clone_template_project, get_template_vars, _log_check_outdated,
     path_pfx_place_into_package_path, path_pfx_skip_for_portions, path_pfx_skip_if_project_type,
     project_templates, register_template, setup_kwargs_literal, template_path_option, template_version_option)
 
@@ -70,15 +70,6 @@ def test_declaration_of_template_vars(cleanup_caches):
 
 
 class TestHelpers:
-    def test__get_template_vars(self):
-        tpl_vars = _get_template_vars(pdv_with_email())
-
-        assert isinstance(tpl_vars, dict)
-        assert tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] == TEST_PROJECTS_PARENT_FOLDER   # .gitlab-ci.yml pf project_tpls
-        assert tpl_vars['frozen_req_file_path'] is frozen_req_file_path                 # .gitlab-ci.yml of project_tpls
-        assert tpl_vars['setup_kwargs_literal'] == setup_kwargs_literal                 # in setup.py of project_tpls
-        assert '_add_base_globals' in tpl_vars
-
     def test_app_options_namespace_module(self, cons_app, tmp_path):
         nsn = 'abc'
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
@@ -613,6 +604,15 @@ class TestHelpers:
         assert os_path_isfile(dst_file)
         assert norm_path(dst_file) == norm_path(dst_file_path)
         assert read_file(dst_file) == content
+
+    def test_get_template_vars(self):
+        tpl_vars = get_template_vars(pdv_with_email())
+
+        assert isinstance(tpl_vars, dict)
+        assert tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] == TEST_PROJECTS_PARENT_FOLDER   # .gitlab-ci.yml pf project_tpls
+        assert tpl_vars['frozen_req_file_path'] is frozen_req_file_path                 # .gitlab-ci.yml of project_tpls
+        assert tpl_vars['setup_kwargs_literal'] == setup_kwargs_literal                 # in setup.py of project_tpls
+        assert '_add_base_globals' in tpl_vars
 
     def test_patch_string_setup_template(self):
         setup_tpl = textwrap.dedent('''\
