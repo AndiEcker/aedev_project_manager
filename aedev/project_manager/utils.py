@@ -14,7 +14,7 @@ from gitlab.v4.objects import Project
 from packaging.version import Version, InvalidVersion
 
 from ae.base import (                                                                                   # type: ignore
-    DOCS_FOLDER, PY_EXT, PY_INIT, TESTS_FOLDER,
+    PY_EXT, PY_INIT,
     in_wd, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, read_file, write_file)
 from ae.base import write_file as patchable_write_file                     # pylint: disable=reimported # type: ignore
 from ae.system import (                                                                                 # type: ignore
@@ -441,18 +441,23 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
     return 'release_project' if merge_requests else 'request_merge'
 
 
-def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, import_name: str
-                        ) -> set[str]:   # pragma: no cover
+def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, import_name: str,
+                        exclude_prefixes: tuple[str, ...] = ()) -> set[str]:   # pragma: no cover
     """ determine the import dependencies of all the package/project code files.
 
     :param cae:                 main app instance.
     :param project_path:        project root path.
     :param project_type:        project type.
     :param import_name:         project import name.
+    :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
+                                value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
+                                extension found underneath the specified :paramref:`~import_dependencies.project_path`.
+                                specifying e.g. the tuple `(DOCS_FOLDER + "/", )` would exclude the import dependencies
+                                of all the code files underneath the docs folder (like for example `conf.py`).
     :return:                    set of imported package/project names.
     """
     import_deps: set[str] = set()
-    for code_file in package_code_files(project_path):
+    for code_file in package_code_files(project_path, exclude_prefixes=exclude_prefixes):
         deps_or_err = code_file_imports(os_path_join(project_path, code_file), import_name)
         cae.chk(23, no_err := isinstance(deps_or_err, set), cast(str, deps_or_err))
         if no_err:
@@ -521,13 +526,15 @@ def missing_imports(cae: ConsoleApp, import_deps: set[str], project_reqs: list[s
     """
     import_names = {norm_pip_name(_pip_name): _imp_name for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
     cae.vpo(f"    ! irregular PyPI project names (not convertable from their import names): {import_names}")
+
     # from itertools import accumulate
-    # norm_deps={_pe for _dep in deps for _pe in accumulate(_dep.replace('_', '-').split('.'), lambda x, y: f"{x}-{y}")}
+    # perm_deps={_pe for _dep in deps for _pe in accumulate(_dep.replace('_', '-').split('.'), lambda x, y: f"{x}-{y}")}
     perm_deps = set()
     for _dep_names in import_deps:
         _parts = _dep_names.replace('_', '-').split('.')
         for i in range(1, len(_parts) + 1):
             perm_deps.add('-'.join(_parts[:i]))
+
     cae.vpo(f"    ! permutations of dependencies import names: {perm_deps}")
     ignoring_reqs = [norm_pip_name(_pip_name) for _pip_name in ignore_extra_reqs]
     cae.dpo(f"   !! ignored required PyPI projects that are not explicitly imported: {ignoring_reqs}")
@@ -545,13 +552,11 @@ def missing_imports(cae: ConsoleApp, import_deps: set[str], project_reqs: list[s
     return missed_imports, ignored_reqs
 
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-def missing_requirements(cae: ConsoleApp, project_path: str, import_deps: set[str], venv_packages: list[str],
+def missing_requirements(project_path: str, import_deps: set[str], venv_packages: list[str],
                          project_reqs: list[str], ignoring_imports: list[str]
                          ) -> tuple[list[str], list[str], set[str]]:    # pragma: no cover
     """ determine the import names of a local project repository that are not explicitly required.
 
-    :param cae:                 main app instance.
     :param project_path:        root path of the local project repository.
     :param import_deps:         set of imported package/project names (determinable by :func:`import_dependencies`).
     :param venv_packages:       list of installed pip packages/projects names (returned by :func:`installed_packages`).
@@ -561,18 +566,17 @@ def missing_requirements(cae: ConsoleApp, project_path: str, import_deps: set[st
                                 (1) not required, (2) not installed in VENV (3) not required but ignored.
     """
     norm_pip_names = {_imp_name: norm_pip_name(_pip_name) for _imp_name, _pip_name in PYPI_PACKAGE_NAMES.items()}
-    cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
     missing_reqs = []
     uninstalled_packages: list[str] = []
     ignored_imports = set()
 
-    def _in_packages(_packages: list[str], current_imp_names: list[str], current_pip_name: str) -> bool:
+    def _in_packages(_packages: list[str], _current_imp_names: list[str], _current_pip_name: str) -> bool:
         return any(
             norm_pip_name(_n) in _packages
             or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + PY_EXT))
             or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), PY_INIT))
-            or norm_pip_names.get(_n, current_pip_name) in _packages
-            for _n in current_imp_names)
+            or norm_pip_names.get(_n, _current_pip_name) in _packages
+            for _n in _current_imp_names)
 
     for imp_path in import_deps:
         mod_obj = PyMo(imp_path)
@@ -592,15 +596,18 @@ def missing_requirements(cae: ConsoleApp, project_path: str, import_deps: set[st
     return missing_reqs, uninstalled_packages, ignored_imports
 
 
-def package_code_files(prj_root_path: str) -> set[str]:
+def package_code_files(project_path: str, exclude_prefixes: tuple[str, ...] = ()) -> set[str]:
     """ determines the package code files present in the specified project root path.
 
-    :param prj_root_path:       project root path.
+    :param project_path:        project root path.
+    :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
+                                value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
+                                extension found underneath the specified :paramref:`~package_code_files.project_path`.
     :return:                    set of package code files present in the specified project root path.
     """
-    with in_wd(prj_root_path):
+    with in_wd(project_path):
         code_files = path_files("**/*" + PY_EXT)
-    return {_ for _ in code_files if not _.startswith((DOCS_FOLDER + "/", TESTS_FOLDER + "/"))}
+    return {_ for _ in code_files if not _.startswith(exclude_prefixes)}
 
 
 def ppp(output: Iterable[str]) -> str:
