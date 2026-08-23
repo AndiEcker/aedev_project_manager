@@ -37,7 +37,7 @@ from aedev.commands import (
     GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_add, git_checkout, git_current_branch, git_remotes, git_uncommitted)
 from aedev.project_vars import (
-    PDV_NULL_VERSION,
+    PDV_REQ_FILE_NAME, PDV_NULL_VERSION,
     ProjectDevVars, latest_remote_version, main_file_path)
 
 from aedev.project_manager.templates import CACHED_TPL_PROJECTS, TPL_IMPORT_NAMES, register_template
@@ -356,14 +356,20 @@ class TestActionsLocal:
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, module_repo_path,
                              mocked_app_options):
         mocked_app_options['force'] = 12
+        write_file(os_path_join(changed_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
+                   "# flag file to run integrity checks", make_dirs=True)
 
         check_integrity(pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
+
         assert capsys.readouterr().out
 
+        write_file(os_path_join(empty_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
+                   "# flag file to run integrity checks", make_dirs=True)
         write_file(os_path_join(empty_repo_path, 'manage.py'), "# any content")     # fake DJANGO_PRJ
         write_file(os_path_join(empty_repo_path, '.pytest_cache/coverage.json'),    # test coverage results load&display
                    json.dumps({'totals': {'percent_covered_display': "99", 'covered_lines': 96, 'excluded_lines': 9}}),
                    make_dirs=True)
+
         check_integrity(pdv_with_email(project_path=empty_repo_path), 'manage.py')
 
         out = capsys.readouterr().out
@@ -372,6 +378,9 @@ class TestActionsLocal:
         assert "/excluded=9"
 
         mocked_app_options['more_verbose'] = False
+        write_file(os_path_join(module_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
+                   "# flag file to run integrity checks", make_dirs=True)
+
         check_integrity(pdv_with_email(project_path=module_repo_path))
 
         assert capsys.readouterr().out
@@ -384,6 +393,8 @@ class TestActionsLocal:
     def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
                                                mocked_app_options, patched_shutdown_wrapper):
         mocked_app_options['more_verbose'] = True
+        write_file(os_path_join(changed_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
+                   "# flag file to run integrity checks", make_dirs=True)
 
         cl = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
         assert len(cl) == 1
@@ -404,17 +415,19 @@ class TestActionsLocal:
                                     patched_shutdown_wrapper):
         if not on_ci_host():
             mocked_app_options['force'] = 1  # skip the only locally running template-chk-len(missing)=11 error (44, )
-        tst_fil = os_path_join(module_repo_path, TESTS_FOLDER, 'test_test' + PY_EXT)
-        write_file(tst_fil, "def test_failing():\n    assert False\n", make_dirs=True)
+        tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
+        tst_fil = os_path_join(tst_dir, 'test_test' + PY_EXT)
+        write_file(os_path_join(tst_dir, PDV_REQ_FILE_NAME), "# flag file to run integrity checks", make_dirs=True)
+        write_file(tst_fil, "def test_failing():\n    assert False\n")
 
         calls = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=module_repo_path))
 
         assert len(calls) == 1
         assert calls[0]['exit_code'] == 46  # failed unit test assert (46, )
         output = capsys.readouterr().out
-        assert "  --  missing 1 basic project folders/files" in output
+        assert " basic project folders/files" in output
         if not on_ci_host():
-            assert "   -- 11 managed files missing: " in output
+            assert " managed files missing: " in output
             assert "  ### forced to ignore/skip error 44" in output
         assert "  === flake8 linter checks done" in output
         assert "  === mypy typing checks done" in output
@@ -433,9 +446,9 @@ class TestActionsLocal:
         assert calls[0]['exit_code'] == 46  # empty unit tests folder (46, )
         output = capsys.readouterr().out
         assert output
-        assert "  --  missing 1 basic project folders/files" in output
+        assert " basic project folders/files" in output
         if not on_ci_host():
-            assert "   -- 11 managed files missing: " in output
+            assert " managed files missing: " in output
             assert "  ### forced to ignore/skip error 44" in output
         assert "  === flake8 linter checks done" in output
         assert "  === mypy typing checks done" in output

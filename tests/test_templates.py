@@ -465,6 +465,9 @@ class TestHelpers:
         # pdv['main_app_options'] = {'project_tpls_project_path': "~/src/aedev_project_tpls"}
         write_file(os.path.join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
         # write_file(os.path.join(pdv['project_path'], '.gitignore'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
+        write_file(os_path_join(pdv['project_path'], pdv['TESTS_FOLDER'], pdv['REQ_FILE_NAME']),
+                   "# flag file to run integrity checks - put before first check_templates-run to get same version of"
+                   "# .gitlab-CI.yml file (with pip command with extra -r tests/requirements.txt", make_dirs=True)
         por_name = pdv['portion_name']
 
         with in_wd(module_repo_path):

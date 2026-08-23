@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.98
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.100
 """ setup of aedev namespace package portion project_manager: maintain Python projects locally and remotely. """
 import pathlib
 import sys
@@ -30,7 +30,7 @@ setup_kwargs: dict[str, Any] = {
     },
     'extras_require': {
         'dev': [
-            'aedev_project_tpls==0.3.98',
+            'aedev_project_tpls==0.3.100',
             'aedev_aedev==0.3.34',
             'ae_app_log==0.3.3',
             'ae_base==0.3.93',
@@ -75,7 +75,7 @@ setup_kwargs: dict[str, Any] = {
             'librt==0.13.0',
             'MarkupSafe==3.0.3',
             'mccabe==0.7.0',
-            'mypy==2.3.1',
+            'mypy==2.3.0',
             'mypy_extensions==1.1.0',
             'packaging==26.3',
             'pathspec==1.1.1',
@@ -123,7 +123,7 @@ setup_kwargs: dict[str, Any] = {
             'userpath==1.9.2',
             'anybadge==1.16.0',
             'flake8==7.3.0',
-            'mypy==2.3.1',
+            'mypy==2.3.0',
             'pylint==4.0.7',
             'pytest==9.1.1',
             'pytest-cov==7.1.0',
@@ -134,7 +134,7 @@ setup_kwargs: dict[str, Any] = {
         'tests': [
             'anybadge==1.16.0',
             'flake8==7.3.0',
-            'mypy==2.3.1',
+            'mypy==2.3.0',
             'pylint==4.0.7',
             'pytest==9.1.1',
             'pytest-cov==7.1.0',
@@ -146,7 +146,7 @@ setup_kwargs: dict[str, Any] = {
         'anybadge==1.16.0',
         'coverage==7.15.4',
         'flake8==7.3.0',
-        'mypy==2.3.1',
+        'mypy==2.3.0',
         'packaging==26.3',
         'pillow==12.3.0',
         'types-Pillow==10.2.0.20240822',
@@ -195,7 +195,7 @@ setup_kwargs: dict[str, Any] = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.34',
+    'version': '0.3.35',
     'zip_safe': True,
 }
 

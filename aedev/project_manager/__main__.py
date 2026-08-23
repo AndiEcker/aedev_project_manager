@@ -75,8 +75,8 @@ from packaging.version import Version, InvalidVersion
 from PIL import Image
 
 
-from ae.base import (  # type: ignore # pylint: disable=reimported
-    PY_INIT, TESTS_FOLDER, UNSET, UnsetType,
+from ae.base import (                                                       # type: ignore # pylint: disable=reimported
+    PY_INIT, UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     pep8_format, read_bin_file, read_file, url_failure, write_file)
@@ -2607,11 +2607,11 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
 
     _check_resources(ini_pdv)
 
-    _check_code_flake8(ini_pdv, path_args)
-    _check_code_mypy(ini_pdv, path_args)
-    _check_code_pylint(ini_pdv, path_args)
-    if (os_path_isdir(os_path_join(project_path, TESTS_FOLDER)) or
+    if (os_path_isfile(os_path_join(project_path, ini_pdv['TESTS_FOLDER'], ini_pdv['REQ_FILE_NAME'])) or
             any(os.path.exists(os_path_join(project_path, file_or_dir)) for file_or_dir in path_args)):
+        _check_code_flake8(ini_pdv, path_args)
+        _check_code_mypy(ini_pdv, path_args)
+        _check_code_pylint(ini_pdv, path_args)
         _check_code_pytest(ini_pdv, path_args)
 
     cae.po(f" ==== run integrity checks for {ini_pdv['project_title']}")
@@ -2660,15 +2660,17 @@ def check_pytest(ini_pdv: ProjectDevVars, *path_args: str):         # pragma: no
 def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
     """ check project distribution/run-time requirements by parsing the source code. """
     project_path = ini_pdv['project_path']
-    import_deps = import_dependencies(cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'])
+    import_deps = import_dependencies(cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'],
+                                      exclude_prefixes=(ini_pdv['DOCS_FOLDER'] + "/", ini_pdv['TESTS_FOLDER'] + "/"))
     venv_packages = installed_packages(cae, project_path)
     project_reqs = [stripped_pip_name(_req) for _req in ini_pdv.pdv_val('install_requires')]
     cae.vpo(f"    ! install requires: {project_reqs}")
 
+    # imports to ignore: merge project-specific from .env with always ignorable imports(like setuptools in setup.py)
+    ignoring_imports = list(ini_pdv.pdv_val('IGNORE_MISSING_IMPORTS')) + ['djangocms_admin_style', 'setuptools']
+    cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
     missing_reqs, uninstalled_packages, ignored_imports = missing_requirements(
-        cae, project_path, import_deps, venv_packages, project_reqs,
-        # imports to ignore: merge project-specific from .env with always ignorable imports(like setuptools in setup.py)
-        list(ini_pdv.pdv_val('IGNORE_MISSING_IMPORTS')) + ['djangocms_admin_style', 'setuptools'])
+        project_path, import_deps, venv_packages, project_reqs, ignoring_imports)
     if missing_reqs:
         cae.po(f"    # used/imported packages that are not required (missing in requirements.txt): {missing_reqs}")
     if uninstalled_packages:

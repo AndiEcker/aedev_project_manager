@@ -1125,7 +1125,7 @@ class TestOtherHelpers:
 
         assert os_path_join("aedev", "project_manager", PY_INIT) in package_code_files(".")
 
-        assert os_path_join(TESTS_FOLDER, "conftest.py") not in package_code_files(".")
+        assert os_path_join(TESTS_FOLDER, "conftest.py") not in package_code_files(".", (TESTS_FOLDER + "/", ))
 
     def test_ppp(self):
         assert ppp("") == ""
