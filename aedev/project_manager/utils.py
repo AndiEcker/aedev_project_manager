@@ -703,15 +703,6 @@ def renew_project_dir(pdv: ProjectDevVars):     # pylint: disable=too-many-branc
             patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}")
 
 
-def stripped_pip_name(project_name_version: str) -> str:
-    """ convert PyPI project/distribution/package into a normalized pip name.
-
-    :param project_name_version: PyPI project/distribution/package with an optional version string.
-    :return:                    stripped and normalized pip name of the specified PyPI project/distribution/package.
-    """
-    return norm_pip_name(project_name_version.split(PROJECT_VERSION_SEP)[0])
-
-
 def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packages: bool = False,
                            integrate_pip_errors: bool = False) -> list[str]:
     """ update frozen requirements file
