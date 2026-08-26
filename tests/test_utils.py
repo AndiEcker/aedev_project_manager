@@ -32,7 +32,7 @@ from aedev.project_manager.utils import (
     children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
     get_host_class_name, get_host_config_val, get_host_domain, get_host_group, get_host_user_name, get_host_user_token,
     get_mirror_urls, git_init_add, git_push_url, guess_next_action, imported_modules, package_code_files, ppp,
-    project_topics, stripped_pip_name, refresh_pdv, renew_project_dir, update_frozen_req_file, update_frozen_req_files,
+    project_topics, refresh_pdv, renew_project_dir, update_frozen_req_file, update_frozen_req_files,
     write_commit_message)
 
 
@@ -1194,12 +1194,6 @@ class TestOtherHelpers:
 
         assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
         assert not os.path.exists(APP_BUILD_CFG_FILENAME)
-
-    def test_stripped_pip_name(self):
-        assert stripped_pip_name("dot.name") == "dot-name"
-        assert stripped_pip_name("under_name") == "under-name"
-        assert stripped_pip_name("stripped-name") == "stripped-name"
-        assert stripped_pip_name(f"name{PROJECT_VERSION_SEP}1.2.6") == "name"
 
     def test_update_frozen_req_files_frozen_dev_req(self, empty_repo_path, recwarn):
         pdv = ProjectDevVars(project_path=empty_repo_path)

@@ -96,7 +96,7 @@ from ae.pythonanywhere import PythonanywhereApi                                 
 from aedev.base import (                                                                                # type: ignore
     ALL_PRJ_TYPES, ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ,
     PIP_CMD, PROJECT_VERSION_SEP, TEST_PROJECTS_PARENT_FOLDER,
-    code_version, get_pypi_versions, project_name_version)
+    code_version, get_pypi_versions, project_name_version, stripped_pip_name)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME,
     active_venv, bytes_file_diff, check_commit_msg_file,
@@ -122,7 +122,7 @@ from aedev.project_manager.utils import (
     check_folders_files_completeness, children_desc, children_project_names, expected_args, get_app_option, get_branch,
     get_host_class_name, get_host_domain, get_host_group, get_host_user_name, get_host_user_token, get_mirror_urls,
     git_init_add, git_push_url, guess_next_action, import_dependencies, installed_packages, missing_imports,
-    missing_requirements, ppp, project_topics, renew_project_dir, stripped_pip_name, update_frozen_req_files,
+    missing_requirements, ppp, project_topics, renew_project_dir, update_frozen_req_files,
     write_commit_message)
 
 # pylint: disable-next=invalid-name
@@ -444,61 +444,84 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     cae.po(f"  === pytest coverage {msg} - check coverage report in file:///{project_path}/htmlcov/index.html")
 
 
+# pylint: disable=too-many-locals,too-many-branches,too-many-statements
 def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     """ check/renew venv of a project; used for the actions check_venv and renew_venv. """
     project_path = pdv['project_path']
+    period = pdv['PYPI_COOLDOWN_PERIOD']    # before ISO 8601 datetime ('2026-01-02T03:04:05Z') or days period ('P6D')
     verbose = debug_or_verbose(cae)
+    act = "found" if check_only else "installed"
     install_options = {'dry_run': check_only}
     if not check_only and _act_force_opt(pdv):
         install_options['force_reinstall'] = True       # pragma: no cover
     if verbose:
         install_options['return_implicits'] = True
-    act = "found" if check_only else "installed"
 
-    # 'docs_requires' not installed on repo remote/CI; frozen 'dev_requires' adds not explicitely required venv-projects
-    reqs = pdv.pdv_val('install_requires') + pdv.pdv_val('tests_requires')
+    cool_reqs = set()
+    hot_reqs = set()
+    hot_masks = pdv['PYPI_COOLDOWN_EXCLUDES'].split(",")
+    all_reqs = set(pdv.pdv_val('dev_requires') + pdv.pdv_val('docs_requires') +
+                   pdv.pdv_val('install_requires') + pdv.pdv_val('tests_requires'))
+    for pkg in all_reqs:
+        if any(fnmatchcase(stripped_pip_name(pkg), _mask) for _mask in hot_masks):
+            hot_reqs.add(pkg)
+        else:
+            cool_reqs.add(pkg)
     if verbose:
-        cae.po(f"  --- {act} {len(reqs)} required PyPI projects:{ppp(sorted(reqs))}")
+        cae.po(f"  --- found {len(all_reqs)} required PyPI projects"
+               + (f" (cooled-down={len(cool_reqs)} hot={len(hot_reqs)})" if period and not cae.debug else "")
+               + f":{ppp(sorted(all_reqs))}")
+        if cae.debug:   # pragma: no cover
+            if cool_reqs:
+                cae.po(f"   -- {len(cool_reqs)} of them cooled-down requirements:{ppp(sorted(cool_reqs))}")
+            if hot_reqs:
+                cae.po(f"   -- {len(hot_reqs)} of them hot requirements:{ppp(sorted(hot_reqs))}")
 
     with in_prj_dir_venv(project_path=project_path):
         venv = active_venv()
     cae.chk(22, bool(venv), "no valid Python VENV configured or activated")
-    cae.vpo(f"    - using Python {venv=}")
+    cae.dpo(f"  --- using Python {venv=}")
 
     if verbose:
         installed: list[str] = [""]   # prevent merge pip warnings
         with in_prj_dir_venv(project_path=project_path):
             sh_exit_if_exec_err(22, PIP_CMD, extra_args=["list", "--format=json"], lines_output=installed)
-        installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + _.get("editable_project_location", "")
+        installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + " " + _.get("editable_project_location", "")
                      for _ in json.loads("".join(installed))]
-        cae.po(f"   -- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
+        cae.po(f"  --- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
 
-    # ISO 8601 datetime (e.g., '2026-01-02T03:04:05Z') or period (e.g., 'P6D' for uploaded at least 6 days ago)
-    out = pip_install(project_path, *reqs, cooldown_period=pdv['PYPI_COOLDOWN_PERIOD'], **install_options)
-    if verbose:     # includes implicit/not-directly-required projects
-        deps = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in out.items() if _v["requested"]]
-        cae.po(f"  --- {act} {len(deps)} outdated and cooled-down required dependencies:{ppp(sorted(deps))}")
-        deps = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in out.items() if not _v["requested"]]
-        cae.po(f"   -- {act} {len(deps)} outdated and cooled-down implicit dependencies:{ppp(sorted(deps))}")
-    else:           # pragma: no cover
-        deps = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in out.items()]
-        cae.po(f"  --- {act} {len(out)} outdated cooled-down of {len(reqs)} required dependencies:{ppp(sorted(deps))}")
+    cool_in = {}
+    if period:
+        msg = "outdated and cooled-down projects"
+        if cool_reqs:
+            cool_in = pip_install(project_path, *cool_reqs, cooldown_period=period, **install_options)
+        if cae.debug:  # pragma: no cover
+            cae.po(f" ---- {act} {len(cool_in)} {msg}, out of the {len(cool_reqs)} projects:{ppp(sorted(cool_reqs))}")
+        if verbose:     # includes implicit/not-directly-required projects
+            ins = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in cool_in.items() if _v["requested"]]
+            cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
+            ins = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in cool_in.items() if not _v["requested"]]
+            cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
+        else:           # pragma: no cover
+            ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in cool_in.items()]
+            cae.po(f"  --- {act} {len(cool_in)} {msg}:{ppp(sorted(ins))}")
 
-    hot_pkg_names = [stripped_pip_name(_pv) for _pv in pdv.pdv_val('cooldown_excluded_projects')]
-    hot_reqs = [_pv for _pv in reqs if stripped_pip_name(_pv) in hot_pkg_names]
+    msg = "outdated " + ("and hot (excluded from cool-down) " if period else "") + "projects"
+    hot_in = {}
+    if hot_reqs:
+        hot_in = pip_install(project_path, *hot_reqs, **install_options)
     if cae.debug:   # pragma: no cover
-        cae.po(f"   -- {len(hot_reqs)} required hot (excluded from cooldown) projects found:{ppp(sorted(hot_reqs))}")
-    hot_outs = pip_install(project_path, *hot_reqs, **install_options)
+        cae.po(f" ---- {act} {len(hot_in)} {msg}, out of the {len(hot_reqs)} required projects:{ppp(sorted(hot_reqs))}")
     if verbose:
-        deps = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_outs.items() if _v["requested"]]
-        cae.po(f"  --- {act} {len(deps)} outdated of {len(hot_reqs)} hot required dependencies:{ppp(sorted(deps))}")
-        deps = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_outs.items() if not _v["requested"]]
-        cae.po(f"  --- {act} {len(deps)} outdated of {len(hot_reqs)} hot implicit dependencies:{ppp(sorted(deps))}")
+        ins = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_in.items() if _v["requested"]]
+        cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
+        ins = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_in.items() if not _v["requested"]]
+        cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
     else:           # pragma: no cover
-        deps = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_outs.items()]
-        cae.po(f"  --- {act} {len(hot_outs)} outdated of {len(hot_reqs)} hot dependencies:{ppp(sorted(deps))}")
+        ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_in.items()]
+        cae.po(f"  --- {act} {len(hot_in)} {msg}:{ppp(sorted(ins))}")
 
-    cae.po(f" ==== {act} {len(set(out) & set(hot_outs))} outdated projects in {venv=} for {pdv['project_title']}")
+    cae.po(f" ==== {act} {len(cool_in) + len(hot_in)} outdated projects in {venv=} for {pdv['project_title']}")
 
 
 def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                                 # pragma: no cover
@@ -1064,7 +1087,12 @@ def _required_package(import_or_package_name: str, packages_versions: list[str])
 
 
 def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
-    period = (f"--uploaded-prior-to={pdv['PYPI_COOLDOWN_PERIOD']}", ) if pdv['PYPI_COOLDOWN_PERIOD'] else ()
+    period = (f"--uploaded-prior-to={_p_arg}", ) if (_p_arg := pdv['PYPI_COOLDOWN_PERIOD']) else ()
+    hot_masks = pdv['PYPI_COOLDOWN_EXCLUDES'].split(",")
+
+    def _print_lines(lines: list[str]):
+        for _line in lines:
+            cae.po(f"      {_line}")
 
     with in_prj_dir_venv(pdv['project_path']):
         output: list[str] = []
@@ -1072,35 +1100,39 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
                 env_vars=os.environ.copy())
         if output:              # pragma: no cover
             cae.po(f"  --- found {len(output)} broken requirements:")
-            for line in output:
-                cae.po(f"      {line}")
+            _print_lines(output)
 
         output = []
         sh_exec(PIP_CMD, extra_args=("list", "--editable"), lines_output=output, app_obj=cae,
                 env_vars=os.environ.copy())
         cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
-        for line in output:
-            cae.po(f"      {line}")
+        _print_lines(output)
 
         output = []
         sh_exec(PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, app_obj=cae)
-        cae.po(f"  --- found {max(0, len(output) - 2)} outdated {'hot ' if period else ''}projects:")
-        for line in output:
-            cae.po(f"      {line}")
+        found = []
+        for idx, line in enumerate(output):
+            if idx < 2 or any(fnmatchcase(stripped_pip_name(line.strip().split(" ")[0]), _msk) for _msk in hot_masks):
+                found.append(line)
+        if len(found) > 2:  # pragma: no cover
+            cae.po(f"  --- found {max(0, len(found) - 2)} outdated {'hot ' if period else ''}projects:")
+            _print_lines(found)
 
-        if period:
+        if period:  # needs pip list w/ version > 26.1.2 (created issue #14189, fixed by #14190/v26.2)
             output = []
-            # needs pip version > 26.1.2 (created issue #14189, fixed by #14190/v26.2)
             sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, lines_output=output, app_obj=cae)
-            cae.po(f"  --- found {max(0, len(output) - 2)} outdated cooled-down projects:")
-            for line in output:
-                cae.po(f"      {line}")
+            found = []
+            for idx, line in enumerate(output):
+                if idx < 2 and not any(fnmatchcase(line.strip().split(" ")[0], _msk) for _msk in hot_masks):
+                    found.append(line)
+            if len(found) > 2:  # pragma: no cover
+                cae.po(f"  --- found {max(0, len(found) - 2)} outdated cooled-down projects:")
+                _print_lines(found)
 
         output = []
         sh_exec(PIP_CMD, extra_args=("list", "--not-required"), lines_output=output, app_obj=cae)
         cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
-        for line in output:
-            cae.po(f"      {line}")
+        _print_lines(output)
 
 
 def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:                   # pragma: no cover
@@ -2601,6 +2633,7 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     check_folders_files_completeness(cae, ini_pdv)
 
     if not on_ci_host():                                            # pragma: no cover
+        check_requirements(ini_pdv)
         check_venv(ini_pdv)
         with in_prj_dir_venv(project_path):
             check_templates(cae, ini_pdv, fail_on_outdated=True)
@@ -2683,7 +2716,7 @@ def check_requirements(ini_pdv: ProjectDevVars):    # pragma: no cover
         cae.po(f"    # required projects/packages that are not imported: {missed_imports}")
     if ignored_reqs and debug_or_verbose(cae):
         cae.po(f"    . ignored not imported requirements: {ignored_reqs}")
-    cae.po(f"  === checked required, imported and installed PyPI packages/projects for {ini_pdv['project_title']}")
+    cae.po(f"  === run code-check of required, imported and installed PyPI projects for {ini_pdv['project_title']}")
 
 
 @_action(*ANY_PRJ_TYPE)
@@ -3237,15 +3270,16 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):                 
 
 @_action(*ANY_PRJ_TYPE, flags={'MASKS': [], 'EDITABLE': False}, shortcut='upgrade')
 def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):                        # pragma: no cover
-    """ upgrade project requirements|dependencies, optionally as editable package.
+    """ upgrade project install-requirements|-dependencies, optionally as editable package.
 
     :param ini_pdv:             project dev vars of the project to create/update a mirror/replication for.
     :param optional_flags:      additional/optional command line arguments:
 
                                 * ``EDITABLE``: requirements available as sister packager (under the same project parent
                                   folder) will be installed/upgraded as editable (via the -e option of `pip`).
-                                * ``MASKS``: list of package name masks/pattern strings to restrict the upgraded
-                                  packages. if not specified then all packages required by the project will be upgraded.
+                                * ``MASKS``: list of normalized package name masks/pattern strings to restrict the
+                                  packages to upgrade. if not specified then all packages required by the project will
+                                  be upgraded.
     """
     packages = ini_pdv.pdv_val('install_requires')
     pkg_masks = optional_flags['MASKS']
@@ -3255,7 +3289,7 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
     with in_prj_dir_venv(ini_pdv['project_path']):
         upgraded = []
         for pkg_name in packages:
-            if not pkg_masks or any(fnmatchcase(pkg_name, mask) for mask in pkg_masks):
+            if not pkg_masks or any(fnmatchcase(stripped_pip_name(pkg_name), mask) for mask in pkg_masks):
                 args = ["--upgrade"]
                 if editable and os_path_isdir(pgk_path := os_path_join("..", pkg_name)):
                     args.append("--editable")

@@ -1,21 +1,20 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.100
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.102
 image: python:3.12
-
-
-
-
-
-.check_rules: &check-rules
+ 
+ 
+.check_rules: &check-rules      # minimize job-runs on gitlab CI by separating rules for push/test and deploy
   rules:
     - if: $CI_COMMIT_BRANCH == "develop"
       when: never
-    - if: $CI_COMMIT_BRANCH =~ /^release/
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never
+    - if: $CI_COMMIT_TAG        # - if: $CI_COMMIT_TAG =~ /^v?[0-9]+[.][0-9]+([.][0-9]+)?$/
+      when: never               # CI_COMMIT_TAG is only set if the push does contain a new tag (after commit)
     - if: $CI_COMMIT_BRANCH
+.release_rules: &release-rules  # release branch triggers deploy to PyPI
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^release/
 
-integrity:
+integrity:                      # run integrity tests
+  stage: test
   <<: *check-rules
   before_script:
     - python --version
@@ -24,9 +23,43 @@ integrity:
     - pip --version
     - >
       pip install --upgrade --force-reinstall --uploaded-prior-to=P9D
-      -r requirements_frozen.txt
-      -r tests/requirements_frozen.txt
-    - pip install --upgrade --force-reinstall ae_base==0.3.93 ae_system==0.3.15 ae_paths==0.3.46 ae_dynamicod==0.3.16 ae_literal==0.3.36 ae_updater==0.3.20 ae_core==0.3.88 ae_console==0.3.97 ae_shell==0.3.15 ae_managed_files==0.3.9 ae_pythonanywhere==0.3.9 aedev_base==0.3.10 aedev_commands==0.3.16 aedev_project_vars==0.3.22
+      anybadge==1.16.0
+      coverage==7.15.4
+      flake8==7.3.0
+      mypy==2.3.1
+      packaging==26.3
+      pillow==12.3.0
+      types-Pillow==10.2.0.20240822
+      PyGithub==2.9.1
+      pylint==4.0.7
+      pytest==9.1.1
+      pytest-cov==7.1.0
+      python-gitlab==8.5.0
+      requests==2.34.2
+      anybadge==1.16.0
+      flake8==7.3.0
+      mypy==2.3.1
+      pylint==4.0.7
+      pytest==9.1.1
+      pytest-cov==7.1.0
+      typing==3.7.4.3
+      types-setuptools==84.0.0.20260812
+    - >
+      pip install --upgrade --force-reinstall 
+      ae_base==0.3.93
+      ae_system==0.3.15
+      ae_paths==0.3.46
+      ae_dynamicod==0.3.16
+      ae_literal==0.3.36
+      ae_updater==0.3.20
+      ae_core==0.3.88
+      ae_console==0.3.97
+      ae_shell==0.3.15
+      ae_managed_files==0.3.9
+      ae_pythonanywhere==0.3.9
+      aedev_base==0.3.11
+      aedev_commands==0.3.16
+      aedev_project_vars==0.3.24
   script:
     - pipx run --spec aedev_project_manager project-manager -v check-integrity
     - |
@@ -54,11 +87,11 @@ integrity:
       - htmlcov/
       - .pytest_cache/
 
-pages:
+pages:                          # prepare artifacts for release
   stage: deploy
-  dependencies:
+  needs:
     - integrity
-  <<: *check-rules
+  <<: *release-rules
   script:
     - ls -l -R
     - mkdir -p public/coverage
@@ -75,14 +108,11 @@ pages:
     paths:
       - public
 
-
-pypi_deploy:
+pypi_deploy:                    # release to PyPI
   stage: deploy
-  rules:
-    # - if: $CI_COMMIT_TAG =~ /^v?[0-9]+[.][0-9]+([.][0-9]+)?$/
-    # CI_COMMIT_TAG is only set if the push does contain a new tag (and no new commit); separate push and rules are
-    # additionally creating duplicate jobs on gitlab CI - finally using release branch to trigger deploy.
-    - if: $CI_COMMIT_BRANCH =~ /^release/
+  needs:
+    - integrity
+  <<: *release-rules
   variables:
     # the pushed branch has to be a protected branch in order to get the CI variables for the twine/PyPI authentication.
     TWINE_USERNAME: $PYPI_USERNAME
