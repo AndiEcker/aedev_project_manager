@@ -229,7 +229,7 @@ def _act_spec(pdv: ProjectDevVars, act_name: str) -> tuple[dict[str, Any], str]:
                             return reg_spec, var_prefix
 
     # action isn't found; return pseudo action spec to display an error later
-    return {'local_action': True}, '?¿?'                                                    # pragma: no cover
+    return {'local_action': True}, '?¿?'
 
 
 def _act_specs(act_name: str) -> list[ActionSpec]:
@@ -319,8 +319,8 @@ def _check_code_arg_options() -> list[str]:
     if debug_or_verbose(cae):
         options.append("-v")
         if cae.verbose:
-            options.append("-v")                                                            # pragma: no cover
-    cae.dpo(f"    - command line options: {ppp(options)}")
+            options.append("-v")
+    cae.dpo(f"    - command line options:{ppp(options)}")
     return options
 
 
@@ -471,7 +471,7 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
         cae.po(f"  --- found {len(all_reqs)} required PyPI projects"
                + (f" (cooled-down={len(cool_reqs)} hot={len(hot_reqs)})" if period and not cae.debug else "")
                + f":{ppp(sorted(all_reqs))}")
-        if cae.debug:   # pragma: no cover
+        if cae.debug:
             if cool_reqs:
                 cae.po(f"   -- {len(cool_reqs)} of them cooled-down requirements:{ppp(sorted(cool_reqs))}")
             if hot_reqs:
@@ -485,7 +485,7 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     if verbose:
         installed: list[str] = [""]   # prevent merge pip warnings
         with in_prj_dir_venv(project_path=project_path):
-            sh_exit_if_exec_err(22, PIP_CMD, extra_args=["list", "--format=json"], lines_output=installed)
+            sh_exit_if_exec_err(22, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed)
         installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + " " + _.get("editable_project_location", "")
                      for _ in json.loads("".join(installed))]
         cae.po(f"  --- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
@@ -495,14 +495,14 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
         msg = "outdated and cooled-down projects"
         if cool_reqs:
             cool_in = pip_install(project_path, *cool_reqs, cooldown_period=period, **install_options)
-        if cae.debug:  # pragma: no cover
+        if cae.debug:
             cae.po(f" ---- {act} {len(cool_in)} {msg}, out of the {len(cool_reqs)} projects:{ppp(sorted(cool_reqs))}")
         if verbose:     # includes implicit/not-directly-required projects
             ins = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in cool_in.items() if _v["requested"]]
             cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
             ins = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in cool_in.items() if not _v["requested"]]
             cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
-        else:           # pragma: no cover
+        else:
             ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in cool_in.items()]
             cae.po(f"  --- {act} {len(cool_in)} {msg}:{ppp(sorted(ins))}")
 
@@ -510,14 +510,14 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     hot_in = {}
     if hot_reqs:
         hot_in = pip_install(project_path, *hot_reqs, **install_options)
-    if cae.debug:   # pragma: no cover
+    if cae.debug:
         cae.po(f" ---- {act} {len(hot_in)} {msg}, out of the {len(hot_reqs)} required projects:{ppp(sorted(hot_reqs))}")
     if verbose:
         ins = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_in.items() if _v["requested"]]
         cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
         ins = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_in.items() if not _v["requested"]]
         cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
-    else:           # pragma: no cover
+    else:
         ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_in.items()]
         cae.po(f"  --- {act} {len(hot_in)} {msg}:{ppp(sorted(ins))}")
 
@@ -960,7 +960,7 @@ def _print_pdv(pdv: ProjectDevVars):
                     'project_version', 'pypi_url', 'repo_domain', 'repo_group', 'repo_pages', 'repo_root',
                     'setup_kwargs', 'tests_requires', 'version_file', 'web_domain'):
                 pdv.pop(name, None)
-    elif 'project_templates' not in pdv:                                                    # pragma: no cover
+    elif 'project_templates' not in pdv:
         pdv['project_templates'] = project_templates(project_type, namespace, {}, {}, tuple(dev_requires))
 
     pdv.pop('repo_token', None)     # never print credentials/token
@@ -1112,9 +1112,9 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
         sh_exec(PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, app_obj=cae)
         found = []
         for idx, line in enumerate(output):
-            if idx < 2 or any(fnmatchcase(stripped_pip_name(line.strip().split(" ")[0]), _msk) for _msk in hot_masks):
+            if idx < 2 or any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
                 found.append(line)
-        if len(found) > 2:  # pragma: no cover
+        if len(found) > 2:
             cae.po(f"  --- found {max(0, len(found) - 2)} outdated {'hot ' if period else ''}projects:")
             _print_lines(found)
 
@@ -1123,9 +1123,9 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
             sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, lines_output=output, app_obj=cae)
             found = []
             for idx, line in enumerate(output):
-                if idx < 2 and not any(fnmatchcase(line.strip().split(" ")[0], _msk) for _msk in hot_masks):
+                if idx < 2 or not any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
                     found.append(line)
-            if len(found) > 2:  # pragma: no cover
+            if len(found) > 2:
                 cae.po(f"  --- found {max(0, len(found) - 2)} outdated cooled-down projects:")
                 _print_lines(found)
 
@@ -2632,7 +2632,7 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     project_path = ini_pdv['project_path']
     check_folders_files_completeness(cae, ini_pdv)
 
-    if not on_ci_host():                                            # pragma: no cover
+    if not on_ci_host():                                                                    # pragma: no cover
         check_requirements(ini_pdv)
         check_venv(ini_pdv)
         with in_prj_dir_venv(project_path):
@@ -2802,7 +2802,7 @@ def clone_project(ini_pdv: ProjectDevVars, owner_name_version: str) -> str:
 
     if project_path:
         cae.po(f" ==== cloned project {owner_name_version} from {repo_root} into project path {project_path}")
-    else:                                                                                   # pragma: no cover
+    else:
         cae.po(f" **** failed to clone {branch_or_version=} of {owner_name_version} from {repo_root}/{project_name}")
 
     return project_path
@@ -3065,7 +3065,7 @@ def renew_project(ini_pdv: ProjectDevVars) -> ProjectDevVars:
 
 
 @_action(*ANY_PRJ_TYPE)
-def renew_venv(ini_pdv: ProjectDevVars):
+def renew_venv(ini_pdv: ProjectDevVars):                                        # pragma: no cover
     """ renew/update the installed package versions of the VENV of an existing project.
 
     specify the ``--force`` option to add the --force-reinstall option to the used ``pip install`` commands.
@@ -3155,10 +3155,10 @@ def show_expression_value(ini_pdv: ProjectDevVars, expr: str):
     try:
         exp_val = try_eval(expr, glo_vars=tpl_vars)
     except (NameError, SyntaxError, ValueError, Exception) as exc:   # pylint: disable=broad-exception-caught
-        if cae.debug:           # pragma: no cover
+        if cae.debug:
             cae.po(f"  *** full stack trace:\n{full_stack_trace(exc, frames_with_locals=6 if cae.verbose else 1)}")
             cae.po("")
-        if cae.verbose:         # pragma: no cover
+        if cae.verbose:
             cae.po("    = predefined template variables and helpers:")
             cae.po(f"        {pep8_format(tpl_vars, indent_level=2, debug_mode=True)}")
             cae.po("")

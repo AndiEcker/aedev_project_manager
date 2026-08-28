@@ -348,27 +348,29 @@ def register_template(import_name: str, requested_options: dict[str, str], cache
     """
     prj_path = requested_options.get(template_path_option(import_name), "")
     prj_version = requested_options.get(template_version_option(import_name), '')
+    assert not prj_path or not prj_version, \
+        f"specify template {import_name} either by {prj_path=} or by {prj_version=} not by both"
+
+    project_name = norm_name(import_name)
+    templates_path = ""
 
     if prj_path:
-        assert not prj_version, f"specify template {import_name} either by {prj_path=} or by {prj_version=} not by both"
-        prj_version = 'local'
         templates_path = norm_path(os_path_join(prj_path, *import_name.split('.'), TEMPLATES_FOLDER))
-        assert os_path_isdir(templates_path), f"{import_name} templates path {templates_path} does not exist"
-    else:
-        templates_path = ""
-        project_name = norm_name(import_name)
-        if not prj_version:
-            _dev_req_pkg, dev_req_ver = project_name_version(project_name, dev_requires)
-            if dev_req_ver:
-                prj_version = dev_req_ver
-            else:
-                reg_pkg, prj_version = project_name_version(project_name, list(cached_templates.keys()))
-                if not reg_pkg:
-                    prj_version = get_pypi_versions(project_name)[-1]  # no test tpl projects; they're all in 'aedev'
+        if os_path_isdir(templates_path):
+            prj_version = 'local'
 
-        if isinstance(dev_requires, list) and prj_version:
-            if (dev_req_line := project_name + PROJECT_VERSION_SEP + prj_version) not in dev_requires:
-                dev_requires.append(dev_req_line)
+    if not prj_version:
+        _dev_req_pkg, dev_req_ver = project_name_version(project_name, dev_requires)
+        if dev_req_ver:
+            prj_version = dev_req_ver
+        else:
+            reg_pkg, prj_version = project_name_version(project_name, list(cached_templates.keys()))
+            if not reg_pkg:
+                prj_version = get_pypi_versions(project_name)[-1]  # no test tpl projects; they're all in 'aedev'
+
+    if isinstance(dev_requires, list) and prj_version not in ('', 'local'):
+        if (dev_req_line := project_name + PROJECT_VERSION_SEP + prj_version) not in dev_requires:
+            dev_requires.append(dev_req_line)
 
     key = import_name + PROJECT_VERSION_SEP + prj_version
     if key not in cached_templates:

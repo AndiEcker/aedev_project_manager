@@ -24,5 +24,5 @@ ae_shell==0.3.15
 ae_managed_files==0.3.9
 ae_pythonanywhere==0.3.9
 aedev_base==0.3.11
-aedev_commands==0.3.16
+aedev_commands==0.3.17
 aedev_project_vars==0.3.24

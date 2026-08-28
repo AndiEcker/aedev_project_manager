@@ -1,11 +1,4 @@
-""" unit and integration tests for the aedev.project_manager.__main__ portion.
-
-to run integration tests (~40 minutes), implemented in this test module:
-* set the OS env variable os.getenv('RUN_INTEGRATION_TESTS') to a non-empty value.
-* request a maintainer and contributor account in the test project group https://gitlab.com/aetst-group
-* put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
-* put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
-"""
+""" unit and integration tests for the aedev.project_manager.__main__ portion. """
 import json
 import os
 
@@ -56,9 +49,9 @@ from tests.test_codeberg import CODEBERG_TOKEN_PART
 # noinspection PyProtectedMember
 from aedev.project_manager.__main__ import (
     GitlabCom,
-    _action, _act_callable, _act_force_opt, _act_name, _available_actions,
+    _action, _act_callable, _act_force_opt, _act_name, _act_spec, _available_actions, _check_code_arg_options,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets, _init_pdv,
-    _print_pdv, _refresh_project, _renew_project, _show_status, _wait,
+    _print_pdv, _refresh_project, _renew_project, _show_editable_and_outdated_and_not_required, _show_status, _wait,
     add_children_file, check_children_integrity, check_files, check_integrity, check_resources, check_venv,
     clone_children, clone_project, commit_children, commit_project,
     delete_children_file, install_children_editable, install_editable,
@@ -338,20 +331,27 @@ class TestActionsLocal:
         par_pdv = pdv_with_email(project_path=os_path_dirname(changed_repo_path))
 
         check_children_integrity(par_pdv, pdv_with_email(project_path=changed_repo_path))
+
         assert " ==== " in capsys.readouterr().out
 
         check_children_integrity(par_pdv, pdv_with_email(project_path=empty_repo_path))
+
         assert " ==== " in capsys.readouterr().out
 
         check_children_integrity(par_pdv, pdv_with_email(project_path=module_repo_path))
+
         assert " ==== " in capsys.readouterr().out
 
     def test_check_files(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_files(pdv_with_email(project_path=changed_repo_path))
-        assert capsys.readouterr().out
+
+        output = capsys.readouterr().out
+        assert " ==== run project files/folders completeness for " in output
 
         check_files(pdv_with_email(project_path=empty_repo_path))
-        assert capsys.readouterr().out
+
+        output = capsys.readouterr().out
+        assert " ==== run project files/folders completeness for " in output
 
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, module_repo_path,
                              mocked_app_options):
@@ -361,7 +361,8 @@ class TestActionsLocal:
 
         check_integrity(pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
 
-        assert capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert " ==== run integrity checks for " in output
 
         write_file(os_path_join(empty_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
                    "# flag file to run integrity checks", make_dirs=True)
@@ -383,12 +384,15 @@ class TestActionsLocal:
 
         check_integrity(pdv_with_email(project_path=module_repo_path))
 
-        assert capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert " ==== run integrity checks for " in output
 
         mocked_app_options['more_verbose'] = True
+
         check_integrity(pdv_with_email(project_path=module_repo_path))
 
-        assert capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert " ==== run integrity checks for " in output
 
     def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
                                                mocked_app_options, patched_shutdown_wrapper):
@@ -399,7 +403,6 @@ class TestActionsLocal:
         cl = patched_shutdown_wrapper(check_integrity, pdv_with_email(project_path=changed_repo_path), 'ChangeD.y')
         assert len(cl) == 1
         assert cl[0]['exit_code']
-        print(cl[0]['exit_code'])
         # assert cl[0]['exit_code'] == 46 if on_ci_host() else 44     # (44, tplsChk) (46, pytest w/ CI_PROJECT_ID set)
         assert cl[0]['exit_code'] == 60     # (60, early fail in flake8 w/ "W292 no newline at end of file")
         output = capsys.readouterr().out
@@ -408,8 +411,12 @@ class TestActionsLocal:
         mocked_app_options['force'] = 6
         write_file(os_path_join(changed_repo_path, 'manage.py'), "# valid empty code file content\n")
 
-        check_integrity(pdv_with_email(project_path=changed_repo_path), 'manage.y')
-        assert capsys.readouterr().out
+        check_integrity(pdv_with_email(project_path=changed_repo_path), 'manage.py')
+
+        output = capsys.readouterr().out
+        # noinspection PyTypeChecker
+        assert os_path_basename(changed_repo_path) in output
+        assert " ==== run integrity checks for " in output
 
     def test_check_integrity_errors(self, capsys, app_pjm, mocked_app_options, module_repo_path,
                                     patched_shutdown_wrapper):
@@ -458,23 +465,64 @@ class TestActionsLocal:
 
     def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_resources(pdv_with_email(project_path=changed_repo_path))
-        assert capsys.readouterr().out
+
+        output = capsys.readouterr().out
+        # noinspection PyTypeChecker
+        assert os_path_basename(changed_repo_path) in output
+        assert "=== checked image, sound and other resources" in output
 
         check_resources(pdv_with_email(project_path=empty_repo_path))
-        assert capsys.readouterr().out
 
-    def test_check_venv(self, capsys):
-        def _exec_mock(*_args, lines_output: list[str] | None = None, **_kwargs):
-            if lines_output is None:
-                lines_output = []
-            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.0", "latest_version": "1.2.3"},
-                                            {"name": "tst_pkg2", "version": "3.6.6", "latest_version": "3.6.9"},
+        output = capsys.readouterr().out
+        # noinspection PyTypeChecker
+        assert os_path_basename(empty_repo_path) in output
+        assert "=== checked image, sound and other resources" in output
+
+    def test_check_venv(self, app_pjm_debug, capsys, empty_repo_path, mocked_app_options):
+        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
+            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
+                                            {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "6.9.3"},
                                             ]))
 
-        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_exec_mock):
-            check_venv(ProjectDevVars())
+        def _pip_install_mock(_prj_path: str, *reqs: str, **_kwargs) -> dict[str, dict[str, bool | str]]:
+            return {reqs[0]: {'version': '1.1.1', 'requested': False}}     # aedev.commands.pip_install()
 
-        assert capsys.readouterr().out
+        mocked_app_options['more_verbose'] = True
+
+        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock)):
+            check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae_hot_mock', 'cooled-pkg1']))
+
+        out = capsys.readouterr().out
+        assert out
+        assert "--- found 2 required PyPI project" in out
+        assert " (cooled-down=1 hot=1)" in out or app_pjm_debug.debug
+        assert "      ae_hot_mock" in out
+        assert "      cooled-pkg1" in out
+        assert "--- found 2 currently installed project" in out
+        assert "tst_pkg1==1.2.3" in out
+        assert "tst_pkg2==3.6.9" in out
+        assert "--- found 0 outdated and cooled-down project" in out
+        assert "--- found 1 indirectly required, outdated and cooled-down projects" in out
+        assert "cooled-pkg1==1.1.1" in out
+        assert "--- found 0 outdated and cooled-down project" in out
+        assert "--- found 1 indirectly required, outdated and hot (excluded from cool-down) projects" in out
+        assert "ae_hot_mock==1.1.1" in out
+        assert "--- found 0 outdated and hot (excluded from cool-down) project" in out
+        assert "==== found 2 outdated projects in venv=" in out
+
+        mocked_app_options['more_verbose'] = False
+
+        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock)):
+            check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae-fake==3.4.5', 'cool==9.9.9']))
+
+        out = capsys.readouterr().out
+        assert "--- found 1 outdated and cooled-down project" in out
+        assert "cool==9.9.9" in out
+        assert "--- found 1 outdated and hot (excluded from cool-down) project" in out
+        assert "ae-fake==3.4.5" in out
+        assert "==== found 2 outdated projects in venv=" in out
 
     def test_clone_children_of_ae_namespace(self, app_pjm):
         project_versions = (f"ae-group/ae_base{PROJECT_VERSION_SEP}0.3.60", f"ae_paths{PROJECT_VERSION_SEP}0.3.42")
@@ -490,6 +538,16 @@ class TestActionsLocal:
                 import_name = '.'.join(os_path_basename(project_path).split('_', maxsplit=1))
                 version = project_versions[idx].split(PROJECT_VERSION_SEP)[1]
                 assert version == code_file_version(project_main_file(import_name, project_path=project_path))
+
+    def test_clone_project_error(self, app_pjm, capsys):
+        import_name = 'not.existing.project'
+        project_name = norm_name(import_name)
+
+        with init_parent() as parent_dir:
+            project_path = clone_project(pdv_with_email(project_path=parent_dir), project_name)
+
+        assert project_path == ""
+        assert project_name in capsys.readouterr().out
 
     def test_clone_project_via_app_options_and_release_branch(self, app_pjm):
         import_name = 'ae.console'
@@ -793,18 +851,27 @@ class TestActionsLocal:
             assert uncommitted_files == git_uncommitted(prj_path)
             assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).splitlines()[0]
 
-    def test_renew_venv(self, capsys):
-        def _exec_mock(*_args, lines_output: list[str] | None = None, **_kwargs):
-            if lines_output is None:
-                lines_output = []
-            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.0", "latest_version": "1.2.3"},
-                                            {"name": "tst_pkg2", "version": "3.6.6", "latest_version": "3.6.9"},
+    @skip_gitlab_ci
+    def test_renew_venv(self, app_pjm_debug, capsys, empty_repo_path):
+        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
+            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.3.4"},
+                                            {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "7.8.9"},
                                             ]))
 
-        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_exec_mock):
-            renew_venv(ProjectDevVars())
+        pip_install_return = {'tst-pkg3': {'version': '3.3.3', 'requested': False}}     # aedev.commands.pip_install()
 
-        assert capsys.readouterr().out
+        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+              patch('aedev.project_manager.__main__.pip_install', return_value=pip_install_return)):
+            renew_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['tst_pkg3==3.3.3']))
+
+        output = capsys.readouterr().out
+        assert output
+        assert "tst_pkg1==1.2.3" in output
+        assert "tst_pkg2==3.6.9" in output
+        assert "tst_pkg3==3.3.3" in output
+        assert "tst-pkg3==3.3.3" in output  # w/ normalized pip name
+        assert "--- installed 1 indirectly required, outdated and cooled-down project" in output
+        assert "==== installed 1 outdated projects" in output
 
     @skip_gitlab_ci
     def test_refresh_children(self, module_repo_path):
@@ -888,7 +955,7 @@ class TestActionsLocal:
         output = capsys.readouterr().out
         assert output.count(echo_word) == 3  # one for each child and a final one on action complete
 
-    def test_show_expression_value(self, capsys, app_pjm, empty_repo_path: str):
+    def test_show_expression_value(self, app_pjm_debug, capsys, empty_repo_path: str):
         pdv = pdv_with_email(project_path=empty_repo_path)
 
         show_expression_value(pdv, "project_path")
@@ -905,7 +972,7 @@ class TestActionsLocal:
         assert 'invalid_expression' in output
         assert 'is not defined' in output
 
-    def test_show_expression_value_recursive_data(self, capsys, app_pjm, empty_repo_path):
+    def test_show_expression_value_recursive_data(self, app_pjm, capsys, empty_repo_path):
         from ae.dynamicod import base_globals   # base_globals kann von :func:`ae.dynamicod.try_eval()` verwendet werden
         pdv = pdv_with_email(project_path=empty_repo_path)
 
@@ -931,14 +998,19 @@ class TestActionsLocal:
 
     def test_show_actions(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
         pdv = pdv_with_email(**{'host_api': GitlabCom()})
-
         mocked_app_options['more_verbose'] = False
+
         show_actions(pdv)
-        assert capsys.readouterr().out
+
+        output = capsys.readouterr().out
+        assert 'check_integrity' in output
 
         mocked_app_options['more_verbose'] = True
+
         show_actions(pdv)
-        assert capsys.readouterr().out
+
+        output = capsys.readouterr().out
+        assert 'check_integrity' in output
 
     def test_show_children_versions(self, capsys, app_pjm):
         chi_grp = 'ae-group'
@@ -1084,6 +1156,44 @@ class TestHelpersLocal:
         assert _act_name("check", MODULE_PRJ, ["pytest"]) == "check_pytest"
         assert _act_name("pytest", PLAYGROUND_PRJ, []) == "check_pytest"
 
+    def test_act_spec_error(self, empty_repo_path):
+        pdv = ProjectDevVars(project_path=empty_repo_path)
+
+        assert _act_spec(pdv, 'not_implemented_action') == ({'local_action': True}, '?¿?')
+
+    def test_act_spec_local_action(self, empty_repo_path):
+        pdv = ProjectDevVars(project_path=empty_repo_path)
+
+        spec, var_prefix = _act_spec(pdv, 'check_integrity')
+
+        assert var_prefix == 'repo_'
+        assert spec['local_action'] is True
+        assert spec['full_name'] == 'check_integrity'
+        assert spec['shortcut'] == 'check'
+        assert set(spec['project_types']) == set(ANY_PRJ_TYPE)
+
+    def test_act_spec_repo_action(self, empty_repo_path):
+        pdv = ProjectDevVars(project_path=empty_repo_path)
+
+        spec, var_prefix = _act_spec(pdv, 'push_project')
+
+        assert var_prefix == 'repo_'
+        assert spec['local_action'] is False
+        assert spec['full_name'] == 'GitlabCom.push_project'
+        assert spec['shortcut'] == 'push'
+        assert set(spec['project_types']) == set(ANY_PRJ_TYPE)
+
+    def test_act_spec_web_action(self, empty_repo_path):
+        pdv = ProjectDevVars(project_path=empty_repo_path, web_domain='eu.pythonanywhere.com')
+
+        spec, var_prefix = _act_spec(pdv, 'deploy_project')
+
+        assert var_prefix == 'web_'
+        assert spec['local_action'] is False
+        assert spec['full_name'] == 'PythonanywhereCom.deploy_project'
+        assert spec['shortcut'] == 'deploy'
+        assert set(spec['project_types']) == {APP_PRJ, DJANGO_PRJ}
+
     def test_available_actions(self):
         assert _available_actions()
         assert 'show_status' in _available_actions()
@@ -1095,7 +1205,28 @@ class TestHelpersLocal:
         assert 'new_app' in _available_actions(project_type=NO_PRJ)
         assert 'fork_project' not in _available_actions(project_type=NO_PRJ)
 
-    def test_check_arguments(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
+    def test_check_code_arg_options(self, app_pjm_debug, capsys, mocked_app_options):
+        mocked_app_options['more_verbose'] = True
+
+        if app_pjm_debug.verbose:
+            assert _check_code_arg_options() == ["-v", "-v"]
+        elif app_pjm_debug.debug:
+            assert _check_code_arg_options() == ["-v"]
+        else:
+            assert _check_code_arg_options() == ["-v"]
+        assert not app_pjm_debug.debug or "    - command line options:" in capsys.readouterr().out
+
+        mocked_app_options['more_verbose'] = False
+
+        if app_pjm_debug.verbose:
+            assert _check_code_arg_options() == ["-v", "-v"]
+        elif app_pjm_debug.debug:
+            assert _check_code_arg_options() == ["-v"]
+        else:
+            assert _check_code_arg_options() == []
+        assert not app_pjm_debug.debug or "    - command line options:" in capsys.readouterr().out
+
+    def test_init_act_args_check_arguments(self, app_pjm, mocked_app_options, patched_shutdown_wrapper):
         pdv = pdv_with_email(**{'project_type': PARENT_PRJ})
         act_spec = {'docstring': "act new_app docstring", 'project_types': ANY_PRJ_TYPE}
 
@@ -1139,7 +1270,7 @@ class TestHelpersLocal:
         with pytest.raises(KeyError):
             _init_act_args_check(pdv, {}, 'invalid_action', [], {})
 
-    def test_check_arguments_except_empty_action(self, app_pjm):
+    def test_init_act_args_check_arguments_except_empty_action(self, app_pjm):
         with pytest.raises(KeyError):
             _init_act_args_check(pdv_with_email(), {}, "", [], {})
 
@@ -1335,9 +1466,23 @@ class TestHelpersLocal:
         assert 'filterBranch' not in presets
         assert presets['filterExpression'] == set()  # invalid expression evaluates to False
 
-    def test_print_pdv(self, app_pjm):
-        _print_pdv(pdv_with_email(**{'project_type': PARENT_PRJ, 'long_desc_content': "not that long desc content"}))
-        # assert capsys.readouterr().out worked in TestHiddenHelpersRemote, but after moving here is always empty string
+    def test_print_pdv(self, app_pjm_debug, capsys, empty_repo_path, mocked_app_options):
+        verbose = app_pjm_debug.verbose
+        mocked_app_options['more_verbose'] = True
+
+        _print_pdv(pdv_with_email(project_path=empty_repo_path))
+
+        output = capsys.readouterr().out
+        assert empty_repo_path in output
+
+        mocked_app_options['more_verbose'] = False
+
+        _print_pdv(pdv_with_email(project_path=empty_repo_path, project_type=ROOT_PRJ,
+                                  long_desc_content='long_desc_content'))
+
+        output = capsys.readouterr().out
+        assert empty_repo_path in output
+        assert not verbose or 'long_desc_content' in output
 
     def test_refresh_project(self, app_pjm, empty_repo_path):
         assert _refresh_project(ProjectDevVars(**{'project_path': empty_repo_path})) == []  # no updates because NO_PRJ
@@ -1422,6 +1567,21 @@ class TestHelpersLocal:
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
 
             assert git_current_branch(project_path).startswith(f"created_new_{PACKAGE_PRJ}_{pkg_name}_")
+
+    def test_show_editable_and_outdated_and_not_required(self, app_pjm, capsys, empty_repo_path):
+        def _pip_output_mock(*_args, lines_output: list[str], **_kwargs):
+            lines_output.append("not-removable-header")
+            lines_output.append("--------------------")
+            lines_output.append('ae_fake')
+            lines_output.append('tst_pkg')
+
+        with patch('aedev.project_manager.__main__.sh_exec', new=_pip_output_mock):
+            _show_editable_and_outdated_and_not_required(ProjectDevVars(project_path=empty_repo_path))
+
+        output = capsys.readouterr().out
+        assert output.count("  --- found ") == 5
+        assert output.count('ae_fake') == 4
+        assert output.count('tst_pkg') == 4
 
     def test_wait(self, app_pjm):
         mock_sleep = MagicMock()

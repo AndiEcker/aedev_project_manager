@@ -87,12 +87,12 @@ def check_folders_files_completeness(cae: ConsoleApp, pdv: ProjectDevVars):
         cae.po(f"  --  missing {len(changes)} basic project folders/files:")
         if cae.verbose:
             cae.po(PPF(changes))
-            cae.po(f"   -- use the 'new_{pdv['project_type']}' action to re-new/complete/update this project")
+            cae.po(f"   -- use the `new_{pdv['project_type'] or '*'}` action to re-new/complete/update this project")
         else:
             project_path = pdv['project_path']
             for change in changes:
                 cae.po(f"    - {change[0] == 'md' and 'folder' or 'file  '} {os_path_relpath(change[1], project_path)}")
-    elif debug_or_verbose(cae):                                                             # pragma: no cover
+    elif debug_or_verbose(cae):
         cae.po("    = project folders and files are complete")
 
 
@@ -442,7 +442,7 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
 
 
 def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, import_name: str,
-                        exclude_prefixes: tuple[str, ...] = ()) -> set[str]:   # pragma: no cover
+                        exclude_prefixes: tuple[str, ...] = ()) -> set[str]:
     """ determine the import dependencies of all the package/project code files.
 
     :param cae:                 main app instance.
@@ -498,7 +498,7 @@ def imported_modules(code_file_path: str) -> set[str] | str:
     return module_names
 
 
-def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:    # pragma: no cover
+def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:
     """ determine the installed pip packages from the local project repository/root and its Python environment.
 
     :param cae:                 main app instance.
@@ -515,7 +515,7 @@ def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:    # pr
 
 
 def missing_imports(cae: ConsoleApp, import_deps: set[str], project_reqs: list[str], ignore_extra_reqs: list[str]
-                    ) -> tuple[list[str], set[str]]:   # pragma: no cover
+                    ) -> tuple[list[str], set[str]]:
     """ determine pip package names that are required but not explicitly imported by a project.
 
     :param cae:                 main app instance.
@@ -554,7 +554,7 @@ def missing_imports(cae: ConsoleApp, import_deps: set[str], project_reqs: list[s
 
 def missing_requirements(project_path: str, import_deps: set[str], venv_packages: list[str],
                          project_reqs: list[str], ignoring_imports: list[str]
-                         ) -> tuple[list[str], list[str], set[str]]:    # pragma: no cover
+                         ) -> tuple[list[str], list[str], set[str]]:
     """ determine the import names of a local project repository that are not explicitly required.
 
     :param project_path:        root path of the local project repository.
