@@ -1,4 +1,15 @@
-""" project manager integration tests. only running if the OS/env variable RUN_INTEGRATION_TESTS is set. """
+""" project manager integration tests. only running if the OS/env variable RUN_INTEGRATION_TESTS is set.
+
+the group and projects names prefix `aetst` is defined by :data:`aedev.base.TEST_PROJECTS_NAMESPACE`).
+
+the aetst-aetst namespace-root project is hosted at <https://gitlab.com/aetst-group/aetst_aetst>.
+
+to run integration tests (~40 minutes), implemented in this test module:
+* set the OS env variable os.getenv('RUN_INTEGRATION_TESTS') to a non-empty value.
+* request a maintainer and contributor account in the test project group https://gitlab.com/aetst-group
+* put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
+* put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
+"""
 import os
 import shutil
 import time

@@ -1,4 +1,5 @@
 """ utils module tests. """
+import json
 import os
 from typing import OrderedDict
 
@@ -15,23 +16,25 @@ from ae.system import APP_BUILD_CFG_FILENAME
 from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER
 from aedev.base import (
-    APP_PRJ, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, PROJECT_VERSION_SEP,
-    ROOT_PRJ)
+    APP_PRJ, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD,
+    PROJECT_VERSION_SEP, ROOT_PRJ)
 from aedev.commands import GIT_REMOTE_ORIGIN, GIT_REMOTE_UPSTREAM, git_add, git_checkout, git_commit, git_current_branch
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL, PDV_REQ_FILE_NAME,
     ProjectDevVars, frozen_req_file_path)
 
 from constants_and_fixtures import (
-    app_pjm, empty_repo_path, ensure_tst_ns_portion_version_file, mocked_app_options, module_repo_path, pdv_with_email,
-    tst_ns_name, tst_pkg_version, uncommitted_guess_prefix)
+    app_pjm, app_pjm_debug, empty_repo_path, ensure_tst_ns_portion_version_file, mocked_app_options,
+    module_repo_path, pdv_with_email, tst_ns_name, tst_pkg_version, uncommitted_guess_prefix)
 
 
 from aedev.project_manager.utils import (
     EXEC_GIT_ERR_PREFIX, PIP_FREEZE_COMMENT,
-    children_desc, children_project_names, code_file_imports, expected_args, get_app_option, get_branch,
-    get_host_class_name, get_host_config_val, get_host_domain, get_host_group, get_host_user_name, get_host_user_token,
-    get_mirror_urls, git_init_add, git_push_url, guess_next_action, imported_modules, package_code_files, ppp,
+    check_folders_files_completeness, children_desc, children_project_names, code_file_imports, expected_args,
+    get_app_option, get_branch, get_host_class_name, get_host_config_val, get_host_domain, get_host_group,
+    get_host_user_name, get_host_user_token, get_mirror_urls,
+    git_init_add, git_push_url, guess_next_action, import_dependencies, imported_modules,
+    installed_packages, missing_imports, missing_requirements, package_code_files, ppp,
     project_topics, refresh_pdv, renew_project_dir, update_frozen_req_file, update_frozen_req_files,
     write_commit_message)
 
@@ -706,6 +709,20 @@ class TestUpdateFrozenReqFile:
 
 
 class TestOtherHelpers:
+    def test_check_folders_files_completeness(self, app_pjm_debug, capsys, empty_repo_path):
+        check_folders_files_completeness(app_pjm_debug, ProjectDevVars(project_path=empty_repo_path))
+
+        output = capsys.readouterr().out
+        assert "basic project folders/files:" in output
+        assert not app_pjm_debug.verbose or "-- use the `new_" in output
+        assert app_pjm_debug.verbose or ("    - folder " in output and "    - file   " in output)
+
+        with patch('aedev.project_manager.utils.renew_project_dir'):
+            check_folders_files_completeness(app_pjm_debug, ProjectDevVars(project_path=empty_repo_path))
+
+        output = capsys.readouterr().out
+        assert "project folders and files are complete" in output
+
     @pytest.mark.parametrize('mock_pdv',
                              [{'project_type': ROOT_PRJ}, {'project_type': PARENT_PRJ}],
                              ids=['namespace-root', 'project-parent'], indirect=True)
@@ -1112,12 +1129,50 @@ class TestOtherHelpers:
 
         assert guess_next_action(pdv_with_email(project_path=empty_repo_path)) == 'commit_project'
 
+    def test_import_dependencies(self, app_pjm_debug, capsys, empty_repo_path):
+        dbg = app_pjm_debug.debug
+        write_file(os_path_join(empty_repo_path, "code" + PY_EXT), "import imp.pkg\nfrom fake.sub import fake_x\n")
+        with patch('aedev.project_manager.utils.venv_module_var_val', return_value=['dj.app'] if dbg else []):
+            imp = import_dependencies(app_pjm_debug, empty_repo_path, DJANGO_PRJ, 'dj_tst_prj', exclude_prefixes=())
+
+        assert imp == {'fake.sub', 'imp.pkg'} | ({'dj.app'} if dbg else set())
+        output = capsys.readouterr().out
+        assert ("!! project imports/dependencies:" if dbg else "## Django apps dependencies NOT found") in output
+
     def test_imported_modules(self):
         assert isinstance(imported_modules("Invalid:NotExisting:CodeFile"), str)
 
         imp_mods = imported_modules(os_path_join(TESTS_FOLDER, "conftest.py"))
         assert isinstance(imp_mods, set)
         assert 'pytest' in imp_mods
+
+    def test_installed_packages(self, app_pjm_debug, capsys, empty_repo_path):
+        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
+            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
+                                            {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "6.9.3"},
+                                            ]))
+        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', new=_pip_list_json_mock):
+            ins = installed_packages(app_pjm_debug, empty_repo_path)
+
+        assert set(ins) == {'tst-pkg1', 'tst-pkg2'}
+        output = capsys.readouterr().out
+        assert not app_pjm_debug.verbose or "! installed pip packages (in json format)" in output
+        assert not app_pjm_debug.debug or "!! installed pip packages:" in output
+
+    def test_missing_imports(self, app_pjm):
+        miss, ign = missing_imports(
+            app_pjm, {'fake-pkg', 'PIL', 'x'}, ['pillow', 'y-fake', 'z_fake'], ['fake_pkg', 'PIL', 'y_fake'])
+
+        assert miss == ['z_fake']
+        assert ign == {'y-fake'}
+
+    def test_missing_requirements(self, empty_repo_path):
+        miss, uninst, ignored = missing_requirements(
+            empty_repo_path,  {'fake_pkg', 'PIL', 'x'}, ['pillow', 'x_fake'], ['pillow', 'y_fake'], ['fake_pkg', 'PIL'])
+
+        assert miss == ['x']
+        assert set(uninst) == {'fake_pkg', 'x'}
+        assert ignored == {'fake_pkg'}
 
     def test_package_code_files(self):
         assert "setup.py" in package_code_files("")

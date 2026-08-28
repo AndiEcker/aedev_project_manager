@@ -92,7 +92,7 @@ def mocked_app_options():
         return get_app_option(_pdv, opt_nam)
 
     def _dbg_or_verbose(_app_obj: ConsoleApp | None = None):
-        return mocked_options.get('more_verbose', False)
+        return getattr(_app_obj, 'debug', False) or mocked_options.get('more_verbose', False)
 
     def _set_option(name: str, value: Any, **_kwargs):
         mocked_options[name] = value

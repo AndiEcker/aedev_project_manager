@@ -48,7 +48,7 @@ setup_kwargs: dict[str, Any] = {
             'ae_updater==0.3.20',
             'aedev_app_tpls==0.3.22',
             'aedev_base==0.3.11',
-            'aedev_commands==0.3.16',
+            'aedev_commands==0.3.17',
             'aedev_namespace_root_tpls==0.3.33',
             'aedev_project_vars==0.3.24',
             'alabaster==1.0.0',
@@ -168,7 +168,7 @@ setup_kwargs: dict[str, Any] = {
         'ae_managed_files==0.3.9',
         'ae_pythonanywhere==0.3.9',
         'aedev_base==0.3.11',
-        'aedev_commands==0.3.16',
+        'aedev_commands==0.3.17',
         'aedev_project_vars==0.3.24',
     ],
     'keywords': [
@@ -195,7 +195,7 @@ setup_kwargs: dict[str, Any] = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/aedev-group/aedev_project_manager',
-    'version': '0.3.36',
+    'version': '0.3.37',
     'zip_safe': True,
 }
 
