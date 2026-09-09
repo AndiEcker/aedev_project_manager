@@ -31,7 +31,7 @@ integrity:                      # run integrity tests
       pillow==12.3.0
       types-Pillow==10.2.0.20240822
       PyGithub==2.9.1
-      pylint==4.0.7
+      pylint==4.0.8
       pytest==9.1.1
       pytest-cov==7.1.0
       python-gitlab==8.5.0
@@ -39,26 +39,26 @@ integrity:                      # run integrity tests
       anybadge==1.16.0
       flake8==7.3.0
       mypy==2.3.1
-      pylint==4.0.7
+      pylint==4.0.8
       pytest==9.1.1
       pytest-cov==7.1.0
       typing==3.7.4.3
       types-setuptools==84.0.0.20260812
     - >
       pip install --upgrade --force-reinstall 
-      ae_base==0.3.93
-      ae_system==0.3.15
+      ae_base==0.3.94
+      ae_system==0.3.19
       ae_paths==0.3.46
       ae_dynamicod==0.3.16
       ae_literal==0.3.36
       ae_updater==0.3.20
       ae_core==0.3.88
       ae_console==0.3.97
-      ae_shell==0.3.15
+      ae_shell==0.3.17
       ae_managed_files==0.3.9
       ae_pythonanywhere==0.3.9
       aedev_base==0.3.11
-      aedev_commands==0.3.17
+      aedev_commands==0.3.18
       aedev_project_vars==0.3.24
   script:
     - pipx run --spec aedev_project_manager project-manager -v check-integrity

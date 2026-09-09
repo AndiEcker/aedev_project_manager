@@ -111,7 +111,7 @@ def _get_app_tpl_options(cae: ConsoleApp, pdv: ProjectDevVars) -> dict[str, str]
 
 def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: str) -> TemplateFiles:
     get_files = partial(path_items, selector=lambda _path: not skip_py_cache_files(_path) and os_path_isfile(_path))
-    tpl_files: TemplateFiles = []  # templates projects&versions, source file paths and destinationpaths relative to cwd
+    tpl_files: TemplateFiles = []  # templates projects&versions, template path, and destination paths relative to cwd
     for tpl_prj in project_tpls:
         tpl_path = tpl_prj['tpl_path']
         patcher = f"by the project {tpl_prj['import_name']} {version_tag_prefix}{tpl_prj['version']}"
@@ -123,13 +123,10 @@ def _get_template_files(project_tpls: TemplateProjectsType, version_tag_prefix: 
 def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, verbose: bool):
     for file_name, new_content, old_content in outdated:
         cae.po(f"    - {file_name}  ------------")
-        if isinstance(new_content, bytes) or isinstance(old_content, bytes):  # old_content check for mypy
-            # noinspection PyTypeChecker
+        if isinstance(new_content, bytes) and isinstance(old_content, bytes):  # old_content check for mypy
             dif = [str(_) for _ in diff_bytes(unified_diff, [old_content], [new_content])]
-        else:
-            # noinspection PyUnresolvedReferences
+        elif isinstance(new_content, str) and isinstance(old_content, str):
             new_lines = new_content.splitlines(keepends=True)
-            # noinspection PyUnresolvedReferences
             old_lines = old_content.splitlines(keepends=True)
             if not verbose:
                 dif = [line for line in ndiff(old_lines, new_lines) if line[0:1].strip()]
@@ -139,6 +136,8 @@ def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, v
                 dif = list(unified_diff(old_lines, new_lines, n=cae.debug_level))
             else:
                 dif = list(context_diff(old_lines, new_lines))
+        else:
+            dif = [f"\n***** content type error in {new_content=} or {old_content=}\n"]
         cae.po("      " + "      ".join(dif), end="")
 
 
@@ -188,7 +187,7 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
                                 and synced from templates. e.g. to retrieve a set of the destination project file paths
                                 that would be created/updated use set(<this return value>.deploy_files.keys()).
                                 ``None`` will be returned if no project type gets specified via the argument
-                                :paramref:`~check_templates.pdv`.
+                                :paramref:`.pdv`.
 
     .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
     """

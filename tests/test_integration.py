@@ -1,6 +1,6 @@
 """ project manager integration tests. only running if the OS/env variable RUN_INTEGRATION_TESTS is set.
 
-the group and projects names prefix `aetst` is defined by :data:`aedev.base.TEST_PROJECTS_NAMESPACE`).
+the group and projects names prefix `aetst` is defined by :data:`aedev.base.TEST_PROJECTS_NAMESPACE`.
 
 the aetst-aetst namespace-root project is hosted at <https://gitlab.com/aetst-group/aetst_aetst>.
 
@@ -623,7 +623,6 @@ class TestFullWorkflows:
             pdv['host_api'] = host_api = remote_connect(pdv, "mtn_workflow")
 
         if itg_test_prj.state == 'forked':
-            # noinspection PyUnresolvedReferences
             host_api.merge_pushed_project(pdv)
 
         assert guess_next_action(pdv) == 'release_project'

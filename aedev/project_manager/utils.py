@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import pprint
+import subprocess
 import sys
 from collections.abc import Collection, Iterable
 from os import makedirs as patchable_makedirs
@@ -225,13 +226,13 @@ def get_host_config_val(pdv: ProjectDevVars, option_name: str, host_domain: str 
                         ) -> str | None:
     """ determine host/user-specific domain, group, user and token values.
 
-    :param pdv:                 project dev vars with app options and project_path (to include env var values from
-                                dotenv files in prj/parent dirs).
+    :param pdv:                 project dev vars with app options and project_path (to include OS environment variable
+                                values from ``.env`` files in prj/parent dirs).
     :param option_name:         app option name.
     :param host_domain:         domain name of the host. if not specified or as empty string then the domain specified
                                 as command line option (via --repo_domain, --web_domain) will be used. if no option
                                 got specified then the search for a host-specific variable will be skipped.
-    :param host_user:           username at the host. if not passed or :paramref:`~get_host_config_val.host_domain` is
+    :param host_user:           username at the host. if not passed or :paramref:`.host_domain` is
                                 empty, then skip the search for a user-specific variable value.
     :return:                    config variable value or `None` if not found.
     """
@@ -451,7 +452,7 @@ def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, i
     :param import_name:         project import name.
     :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
                                 value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
-                                extension found underneath the specified :paramref:`~import_dependencies.project_path`.
+                                extension found underneath the specified :paramref:`.project_path`.
                                 specifying e.g. the tuple `(DOCS_FOLDER + "/", )` would exclude the import dependencies
                                 of all the code files underneath the docs folder (like for example `conf.py`).
     :return:                    set of imported package/project names.
@@ -507,7 +508,7 @@ def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:
     """
     installed: list[str] = []
     with in_prj_dir_venv(project_path=project_path):
-        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed, shell=True)
+        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), output_lines=installed)
     cae.vpo(f"    ! installed pip packages (in json format): {installed}")
     installed = [norm_pip_name(_['name']) for _ in json.loads(installed[0])]
     cae.dpo(f"   !! installed pip packages: {installed}")
@@ -602,7 +603,7 @@ def package_code_files(project_path: str, exclude_prefixes: tuple[str, ...] = ()
     :param project_path:        project root path.
     :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
                                 value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
-                                extension found underneath the specified :paramref:`~package_code_files.project_path`.
+                                extension found underneath the specified :paramref:`.project_path`.
     :return:                    set of package code files present in the specified project root path.
     """
     with in_wd(project_path):
@@ -718,7 +719,8 @@ def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packag
         return []
 
     out_lines: list[str] = []
-    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path), lines_output=out_lines)
+    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path),
+                        output_lines=out_lines, err_redirect=subprocess.PIPE)
 
     errors: list[str] = []
     if out_lines and out_lines[-1] == STDERR_END_MARKER:

@@ -459,10 +459,9 @@ class TestUpdateFrozenReqFile:
 
     @pytest.fixture
     def mock_sh_exit_no_errors(self):
-        """ patch sh_exit_if_exec_err appending clean pip-freeze output to lines_output without any STDERR markers. """
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(REQ_FILE_PACKAGES)
+        """ patch sh_exit_if_exec_err appending clean pip-freeze output to output_lines without any STDERR markers. """
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(REQ_FILE_PACKAGES)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect) as mock:
             yield mock
@@ -470,10 +469,8 @@ class TestUpdateFrozenReqFile:
     @pytest.fixture
     def mock_sh_exit_with_stderr_errors(self):
         """ patch sh_exit_if_exec_err to produce output that contains STDERR markers and at least one error message. """
-
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend([REQ_FILE_PACKAGES[0],
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend([REQ_FILE_PACKAGES[0],
                                  STDERR_BEG_MARKER,
                                  TestUpdateFrozenReqFile.PIP_WARNING,
                                  STDERR_END_MARKER])
@@ -490,9 +487,8 @@ class TestUpdateFrozenReqFile:
             STDERR_END_MARKER,
         ]
 
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(lines)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(lines)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect) as mock:
             yield mock
@@ -513,9 +509,8 @@ class TestUpdateFrozenReqFile:
             REQ_FILE_PACKAGES[2],
         ]
 
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(lines_with_pip_comment)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(lines_with_pip_comment)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
@@ -530,9 +525,8 @@ class TestUpdateFrozenReqFile:
             REQ_FILE_PACKAGES[2],  # extra line added by pip freeze
         ]
 
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(all_lines)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(all_lines)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
@@ -549,9 +543,8 @@ class TestUpdateFrozenReqFile:
             REQ_FILE_PACKAGES[2],
         ]
 
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(lines)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(lines)
 
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
@@ -562,9 +555,8 @@ class TestUpdateFrozenReqFile:
 
     def test_editable_install_project_dir_exists_version_substituted(
             self, mock_frozen_path_valid, mock_read_file, mock_write_file, mock_project_dev_vars):
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
 
         with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=True),
@@ -579,9 +571,8 @@ class TestUpdateFrozenReqFile:
 
     def test_editable_install_project_dir_not_exists_line_unchanged(
             self, mock_frozen_path_valid, mock_read_file, mock_write_file):
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
 
         with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=False),
@@ -594,9 +585,8 @@ class TestUpdateFrozenReqFile:
     def test_first_line_refreshable_marker_is_stripped(self, mock_frozen_path_valid, mock_read_file, mock_write_file):
         refreshable_first_line = f"{REFRESHABLE_TEMPLATE_MARKER} do not edit manually"
 
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend([refreshable_first_line] + REQ_FILE_PACKAGES)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend([refreshable_first_line] + REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
             errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
@@ -609,9 +599,8 @@ class TestUpdateFrozenReqFile:
         assert REQ_FILE_PACKAGES[2] in written_content
 
     def test_first_line_without_refreshable_marker_kept(self, mock_frozen_path_valid, mock_read_file, mock_write_file):
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(REQ_FILE_PACKAGES)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
             errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
@@ -673,12 +662,11 @@ class TestUpdateFrozenReqFile:
         assert call_kwargs[0][0] == 73  # exit_code
         assert call_kwargs[0][1] == PIP_CMD  # cmd
         assert call_kwargs[1]["extra_args"] == ("freeze", "-r", REQ_FILE_PATH)
-        assert isinstance(call_kwargs[1]["lines_output"], list)
+        assert isinstance(call_kwargs[1]["output_lines"], list)
 
     def test_write_file_called_w_frozen_path_and_content(self, mock_frozen_path_valid, mock_read_file, mock_write_file):
-        # noinspection PyUnusedLocal
-        def _side_effect(exit_code, cmd, extra_args, lines_output):
-            lines_output.extend(REQ_FILE_PACKAGES)
+        def _side_effect(*_args, output_lines, **_kwargs):
+            output_lines.extend(REQ_FILE_PACKAGES)
 
         with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
             update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
@@ -1147,8 +1135,8 @@ class TestOtherHelpers:
         assert 'pytest' in imp_mods
 
     def test_installed_packages(self, app_pjm_debug, capsys, empty_repo_path):
-        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
-            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
+        def _pip_list_json_mock(*_args, output_lines: list[str], **_kwargs):
+            output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
                                             {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "6.9.3"},
                                             ]))
         with patch('aedev.project_manager.utils.sh_exit_if_exec_err', new=_pip_list_json_mock):
@@ -1167,11 +1155,11 @@ class TestOtherHelpers:
         assert ign == {'y-fake'}
 
     def test_missing_requirements(self, empty_repo_path):
-        miss, uninst, ignored = missing_requirements(
+        miss, uninstall, ignored = missing_requirements(
             empty_repo_path,  {'fake_pkg', 'PIL', 'x'}, ['pillow', 'x_fake'], ['pillow', 'y_fake'], ['fake_pkg', 'PIL'])
 
         assert miss == ['x']
-        assert set(uninst) == {'fake_pkg', 'x'}
+        assert set(uninstall) == {'fake_pkg', 'x'}
         assert ignored == {'fake_pkg'}
 
     def test_package_code_files(self):
