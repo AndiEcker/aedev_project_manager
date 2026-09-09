@@ -440,7 +440,6 @@ class TestActionsLocal:
         assert "  === mypy typing checks done" in output
         assert "  === pylint checks done" in output
         assert "tests/test_test.py::test_failing FAILED" in output
-        assert "no-data-collected" in output
 
         if not on_ci_host():
             mocked_app_options['force'] = 1  # RENEW force-skip of locally running template-check error (44, )
@@ -461,7 +460,6 @@ class TestActionsLocal:
         assert "  === mypy typing checks done" in output
         assert "  === pylint checks done" in output
         assert "tests/test_test.py::test_failing" not in output  # unit tests module got deleted
-        assert "no-data-collected" in output
 
     def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_resources(pdv_with_email(project_path=changed_repo_path))
@@ -479,8 +477,8 @@ class TestActionsLocal:
         assert "=== checked image, sound and other resources" in output
 
     def test_check_venv(self, app_pjm_debug, capsys, empty_repo_path, mocked_app_options):
-        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
-            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
+        def _pip_list_json_mock(*_args, output_lines: list[str], **_kwargs):
+            output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
                                             {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "6.9.3"},
                                             ]))
 
@@ -509,7 +507,7 @@ class TestActionsLocal:
         assert "--- found 1 indirectly required, outdated and hot (excluded from cool-down) projects" in out
         assert "ae_hot_mock==1.1.1" in out
         assert "--- found 0 outdated and hot (excluded from cool-down) project" in out
-        assert "==== found 2 outdated projects in venv=" in out
+        assert "=== found 2 outdated projects in venv=" in out
 
         mocked_app_options['more_verbose'] = False
 
@@ -522,7 +520,7 @@ class TestActionsLocal:
         assert "cool==9.9.9" in out
         assert "--- found 1 outdated and hot (excluded from cool-down) project" in out
         assert "ae-fake==3.4.5" in out
-        assert "==== found 2 outdated projects in venv=" in out
+        assert "=== found 2 outdated projects in venv=" in out
 
     def test_clone_children_of_ae_namespace(self, app_pjm):
         project_versions = (f"ae-group/ae_base{PROJECT_VERSION_SEP}0.3.60", f"ae_paths{PROJECT_VERSION_SEP}0.3.42")
@@ -853,8 +851,8 @@ class TestActionsLocal:
 
     @skip_gitlab_ci
     def test_renew_venv(self, app_pjm_debug, capsys, empty_repo_path):
-        def _pip_list_json_mock(*_args, lines_output: list[str], **_kwargs):
-            lines_output.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.3.4"},
+        def _pip_list_json_mock(*_args, output_lines: list[str], **_kwargs):
+            output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.3.4"},
                                             {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "7.8.9"},
                                             ]))
 
@@ -871,7 +869,7 @@ class TestActionsLocal:
         assert "tst_pkg3==3.3.3" in output
         assert "tst-pkg3==3.3.3" in output  # w/ normalized pip name
         assert "--- installed 1 indirectly required, outdated and cooled-down project" in output
-        assert "==== installed 1 outdated projects" in output
+        assert "=== installed 1 outdated projects in venv=" in output
 
     @skip_gitlab_ci
     def test_refresh_children(self, module_repo_path):
@@ -979,7 +977,7 @@ class TestActionsLocal:
         show_expression_value(pdv, 'base_globals')
         output = capsys.readouterr().out
         assert 'base_globals' in output
-        assert "'base_globals': {...}" in output    # recursion dedected by Python repr
+        assert "'base_globals': {...}" in output    # recursion detected by Python repr
 
         rec_a = [[]]
         rec_b = [rec_a]
@@ -988,7 +986,7 @@ class TestActionsLocal:
         show_expression_value(pdv, 'base_globals')
         output = capsys.readouterr().out
 
-        assert "'base_globals': {" + os.linesep in output   # 1st occurance shows the value of base_globals
+        assert "'base_globals': {" + os.linesep in output   # 1st occurrence shows the value of base_globals
         assert "'base_globals': {...}" in output    # Python repr recursion guard replaced base_globals value with "..."
 
         sep = os.linesep
@@ -1300,6 +1298,7 @@ class TestHelpersLocal:
 
     def test_init_act_exec_args_new_app(self, app_pjm, mocked_app_options):
         mocked_app_options['action'] = 'new_app'
+        mocked_app_options['more_verbose'] = True
         mocked_app_options['arguments'] = []
 
         ini_pdv = _init_pdv()
@@ -1569,11 +1568,11 @@ class TestHelpersLocal:
             assert git_current_branch(project_path).startswith(f"created_new_{PACKAGE_PRJ}_{pkg_name}_")
 
     def test_show_editable_and_outdated_and_not_required(self, app_pjm, capsys, empty_repo_path):
-        def _pip_output_mock(*_args, lines_output: list[str], **_kwargs):
-            lines_output.append("not-removable-header")
-            lines_output.append("--------------------")
-            lines_output.append('ae_fake')
-            lines_output.append('tst_pkg')
+        def _pip_output_mock(*_args, output_lines: list[str], **_kwargs):
+            output_lines.append("not-removable-header")
+            output_lines.append("--------------------")
+            output_lines.append('ae_fake')
+            output_lines.append('tst_pkg')
 
         with patch('aedev.project_manager.__main__.sh_exec', new=_pip_output_mock):
             _show_editable_and_outdated_and_not_required(ProjectDevVars(project_path=empty_repo_path))

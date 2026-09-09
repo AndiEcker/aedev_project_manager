@@ -423,6 +423,32 @@ class TestHelpers:
         assert 'old_str' in app_mock.method_calls[1].args[0]
         assert 'new_str' in app_mock.method_calls[1].args[0]
 
+    def test_check_templates_log_check_outdated_context_diff(self):
+        app_mock = MagicMock()
+        app_mock.verbose = False
+        app_mock.debug = False
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert 'new_str' in app_mock.method_calls[1].args[0]
+
+    def test_check_templates_log_check_outdated_error(self):
+        app_mock = MagicMock()
+        app_mock.verbose = False
+        app_mock.debug = False
+
+        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', None)], True)
+
+        assert app_mock.po.call_count == 2
+        assert len(app_mock.method_calls) == 2
+        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
+        assert 'old_str' in app_mock.method_calls[1].args[0]
+        assert '***** content type error' in app_mock.method_calls[1].args[0]
+
     def test_check_templates_log_check_outdated_ndiff_verbose(self):
         app_mock = MagicMock()      # cae.verbose is True
 
@@ -437,19 +463,6 @@ class TestHelpers:
     def test_check_templates_log_check_outdated_unified_diff_debug(self):
         app_mock = MagicMock()
         app_mock.verbose = False
-
-        _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
-
-        assert app_mock.po.call_count == 2
-        assert len(app_mock.method_calls) == 2
-        assert 'f_nam.ext' in app_mock.method_calls[0].args[0]
-        assert 'old_str' in app_mock.method_calls[1].args[0]
-        assert 'new_str' in app_mock.method_calls[1].args[0]
-
-    def test_check_templates_log_check_outdated_context_diff(self):
-        app_mock = MagicMock()
-        app_mock.verbose = False
-        app_mock.debug = False
 
         _log_check_outdated(app_mock, [('f_nam.ext', 'old_str', 'new_str')], True)
 

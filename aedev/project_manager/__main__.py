@@ -50,6 +50,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import time
 
 from collections import OrderedDict
@@ -70,6 +71,7 @@ from github.Repository import Repository
 from gitlab import Gitlab, GitlabAuthenticationError, GitlabCreateError, GitlabError, GitlabHttpError, GitlabListError
 from gitlab.const import MAINTAINER_ACCESS
 from gitlab.v4.objects import Group, Project, ProjectMergeRequest, User
+from gitlab.v4.objects.users import CurrentUser
 
 from packaging.version import Version, InvalidVersion
 from PIL import Image
@@ -80,7 +82,7 @@ from ae.base import (                                                       # ty
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     pep8_format, read_bin_file, read_file, url_failure, write_file)
-from ae.system import full_stack_trace, module_attr, stack_var                                          # type: ignore
+from ae.system import full_stack_trace, module_attr, os_env_venv, stack_var                             # type: ignore
 from ae.paths import (                                                                                  # type: ignore
     FilesRegister,
     copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files)
@@ -99,7 +101,7 @@ from aedev.base import (                                                        
     code_version, get_pypi_versions, project_name_version, stripped_pip_name)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_FOLDER_NAME,
-    active_venv, bytes_file_diff, check_commit_msg_file,
+    bytes_file_diff, check_commit_msg_file,
     git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
@@ -149,8 +151,7 @@ def _action(*project_types: str, **deco_kwargs) -> Callable:     # Callable[[Cal
         doc_str = sep.join(_ for _ in fun.__doc__.split(':return:')[0].split(sep)
                            if ':param ini_pdv:' not in _ and _.strip())
 
-        # noinspection PyUnresolvedReferences
-        full_name = (method_of + "." if method_of else "") + fun.__name__
+        full_name = (method_of + "." if isinstance(method_of, str) else "") + fun.__name__
         # global REGISTERED_ACTIONS
         REGISTERED_ACTIONS[full_name] = {'full_name': full_name, 'annotations': fun.__annotations__,
                                          'docstring': doc_str, 'project_types': project_types, **deco_kwargs}
@@ -347,7 +348,8 @@ def _check_code_flake8(pdv: ProjectDevVars, path_args: tuple[str, ...]):
             + ["--exclude=" + _ for _ in _check_code_arg_excludes(pdv)] \
             + _check_code_arg_options() \
             + (list(path_args) or _check_code_arg_paths(pdv))
-        sh_exit_if_exec_err(60, "flake8", extra_args=extra_args)
+
+        sh_exit_if_exec_err(60, "flake8", extra_args=extra_args, err_redirect=_err_redirect_arg())
 
     cae.po("  === flake8 linter checks done")
 
@@ -367,7 +369,8 @@ def _check_code_mypy(pdv: ProjectDevVars, path_args: tuple[str, ...]):
         # disallow-untyped-calls, disallow-untyped-decorators, disallow-untyped-defs, no-implicit-optional,
         # no-implicit-reexport, strict-equality, warn-redundant-casts [*], warn-return-any, warn-unused-configs,
         # warn-unused-ignores [*], """
-        sh_exit_if_exec_err(61, "mypy", extra_args=extra_args)
+
+        sh_exit_if_exec_err(61, "mypy", extra_args=extra_args, err_redirect=_err_redirect_arg())
 
         Badge("MyPy", "passed").write_badge("mypy_report/mypy.svg", overwrite=True)
 
@@ -387,14 +390,13 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
             + (list(path_args) or _check_code_arg_paths(pdv))
         if pdv['project_type'] == DJANGO_PRJ:
             extra_args.insert(0, "--load-plugins=pylint_django")
+
         # alternatively to exit_on_err=False: using pylint option --exit-zero
-        sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False, lines_output=out)
+        sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False,
+                            output_lines=out, err_redirect=_err_redirect_arg())
+
         matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
-        if get_app_option(pdv, 'more_verbose') and (not cae.debug or not matcher):
-            if not matcher:
-                cae.po(f"  ##  pylint {extra_args=} failed with:")
-            cae.po(ppp(out))
-        cae.chk(62, bool(matcher), f"pylint score search failed in string {os.linesep.join(out)}")
+        cae.chk(62, bool(matcher), f"pylint and score search failed in string:{ppp(out)}")
         if STDERR_BEG_MARKER in out:
             out = out[:out.index(STDERR_BEG_MARKER)]
         write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
@@ -414,7 +416,7 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     with in_prj_dir_venv(project_path):
         os.makedirs(".pytest_cache", exist_ok=True)
         extra_args = ([f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)]
-                      + [f"--cov={os_path_splitext(os_path_relpath(_pckg, project_path))[0]}" for _pckg in cov_paths]
+                      + [f"--cov={os_path_splitext(os_path_relpath(_pkg, project_path))[0]}" for _pkg in cov_paths]
                       + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"]
                       + _check_code_arg_options()
                       + [pdv['TESTS_FOLDER'] + "/"])
@@ -426,7 +428,9 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
             extra_args = ["--doctest-modules"] + extra_args + list(path_args)
         if project_type == DJANGO_PRJ:
             extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
-        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args)
+
+        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args, err_redirect=_err_redirect_arg())
+
         try:
             totals = json.loads(read_file(".pytest_cache/coverage.json"))['totals']
             perc = totals['percent_covered_display']
@@ -478,14 +482,15 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
                 cae.po(f"   -- {len(hot_reqs)} of them hot requirements:{ppp(sorted(hot_reqs))}")
 
     with in_prj_dir_venv(project_path=project_path):
-        venv = active_venv()
-    cae.chk(22, bool(venv), "no valid Python VENV configured or activated")
+        venv = os_env_venv()
+    cae.chk(22, bool(venv), "no valid Python VENV configured/set in the OS environment variables")
     cae.dpo(f"  --- using Python {venv=}")
 
     if verbose:
-        installed: list[str] = [""]   # prevent merge pip warnings
+        installed: list[str] = []   # prevent merge pip warnings
         with in_prj_dir_venv(project_path=project_path):
-            sh_exit_if_exec_err(22, PIP_CMD, extra_args=("list", "--format=json"), lines_output=installed)
+            sh_exit_if_exec_err(22, PIP_CMD, extra_args=("list", "--format=json"),
+                                output_lines=installed, err_redirect=_err_redirect_arg())
         installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + " " + _.get("editable_project_location", "")
                      for _ in json.loads("".join(installed))]
         cae.po(f"  --- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
@@ -502,7 +507,7 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
             cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
             ins = [_n + PROJECT_VERSION_SEP + str(_v["version"]) for _n, _v in cool_in.items() if not _v["requested"]]
             cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
-        else:
+        elif len(cool_in):
             ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in cool_in.items()]
             cae.po(f"  --- {act} {len(cool_in)} {msg}:{ppp(sorted(ins))}")
 
@@ -517,11 +522,11 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
         cae.po(f"  --- {act} {len(ins)} {msg}:{ppp(sorted(ins))}")
         ins = [_nam + PROJECT_VERSION_SEP + str(_v["version"]) for _nam, _v in hot_in.items() if not _v["requested"]]
         cae.po(f"  --- {act} {len(ins)} indirectly required, {msg}:{ppp(sorted(ins))}")
-    else:
+    elif len(hot_in):
         ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_in.items()]
         cae.po(f"  --- {act} {len(hot_in)} {msg}:{ppp(sorted(ins))}")
 
-    cae.po(f" ==== {act} {len(cool_in) + len(hot_in)} outdated projects in {venv=} for {pdv['project_title']}")
+    cae.po(f"  === {act} {len(cool_in) + len(hot_in)} outdated projects in {venv=} for {pdv['project_title']}")
 
 
 def _check_resources_img(pdv: ProjectDevVars) -> list[str]:                                 # pragma: no cover
@@ -700,6 +705,11 @@ def _check_version(version_number: str, prefix_to_check: str = "") -> str:      
     return version_number
 
 
+def _err_redirect_arg() -> int:
+    """ determine the argument value of :paramref:`ae.shell.sh_exit_if_exec_err.err_redirect`. """
+    return subprocess.PIPE if debug_or_verbose(cae) else subprocess.DEVNULL
+
+
 def _get_pdv(**kwargs):
     """ create a pdv instance from the specified kwargs, check it for errors and if it has errors then exit app. """
     pdv = ProjectDevVars(**kwargs)
@@ -821,10 +831,12 @@ def _init_act_exec_args(ini_pdv: ProjectDevVars) -> tuple[str, tuple, dict[str, 
 
     pre_action = act_spec.get('pre_action')
     if pre_action:                                                                          # pragma: no cover
-        cae.po(f" ---- executing pre-action {pre_action.__name__}")
+        if debug_or_verbose(cae):
+            cae.po(f" ---- executing pre-action {pre_action.__name__}")
         pre_action(ini_pdv, *act_args)
 
-    cae.po(f"----- {act_name}{extra_children_args} on {ini_pdv['project_title']}{extra_msg}")
+    if debug_or_verbose(cae):
+        cae.po(f"----- {act_name}{extra_children_args} on {ini_pdv['project_title']}{extra_msg}")
 
     return act_name, act_args, act_flags
 
@@ -944,8 +956,8 @@ def _print_pdv(pdv: ProjectDevVars):
         if 'long_desc_content' in pdv:
             pdv['long_desc_content'] = skw['long_description'] = pdv['long_desc_content'][:33] + "..."
         pdv['package_data'] = ", ".join(pdv.pdv_val('package_data'))
-        # noinspection PyUnresolvedReferences
-        pdv['portions_packages'] = ", ".join(_pkg[nsp_len:] for _pkg in sorted(pdv.pdv_val('portions_packages')))
+        pdv['portions_packages'] = ", ".join(_pkg[nsp_len:] for _pkg in sorted(cast(list[str],
+                                                                                    pdv.pdv_val('portions_packages'))))
         pdv['project_packages'] = ", ".join(pdv.pdv_val('project_packages'))
         pdv['tests_requires'] = ", ".join(pdv.pdv_val('tests_requires'))
 
@@ -1096,20 +1108,18 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
 
     with in_prj_dir_venv(pdv['project_path']):
         output: list[str] = []
-        sh_exec(PIP_CMD, extra_args=("check", "--quiet"), lines_output=output, app_obj=cae,
-                env_vars=os.environ.copy())
+        sh_exec(PIP_CMD, extra_args=("check", "--quiet"), output_lines=output, app_obj=cae)
         if output:              # pragma: no cover
             cae.po(f"  --- found {len(output)} broken requirements:")
             _print_lines(output)
 
         output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--editable"), lines_output=output, app_obj=cae,
-                env_vars=os.environ.copy())
+        sh_exec(PIP_CMD, extra_args=("list", "--editable"), output_lines=output, app_obj=cae)
         cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
         _print_lines(output)
 
         output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--outdated"), lines_output=output, app_obj=cae)
+        sh_exec(PIP_CMD, extra_args=("list", "--outdated"), output_lines=output, app_obj=cae)
         found = []
         for idx, line in enumerate(output):
             if idx < 2 or any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
@@ -1120,7 +1130,7 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
 
         if period:  # needs pip list w/ version > 26.1.2 (created issue #14189, fixed by #14190/v26.2)
             output = []
-            sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, lines_output=output, app_obj=cae)
+            sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, output_lines=output, app_obj=cae)
             found = []
             for idx, line in enumerate(output):
                 if idx < 2 or not any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
@@ -1130,7 +1140,7 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
                 _print_lines(found)
 
         output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--not-required"), lines_output=output, app_obj=cae)
+        sh_exec(PIP_CMD, extra_args=("list", "--not-required"), output_lines=output, app_obj=cae)
         cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
         _print_lines(output)
 
@@ -1175,7 +1185,7 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:                               
         cae.po("  --- setup.py check:")
         output: list[str] = []
         with in_prj_dir_venv(project_path):
-            sh_exec("python setup.py check", lines_output=output, app_obj=cae)
+            sh_exec("python setup.py check", output_lines=output, app_obj=cae)
         for line in output:
             cae.po(f"      {line}")
 
@@ -1505,12 +1515,26 @@ class GithubCom(RemoteHost):                                                    
         cae.po(f"   == initialized new project and created {len(branch_masks)} protected branch(es): {branch_masks}")
         return ""
 
+    def merge_pushed_project(self, pdv: ProjectDevVars,
+                             request: ProjectMergeRequest | None = None, message: str = "", max_wait: float = 6.9
+                             ) -> int:                                                      # pragma: no cover
+        """ merge the merge-request (MR) of the specified project.
+
+        :param pdv:             project dev vars.
+        :param request:         pass MergeRequest instance for direct merge of unforked repository.
+        :param message:         commit message file content. will be read from project root folder if empty|not-passed.
+        :param max_wait:        maximum waiting time in seconds for all the retries of the merge. the delay between
+                                each retry can be specified via the --delay option.
+        :return:                number of retries left. returns zero if merge did fail (consuming all retries).
+        """
+        raise NotImplementedError
+
     def repo_obj(self, err_code: int, err_msg: str, group_repo: str) -> Repository | None:
         """ convert user repo names to a repository instance of the remote api.
 
         :param err_code:        error code, pass 0 to not quit if a project is not found.
         :param err_msg:         error message to display on error. will be extended with
-                                the group and project names from the :paramref:`~repo_obj.group_repo` argument.
+                                the group and project names from the :paramref:`.group_repo` argument.
         :param group_repo:      string with owner-user-name/repo-name of the repository, e.g. "UserName/RepositoryName".
         :return:                GitHub repository if found, else return `None` if err_code is zero else quit.
         """
@@ -1674,16 +1698,17 @@ class GitlabCom(RemoteHost):
         """
         token = ini_pdv['repo_token']
         try:
-            self.connection = Gitlab(ini_pdv['REPO_HOST_PROTOCOL'] + ini_pdv['repo_domain'], private_token=token)
+            connection = Gitlab(ini_pdv['REPO_HOST_PROTOCOL'] + ini_pdv['repo_domain'], private_token=token)
             if cae.debug:
-                # noinspection PyUnresolvedReferences
-                self.connection.enable_debug()
-            # noinspection PyUnresolvedReferences
-            self.connection.auth()          # authenticate and create user attribute
+                connection.enable_debug()
+            connection.auth()          # authenticate and create user attribute
+            self.connection = connection
+
         except (Exception, ) as ex:         # pylint: disable=broad-exception-caught
             cae.po(f"****  Gitlab connect exception: {mask_token(str(ex))}" + ("" if token else " (empty repo_token)"))
             self.connection = None
             return False
+
         return True
 
     def create_branch(self, owner_prj: str, branch_name: str, tag_name: str):               # pragma: no cover
@@ -1769,7 +1794,7 @@ class GitlabCom(RemoteHost):
     def merge_pushed_project(self, pdv: ProjectDevVars,
                              request: ProjectMergeRequest | None = None, message: str = "", max_wait: float = 6.9
                              ) -> int:                                                      # pragma: no cover
-        """ merge an MR of the specified project.
+        """ merge the merge-request (MR) of the specified project.
 
         :param pdv:             project dev vars.
         :param request:         pass MergeRequest instance for direct merge of unforked repository.
@@ -1972,9 +1997,7 @@ class GitlabCom(RemoteHost):
 
         user_name = get_host_user_name(ini_pdv, domain)
         conn = self.connection
-        # noinspection PyUnresolvedReferences
-        if debug_or_verbose(cae) and conn and conn.user is not None and conn.user.name != user_name:
-            # noinspection PyUnresolvedReferences
+        if debug_or_verbose(cae) and conn and isinstance(conn.user, CurrentUser) and conn.user.name != user_name:
             cae.po(f"    # {domain} user name {conn.user.name=} differs from .env-configured-{user_name=}")
 
         host_url = f"{ini_pdv['REPO_HOST_PROTOCOL']}{domain}"
@@ -2544,7 +2567,7 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
         extra_args.append('-v')
 
     extra_args += ['android', 'debug']
-    output: list[str] = [f" ---  buildozer arguments: {extra_args}"]    # non-empty list to keep stderr/stdout merged
+    output: list[str] = [f" ---  buildozer arguments: {extra_args}"]
     with in_prj_dir_venv(ini_pdv['project_path']):
         if build_flags['LIBS'] and os_path_isdir('.buildozer'):
             cae.po("  --- removing local .buildozer folder")
@@ -2558,7 +2581,8 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
         else:
             apk_dir = MOVES_SRC_FOLDER_NAME + UPDATER_ARGS_SEP + UPDATER_ARG_OS_PLATFORM + 'android'
 
-        sh_exit_if_exec_err(120, "buildozer", extra_args=extra_args, lines_output=output, exit_on_err=False)
+        sh_exit_if_exec_err(120, "buildozer", extra_args=extra_args, output_lines=output, exit_on_err=False,
+                            err_redirect=subprocess.STDOUT)     # to keep stderr/stdout merged
 
         in_filters = ('% Loading', '% Fetch', '% Computing', '% Installing', '% Downloading', '% Unzipping',
                       'Compressing objects:', 'Counting objects:', 'Enumerating objects:', 'Finding sources:',
@@ -2593,7 +2617,8 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
 
             cae.po(f"   == compile apk embedding APK at {datetime.datetime.now()}")
 
-            sh_exit_if_exec_err(123, "buildozer", extra_args=extra_args, exit_on_err=False)
+            sh_exit_if_exec_err(123, "buildozer", extra_args=extra_args, exit_on_err=False,
+                                err_redirect=subprocess.STDOUT)
 
             cae.po(f"  === embedded {slim_apk=} into APK in {apk_dir}/ at {datetime.datetime.now()}")
 
@@ -3086,7 +3111,8 @@ def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: P
 
         output: list[str] = []
         with in_prj_dir_venv(chi_pdv['project_path']):
-            sh_exit_if_exec_err(98, command, lines_output=output, exit_on_err=not _act_force_opt(ini_pdv))
+            sh_exit_if_exec_err(98, command, exit_on_err=not _act_force_opt(ini_pdv),
+                                output_lines=output, err_redirect=_err_redirect_arg())
         cae.po(ppp(output)[1:])
 
         if chi_pdv != children_pdv[-1]:
@@ -3299,7 +3325,8 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
                         args.append("--force-reinstall")
                     args.append(f"--uploaded-prior-to={ini_pdv['PYPI_COOLDOWN_PERIOD']}")
                     args.append(pkg_name)
-                sh_exit_if_exec_err(91, PIP_CMD, extra_args=["install"] + args, exit_msg="upgrade_requirements failed")
+                sh_exit_if_exec_err(91, PIP_CMD, extra_args=["install"] + args, exit_msg="upgrade_requirements failed",
+                                    err_redirect=_err_redirect_arg())
                 upgraded.append(args[-1])
 
     mask_msg = f" matching one of {pkg_masks}" if pkg_masks else ""
