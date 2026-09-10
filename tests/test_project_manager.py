@@ -488,7 +488,8 @@ class TestActionsLocal:
         mocked_app_options['more_verbose'] = True
 
         with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
-              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock)):
+              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock),
+              patch('aedev.project_manager.__main__.os_env_venv', return_value='tst_check_venv')):
             check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae_hot_mock', 'cooled-pkg1']))
 
         out = capsys.readouterr().out
@@ -512,7 +513,8 @@ class TestActionsLocal:
         mocked_app_options['more_verbose'] = False
 
         with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
-              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock)):
+              patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock),
+              patch('aedev.project_manager.__main__.os_env_venv', return_value='tst_check_venv')):  # !="" in GitLab CI
             check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae-fake==3.4.5', 'cool==9.9.9']))
 
         out = capsys.readouterr().out
