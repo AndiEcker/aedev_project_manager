@@ -49,6 +49,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -78,7 +79,7 @@ from PIL import Image
 
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    PY_INIT, UNSET, UnsetType,
+    PY_INIT, UNSET, URI_SVC_SEP, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
     pep8_format, read_bin_file, read_file, url_failure, write_file)
@@ -92,7 +93,7 @@ from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_P
 from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                                          # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.shell import (                                                                                  # type: ignore
-    STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, sh_exec, sh_exit_if_exec_err)
+    STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, run_cmd, run_logged_cmd)
 from ae.managed_files import deploy_template, TemplateMngr                                              # type: ignore
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
@@ -105,7 +106,7 @@ from aedev.commands import (                                                    
     git_any, git_branches, git_branch_files, git_branch_remotes, git_checkout, git_clone, git_commit,
     git_current_branch, git_diff, git_fetch, git_init_if_needed, git_merge, git_push, git_renew_remotes,
     git_status, git_tag_add, git_ref_in_branch, git_tag_list, git_tag_remotes, git_uncommitted,
-    in_prj_dir_venv, owner_project_from_url, pip_install, sh_exit_if_git_err, sh_log, sh_logs)
+    in_prj_dir_venv, owner_project_from_url, pip_install, run_git_traced, sh_log, sh_logs)
 from aedev.project_vars import (                                                                        # type: ignore
     PDV_docs_domain, PDV_repo_domain, PLAYGROUND_PRJ, ROOT_PRJ,
     ChildrenType,
@@ -115,7 +116,7 @@ from aedev.project_vars import (                                                
 
 from aedev.project_manager.codeberg import ensure_repo, set_main_branch
 from aedev.project_manager.templates import (
-    PATH_PREFIXES_PARSERS, TPL_IMPORT_NAMES,
+    PATH_PREFIXES_PARSERS, TPL_IMPORT_NAMES, TPL_IMPORT_NAME_SUFFIX,
     check_templates, get_template_vars, project_templates, template_path_option, template_version_option)
 from aedev.project_manager.utils import (
     ARG_ALL, ARGS_CHILDREN_DEFAULT, ARG_MULTIPLES, DJANGO_EXCLUDED_FROM_CLEANUP, PPF,
@@ -349,14 +350,14 @@ def _check_code_flake8(pdv: ProjectDevVars, path_args: tuple[str, ...]):
             + _check_code_arg_options() \
             + (list(path_args) or _check_code_arg_paths(pdv))
 
-        sh_exit_if_exec_err(60, "flake8", extra_args=extra_args, err_redirect=_err_redirect_arg())
+        run_logged_cmd(60, "flake8", *extra_args, stderr=_err_redirect_arg())
 
     cae.po("  === flake8 linter checks done")
 
 
 def _check_code_mypy(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     with in_prj_dir_venv(pdv['project_path']):
-        os.makedirs("mypy_report", exist_ok=True)                   # sh_exit_if_exec_err(61, "mkdir -p ./mypy_report")
+        os.makedirs("mypy_report", exist_ok=True)                   # run_logged_cmd(61, "mkdir -p ./mypy_report")
         # added "/" and + "/" to excludes to exclude template folder but not files like e.g. ae/templates.py
         extra_args = ["--exclude=/" + _exclude + "/" for _exclude in _check_code_arg_excludes(pdv)] \
             + ["--lineprecision-report=mypy_report", "--pretty", "--show-absolute-path", "--show-error-codes",
@@ -370,7 +371,7 @@ def _check_code_mypy(pdv: ProjectDevVars, path_args: tuple[str, ...]):
         # no-implicit-reexport, strict-equality, warn-redundant-casts [*], warn-return-any, warn-unused-configs,
         # warn-unused-ignores [*], """
 
-        sh_exit_if_exec_err(61, "mypy", extra_args=extra_args, err_redirect=_err_redirect_arg())
+        run_logged_cmd(61, "mypy", *extra_args, stderr=_err_redirect_arg())
 
         Badge("MyPy", "passed").write_badge("mypy_report/mypy.svg", overwrite=True)
 
@@ -380,7 +381,6 @@ def _check_code_mypy(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     with in_prj_dir_venv(pdv['project_path']):
         os.makedirs(".pylint", exist_ok=True)
-        out: list[str] = []
         # disabling false-positive pylint errors E0401(unable to import) and E0611(no name in module) caused by name
         # clash for packages kivy and ae.kivy (see https://github.com/PyCQA/pylint/issues/5226 of user hmc-cs-mdrissi).
         extra_args = [f"--max-line-length={pdv.pdv_val('CODE_LINE_LENGTH')}", "--output-format=text", "--recursive=y",
@@ -391,9 +391,8 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
         if pdv['project_type'] == DJANGO_PRJ:
             extra_args.insert(0, "--load-plugins=pylint_django")
 
-        # alternatively to exit_on_err=False: using pylint option --exit-zero
-        sh_exit_if_exec_err(62, 'pylint', extra_args=extra_args, exit_on_err=False,
-                            output_lines=out, err_redirect=_err_redirect_arg())
+        out: list[str] = []
+        run_logged_cmd(62, 'pylint', *extra_args, output_lines=out, stderr=_err_redirect_arg())
 
         matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
         cae.chk(62, bool(matcher), f"pylint and score search failed in string:{ppp(out)}")
@@ -411,25 +410,26 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
     project_path = pdv['project_path']
     project_type = pdv['project_type']
-    cov_paths = path_args or _check_code_arg_paths(pdv) or [project_path]
+    cov_paths = _check_code_arg_paths(pdv) or [project_path]
 
     with in_prj_dir_venv(project_path):
         os.makedirs(".pytest_cache", exist_ok=True)
-        extra_args = ([f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)]
-                      + [f"--cov={os_path_splitext(os_path_relpath(_pkg, project_path))[0]}" for _pkg in cov_paths]
-                      + ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"]
-                      + _check_code_arg_options()
-                      + [pdv['TESTS_FOLDER'] + "/"])
+        options = ([f"--ignore-glob=**/{_}/*" for _ in _check_code_arg_excludes(pdv)] +
+                   [f"--cov={os_path_splitext(os_path_relpath(_pkg, project_path))[0]}" for _pkg in cov_paths] +
+                   ["--cov-report=html", "--cov-report=json:.pytest_cache/coverage.json", "-v"] +
+                   _check_code_arg_options())
         if not pdv['namespace_name'] or project_type != PACKAGE_PRJ:
             # --doctest-glob="...*.py" does not work for .py files (only collectable via --doctest-modules).
             # doctest fails on namespace packages even with --doctest-ignore-import-errors (modules are ok).
             # actually, pytest doesn't raise an error on namespace-package, but without collecting doctests and only if
             # --doctest-ignore-import-errors get specified and if args (==namespace) got specified after TESTS_FOLDER
-            extra_args = ["--doctest-modules"] + extra_args + list(path_args)
+            options.append("--doctest-modules")
         if project_type == DJANGO_PRJ:
-            extra_args.insert(0, f"--ds={pdv['project_name']}.settings")        # for the pytest-django package
+            options.append(f"--ds={pdv['project_name']}.settings")  # for the pytest-django package
 
-        sh_exit_if_exec_err(46, "pytest", extra_args=extra_args, err_redirect=_err_redirect_arg())
+        if not path_args:
+            path_args = (pdv['TESTS_FOLDER'] + "/", )
+        run_logged_cmd(46, "pytest", *options, *path_args, stderr=_err_redirect_arg())
 
         try:
             totals = json.loads(read_file(".pytest_cache/coverage.json"))['totals']
@@ -445,7 +445,7 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
         # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
         # write_bin_file(".pytest_cache/coverage.svg", urlopen(cov_badge_url).read())
 
-    cae.po(f"  === pytest coverage {msg} - check coverage report in file:///{project_path}/htmlcov/index.html")
+    cae.po(f"  === pytest coverage {msg} - see report in file{URI_SVC_SEP}/{project_path}/htmlcov/index.html")
 
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -464,8 +464,10 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     cool_reqs = set()
     hot_reqs = set()
     hot_masks = pdv['PYPI_COOLDOWN_EXCLUDES'].split(",")
-    all_reqs = set(pdv.pdv_val('dev_requires') + pdv.pdv_val('docs_requires') +
-                   pdv.pdv_val('install_requires') + pdv.pdv_val('tests_requires'))
+    all_reqs = set([_req for _req in pdv.pdv_val('dev_requires') if not _req.endswith(TPL_IMPORT_NAME_SUFFIX)]
+                   + pdv.pdv_val('docs_requires')
+                   + pdv.pdv_val('install_requires')
+                   + pdv.pdv_val('tests_requires'))
     for pkg in all_reqs:
         if any(fnmatchcase(stripped_pip_name(pkg), _mask) for _mask in hot_masks):
             hot_reqs.add(pkg)
@@ -489,8 +491,7 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     if verbose:
         installed: list[str] = []   # prevent merge pip warnings
         with in_prj_dir_venv(project_path=project_path):
-            sh_exit_if_exec_err(22, PIP_CMD, extra_args=("list", "--format=json"),
-                                output_lines=installed, err_redirect=_err_redirect_arg())
+            run_logged_cmd(22, PIP_CMD, "list", "--format=json", output_lines=installed, stderr=_err_redirect_arg())
         installed = [_["name"] + PROJECT_VERSION_SEP + _["version"] + " " + _.get("editable_project_location", "")
                      for _ in json.loads("".join(installed))]
         cae.po(f"  --- found {len(installed)} currently installed projects in {venv=}:{ppp(installed)}")
@@ -706,7 +707,7 @@ def _check_version(version_number: str, prefix_to_check: str = "") -> str:      
 
 
 def _err_redirect_arg() -> int:
-    """ determine the argument value of :paramref:`ae.shell.sh_exit_if_exec_err.err_redirect`. """
+    """ determine the argument value of :paramref:`ae.shell.run_logged_cmd.stderr`. """
     return subprocess.PIPE if debug_or_verbose(cae) else subprocess.DEVNULL
 
 
@@ -1099,7 +1100,7 @@ def _required_package(import_or_package_name: str, packages_versions: list[str])
 
 
 def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
-    period = (f"--uploaded-prior-to={_p_arg}", ) if (_p_arg := pdv['PYPI_COOLDOWN_PERIOD']) else ()
+    period = f"--uploaded-prior-to={_p_arg}" if (_p_arg := pdv['PYPI_COOLDOWN_PERIOD']) else ""
     hot_masks = pdv['PYPI_COOLDOWN_EXCLUDES'].split(",")
 
     def _print_lines(lines: list[str]):
@@ -1108,18 +1109,19 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
 
     with in_prj_dir_venv(pdv['project_path']):
         output: list[str] = []
-        sh_exec(PIP_CMD, extra_args=("check", "--quiet"), output_lines=output, app_obj=cae)
+        run_cmd(PIP_CMD, "check", "--quiet", output_lines=output, app_obj=cae)
         if output:              # pragma: no cover
             cae.po(f"  --- found {len(output)} broken requirements:")
             _print_lines(output)
 
-        output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--editable"), output_lines=output, app_obj=cae)
-        cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
-        _print_lines(output)
+        if debug_or_verbose(cae):
+            output = []
+            run_cmd(PIP_CMD, "list", "--editable", output_lines=output, app_obj=cae)
+            cae.po(f"  --- found {max(0, len(output) - 2)} editable projects:")
+            _print_lines(output)
 
         output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--outdated"), output_lines=output, app_obj=cae)
+        run_cmd(PIP_CMD, "list", "--outdated", output_lines=output, app_obj=cae)
         found = []
         for idx, line in enumerate(output):
             if idx < 2 or any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
@@ -1130,7 +1132,7 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
 
         if period:  # needs pip list w/ version > 26.1.2 (created issue #14189, fixed by #14190/v26.2)
             output = []
-            sh_exec(PIP_CMD, extra_args=("list", "--outdated") + period, output_lines=output, app_obj=cae)
+            run_cmd(PIP_CMD, "list", "--outdated", period, output_lines=output, app_obj=cae)
             found = []
             for idx, line in enumerate(output):
                 if idx < 2 or not any(fnmatchcase(stripped_pip_name(line), _msk) for _msk in hot_masks):
@@ -1139,10 +1141,11 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
                 cae.po(f"  --- found {max(0, len(found) - 2)} outdated cooled-down projects:")
                 _print_lines(found)
 
-        output = []
-        sh_exec(PIP_CMD, extra_args=("list", "--not-required"), output_lines=output, app_obj=cae)
-        cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
-        _print_lines(output)
+        if debug_or_verbose(cae):
+            output = []
+            run_cmd(PIP_CMD, "list", "--not-required", output_lines=output, app_obj=cae)
+            cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
+            _print_lines(output)
 
 
 def _show_remote_gitlab(prj_instance: Project, branch: str = "") -> bool:                   # pragma: no cover
@@ -1185,7 +1188,7 @@ def _show_status(ini_pdv: ProjectDevVars) -> str:                               
         cae.po("  --- setup.py check:")
         output: list[str] = []
         with in_prj_dir_venv(project_path):
-            sh_exec("python setup.py check", output_lines=output, app_obj=cae)
+            run_cmd("python setup.py check", output_lines=output, app_obj=cae)
         for line in output:
             cae.po(f"      {line}")
 
@@ -1934,7 +1937,7 @@ class GitlabCom(RemoteHost):
             version = ver[0]
             if chk == f"remotes/{ini_pdv['REMOTE_ORIGIN']}/":   # un-deployed remote release branch found
                 # protected release branch (ini_pdv['GIT_RELEASE_REF_PREFIX'] + '*') raises error on git push command:
-                # git_push(project_path, _git_repo_url(ini_pdv, authentic=True), branch_name, extra_args=("--delete",))
+                # git_push(project_path, _git_repo_url(ini_pdv, authentic=True), branch_name, "--delete")
                 group_repo = f"{get_host_group(ini_pdv, get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
                 project = self.repo_obj(33, group_repo)
                 if project is None:  # never None because app.shutdown() call, but added if to make mypy happy
@@ -1960,11 +1963,11 @@ class GitlabCom(RemoteHost):
 
             elif not chk:                       # un-deployed local release branch found
                 with in_prj_dir_venv(project_path):
-                    sh_err = sh_exit_if_git_err(33, f"git branch --delete {branch_name}")
+                    sh_err = run_git_traced(33, "git", "branch", "--delete", branch_name)
                     if sh_err:
                         cae.po(f"   ## ignoring error {sh_err} deleting branch {branch_name} via 'git branch --delete'")
 
-                    sh_err = sh_exit_if_git_err(33, f"git tag --delete v{version}")
+                    sh_err = run_git_traced(33, "git", "tag", "--delete", f"v{version}")
                     if sh_err:
                         cae.po(f"   ## ignoring error {sh_err} deleting local tag v{version} via 'git tag --delete'")
 
@@ -2581,8 +2584,7 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
         else:
             apk_dir = MOVES_SRC_FOLDER_NAME + UPDATER_ARGS_SEP + UPDATER_ARG_OS_PLATFORM + 'android'
 
-        sh_exit_if_exec_err(120, "buildozer", extra_args=extra_args, output_lines=output, exit_on_err=False,
-                            err_redirect=subprocess.STDOUT)     # to keep stderr/stdout merged
+        run_logged_cmd(120, "buildozer", *extra_args, output_lines=output, exit_on_err=False, stderr=subprocess.STDOUT)
 
         in_filters = ('% Loading', '% Fetch', '% Computing', '% Installing', '% Downloading', '% Unzipping',
                       'Compressing objects:', 'Counting objects:', 'Enumerating objects:', 'Finding sources:',
@@ -2617,8 +2619,7 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
 
             cae.po(f"   == compile apk embedding APK at {datetime.datetime.now()}")
 
-            sh_exit_if_exec_err(123, "buildozer", extra_args=extra_args, exit_on_err=False,
-                                err_redirect=subprocess.STDOUT)
+            run_logged_cmd(123, "buildozer", *extra_args, exit_on_err=False, stderr=subprocess.STDOUT)
 
             cae.po(f"  === embedded {slim_apk=} into APK in {apk_dir}/ at {datetime.datetime.now()}")
 
@@ -2754,8 +2755,7 @@ def check_resources(ini_pdv: ProjectDevVars):
 @_action(*ANY_PRJ_TYPE, shortcut='venv')
 def check_venv(ini_pdv: ProjectDevVars):
     """ check the installed package versions of the VENV of an existing project. """
-    if debug_or_verbose(cae):
-        _show_editable_and_outdated_and_not_required(ini_pdv)
+    _show_editable_and_outdated_and_not_required(ini_pdv)
     _check_or_install_outdated_reqs(ini_pdv, True)
 
 
@@ -2889,7 +2889,7 @@ def delete_file(ini_pdv: ProjectDevVars, file_or_dir: str) -> bool:
     # git is too picky - does not allow deleting unstaged/changed files
     # project_path = ini_pdv['project_path']
     # with _in_prj_dir_venv(project_path):
-    #     return sh_exit_if_git_err(89, f"git rm -f {os_path_relpath(file_or_dir, project_path)}",exit_on_err=False)==[]
+    #    return run_git_traced(89, "git", "rm", "-f", os_path_relpath(file_or_dir, project_path), exit_on_err=False)==[]
     file_or_dir = os_path_join(ini_pdv['project_path'], file_or_dir)   # prj path ignored if file_or_dir is abs
     is_dir = os_path_isdir(file_or_dir)
     if not is_dir and not os_path_isfile(file_or_dir):
@@ -2921,8 +2921,8 @@ def install_children_editable(ini_pdv: ProjectDevVars, *children_pdv: ProjectDev
 def install_editable(ini_pdv: ProjectDevVars):
     """ install the project as editable from the source/project root folder. """
     with in_prj_dir_venv(project_path := ini_pdv['project_path']):
-        sh_exit_if_exec_err(90, PIP_CMD, extra_args=["install", "--editable", project_path],
-                            exit_msg=f"package installation from local {project_path=} failed")
+        run_logged_cmd(90, PIP_CMD, "install", "--editable", project_path,
+                       exit_on_err=f"package installation from local {project_path=} failed")
 
     cae.po(f" ==== installed as editable: {ini_pdv['project_title']}")
 
@@ -3111,8 +3111,8 @@ def run_children_command(ini_pdv: ProjectDevVars, command: str, *children_pdv: P
 
         output: list[str] = []
         with in_prj_dir_venv(chi_pdv['project_path']):
-            sh_exit_if_exec_err(98, command, exit_on_err=not _act_force_opt(ini_pdv),
-                                output_lines=output, err_redirect=_err_redirect_arg())
+            run_logged_cmd(98, *shlex.split(command), exit_on_err=not _act_force_opt(ini_pdv),
+                           output_lines=output, stderr=_err_redirect_arg())
         cae.po(ppp(output)[1:])
 
         if chi_pdv != children_pdv[-1]:
@@ -3325,8 +3325,8 @@ def upgrade_requirements(ini_pdv: ProjectDevVars, **optional_flags):            
                         args.append("--force-reinstall")
                     args.append(f"--uploaded-prior-to={ini_pdv['PYPI_COOLDOWN_PERIOD']}")
                     args.append(pkg_name)
-                sh_exit_if_exec_err(91, PIP_CMD, extra_args=["install"] + args, exit_msg="upgrade_requirements failed",
-                                    err_redirect=_err_redirect_arg())
+                run_logged_cmd(91, PIP_CMD, "install", *args,
+                               exit_on_err="upgrade_requirements failed", stderr=_err_redirect_arg())
                 upgraded.append(args[-1])
 
     mask_msg = f" matching one of {pkg_masks}" if pkg_masks else ""

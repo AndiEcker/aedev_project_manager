@@ -1,6 +1,7 @@
 """ utils module tests. """
 import json
 import os
+import subprocess
 from typing import OrderedDict
 
 from unittest.mock import MagicMock, mock_open, patch
@@ -8,7 +9,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER,
+    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER, URI_SVC_SEP,
     extend_file, in_wd, norm_name, norm_path, now_str,
     os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_splitext,
     read_file, write_file)
@@ -49,7 +50,7 @@ PRJ_ROOT_PATH = f"/{PRJ_NAME}"
 PRJ_VERSION = "1.2.3"
 PRJ_VERSION_V2 = "2.0.0"
 
-EDITABLE_LINE = f"-e git+https://github.com/org/{PRJ_NAME}.git@abc123#egg={PRJ_NAME}"
+EDITABLE_LINE = f"-e git+https{URI_SVC_SEP}github.com/org/{PRJ_NAME}.git@abc123#egg={PRJ_NAME}"
 FROZEN_FILE_PATH = f"{PRJ_ROOT_PATH}/requirements.frozen.txt"
 
 REQ_FILE_PACKAGES = ["any_package==3.2.1", "other_pkg==6.9", "addPkg==2024.1.0"]
@@ -458,29 +459,29 @@ class TestUpdateFrozenReqFile:
             yield mock
 
     @pytest.fixture
-    def mock_sh_exit_no_errors(self):
-        """ patch sh_exit_if_exec_err appending clean pip-freeze output to output_lines without any STDERR markers. """
+    def mock_run_cmd_no_errors(self):
+        """ patch run_logged_cmd appending clean pip-freeze output to output_lines without any STDERR markers. """
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(REQ_FILE_PACKAGES)
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect) as mock:
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect) as mock:
             yield mock
 
     @pytest.fixture
     def mock_sh_exit_with_stderr_errors(self):
-        """ patch sh_exit_if_exec_err to produce output that contains STDERR markers and at least one error message. """
+        """ patch run_logged_cmd to produce output that contains STDERR markers and at least one error message. """
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend([REQ_FILE_PACKAGES[0],
                                  STDERR_BEG_MARKER,
                                  TestUpdateFrozenReqFile.PIP_WARNING,
                                  STDERR_END_MARKER])
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect) as mock:
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect) as mock:
             yield mock
 
     @pytest.fixture
     def mock_sh_exit_with_stderr_no_error_messages(self):
-        """ patch sh_exit_if_exec_err() to produce output with no error messages between the markers. """
+        """ patch run_logged_cmd() to produce output with no error messages between the markers. """
         lines = [
             REQ_FILE_PACKAGES[0],
             STDERR_BEG_MARKER,
@@ -490,7 +491,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(lines)
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect) as mock:
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect) as mock:
             yield mock
 
     @pytest.fixture
@@ -512,7 +513,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(lines_with_pip_comment)
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
@@ -528,7 +529,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(all_lines)
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
 
         assert errors == []
@@ -546,7 +547,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(lines)
 
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', side_effect=_side_effect):
+        with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=True)
 
         assert errors == []
@@ -558,7 +559,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
 
-        with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
+        with (patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=True),
               patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
@@ -574,7 +575,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend([EDITABLE_LINE] + REQ_FILE_PACKAGES)
 
-        with (patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect),
+        with (patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=False),
               patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
@@ -588,7 +589,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend([refreshable_first_line] + REQ_FILE_PACKAGES)
 
-        with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
+        with patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect):
             errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
@@ -602,7 +603,7 @@ class TestUpdateFrozenReqFile:
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(REQ_FILE_PACKAGES)
 
-        with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
+        with patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect):
             errors = update_frozen_req_file("", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
@@ -612,7 +613,7 @@ class TestUpdateFrozenReqFile:
         assert REQ_FILE_PACKAGES[2] in written_content
 
     def test_frozen_file_path_falsy_returns_empty_list_immediately(self, mock_frozen_path_none):
-        with (patch("aedev.project_manager.utils.sh_exit_if_exec_err") as mock_exec,
+        with (patch("aedev.project_manager.utils.run_logged_cmd") as mock_exec,
               patch("aedev.project_manager.utils.write_file") as mock_write):
             errors = update_frozen_req_file("", REQ_FILE_PATH)
 
@@ -622,7 +623,7 @@ class TestUpdateFrozenReqFile:
         mock_frozen_path_none.assert_called_once_with(REQ_FILE_PATH, strict=True)
 
     def test_no_errors_writes_file_and_returns_empty_list(
-            self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
+            self, mock_frozen_path_valid, mock_run_cmd_no_errors, mock_read_file, mock_write_file):
         errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
@@ -647,28 +648,31 @@ class TestUpdateFrozenReqFile:
         mock_write_file.assert_called_once()
 
     def test_stderr_no_markers_in_output_no_errors_returned(
-            self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
+            self, mock_frozen_path_valid, mock_run_cmd_no_errors, mock_read_file, mock_write_file):
         with patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER):
             errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
 
     def test_sh_exit_called_with_correct_arguments(
-            self, mock_frozen_path_valid, mock_sh_exit_no_errors, mock_read_file, mock_write_file):
+            self, mock_frozen_path_valid, mock_run_cmd_no_errors, mock_read_file, mock_write_file):
         update_frozen_req_file("", REQ_FILE_PATH)
 
-        mock_sh_exit_no_errors.assert_called_once()
-        call_kwargs = mock_sh_exit_no_errors.call_args
+        mock_run_cmd_no_errors.assert_called_once()
+        call_kwargs = mock_run_cmd_no_errors.call_args
         assert call_kwargs[0][0] == 73  # exit_code
         assert call_kwargs[0][1] == PIP_CMD  # cmd
-        assert call_kwargs[1]["extra_args"] == ("freeze", "-r", REQ_FILE_PATH)
-        assert isinstance(call_kwargs[1]["output_lines"], list)
+        assert call_kwargs[0][2] == "freeze"
+        assert call_kwargs[0][3] == "-r"
+        assert call_kwargs[0][4] == REQ_FILE_PATH
+        assert call_kwargs[1]["output_lines"] == REQ_FILE_PACKAGES
+        assert call_kwargs[1]["stderr"] == subprocess.PIPE
 
     def test_write_file_called_w_frozen_path_and_content(self, mock_frozen_path_valid, mock_read_file, mock_write_file):
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend(REQ_FILE_PACKAGES)
 
-        with patch("aedev.project_manager.utils.sh_exit_if_exec_err", side_effect=_side_effect):
+        with patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect):
             update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         mock_write_file.assert_called_once_with(FROZEN_FILE_PATH, REQ_FILE_CONTENT)
@@ -1139,7 +1143,7 @@ class TestOtherHelpers:
             output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.2.2"},
                                             {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "6.9.3"},
                                             ]))
-        with patch('aedev.project_manager.utils.sh_exit_if_exec_err', new=_pip_list_json_mock):
+        with patch('aedev.project_manager.utils.run_logged_cmd', new=_pip_list_json_mock):
             ins = installed_packages(app_pjm_debug, empty_repo_path)
 
         assert set(ins) == {'tst-pkg1', 'tst-pkg2'}

@@ -26,11 +26,11 @@ from typing import TypedDict
 
 import requests
 
-from ae.base import now_str                                                                         # type: ignore
+from ae.base import URI_SVC_SEP, now_str                                                            # type: ignore
 from ae.shell import mask_token                                                                     # type: ignore
 
 
-API_URL_PREFIX = "https://codeberg.org/api/v1/"
+API_URL_PREFIX = f"https{URI_SVC_SEP}codeberg.org/api/v1/"
 
 
 class _RequestsKwargs(TypedDict, total=False):

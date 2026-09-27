@@ -12,7 +12,7 @@ from functools import partial
 from typing import Any, cast
 
 from ae.base import (                                                                                   # type: ignore
-    TEMPLATES_FOLDER,
+    TEMPLATES_FOLDER, URI_SVC_SEP,
     in_wd, norm_name, norm_path, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, pep8_format)
 from ae.system import PyMo                                                                              # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
@@ -27,7 +27,7 @@ from aedev.base import (                                                        
     get_pypi_versions, project_name_version)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_VERSION_TAG_PREFIX,
-    git_clone, sh_exit_if_git_err)
+    git_clone, run_git_traced)
 from aedev.project_vars import (                                                                        # type: ignore
     PDV_repo_domain, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL,
     ProjectDevVars, frozen_req_file_path)
@@ -233,9 +233,10 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
         sub_dir_parts = (*py_mo.name_parts, TEMPLATES_FOLDER)
         with in_wd(path):
             tpl_dir = "/".join(sub_dir_parts)   # git sparse-checkout expects *nix-path-separator also on MsWindows
-            output = sh_exit_if_git_err(445, "git sparse-checkout", extra_args=("add", tpl_dir), exit_on_err=False)
+            output = run_git_traced(445, "git", "sparse-checkout", "add", tpl_dir, exit_on_err=False)
         path = "" if output and output[0].startswith(EXEC_GIT_ERR_PREFIX) else os_path_join(path, *sub_dir_parts)
 
+    # noinspection PyTypeChecker
     return path
 
 
@@ -248,6 +249,7 @@ def get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     tpl_vars = pdv.as_dict()
     tpl_vars['DJANGO_PRJ'] = DJANGO_PRJ
     tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
+    tpl_vars['URI_SVC_SEP'] = URI_SVC_SEP
     tpl_vars['frozen_req_file_path'] = frozen_req_file_path
     tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
     tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates

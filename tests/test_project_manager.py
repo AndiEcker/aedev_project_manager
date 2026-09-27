@@ -355,7 +355,7 @@ class TestActionsLocal:
 
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, module_repo_path,
                              mocked_app_options):
-        mocked_app_options['force'] = 12
+        mocked_app_options['force'] = 69
         write_file(os_path_join(changed_repo_path, TESTS_FOLDER, PDV_REQ_FILE_NAME),
                    "# flag file to run integrity checks", make_dirs=True)
 
@@ -487,7 +487,7 @@ class TestActionsLocal:
 
         mocked_app_options['more_verbose'] = True
 
-        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+        with (patch('aedev.project_manager.__main__.run_logged_cmd', new=_pip_list_json_mock),
               patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock),
               patch('aedev.project_manager.__main__.os_env_venv', return_value='tst_check_venv')):
             check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae_hot_mock', 'cooled-pkg1']))
@@ -512,7 +512,7 @@ class TestActionsLocal:
 
         mocked_app_options['more_verbose'] = False
 
-        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+        with (patch('aedev.project_manager.__main__.run_logged_cmd', new=_pip_list_json_mock),
               patch('aedev.project_manager.__main__.pip_install', new=_pip_install_mock),
               patch('aedev.project_manager.__main__.os_env_venv', return_value='tst_check_venv')):  # !="" in GitLab CI
             check_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['ae-fake==3.4.5', 'cool==9.9.9']))
@@ -657,7 +657,7 @@ class TestActionsLocal:
 
     def test_install_children_editable(self, module_repo_path):
         call_mock = MagicMock()
-        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=call_mock):
+        with patch('aedev.project_manager.__main__.run_logged_cmd', new=call_mock):
             install_children_editable(pdv_with_email(project_path=os_path_dirname(module_repo_path)),
                                       pdv_with_email(project_path=module_repo_path))
         assert call_mock.call_count == 1
@@ -667,7 +667,7 @@ class TestActionsLocal:
 
     def test_install_editable(self, module_repo_path):
         call_mock = MagicMock()
-        with patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=call_mock):
+        with patch('aedev.project_manager.__main__.run_logged_cmd', new=call_mock):
             install_editable(pdv_with_email(project_path=module_repo_path))
         assert call_mock.call_count == 1
         args = call_mock.call_args.args
@@ -860,7 +860,7 @@ class TestActionsLocal:
 
         pip_install_return = {'tst-pkg3': {'version': '3.3.3', 'requested': False}}     # aedev.commands.pip_install()
 
-        with (patch('aedev.project_manager.__main__.sh_exit_if_exec_err', new=_pip_list_json_mock),
+        with (patch('aedev.project_manager.__main__.run_logged_cmd', new=_pip_list_json_mock),
               patch('aedev.project_manager.__main__.pip_install', return_value=pip_install_return)):
             renew_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['tst_pkg3==3.3.3']))
 
@@ -1576,7 +1576,7 @@ class TestHelpersLocal:
             output_lines.append('ae_fake')
             output_lines.append('tst_pkg')
 
-        with patch('aedev.project_manager.__main__.sh_exec', new=_pip_output_mock):
+        with patch('aedev.project_manager.__main__.run_cmd', new=_pip_output_mock):
             _show_editable_and_outdated_and_not_required(ProjectDevVars(project_path=empty_repo_path))
 
         output = capsys.readouterr().out
