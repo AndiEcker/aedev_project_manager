@@ -25,7 +25,7 @@ from ae.dynamicod import try_call, try_eval                                     
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.shell import (                                                                                  # type: ignore
-    STDERR_BEG_MARKER, STDERR_END_MARKER, debug_or_verbose, get_domain_user_var, sh_exit_if_exec_err)
+    STDERR_BEG_MARKER, STDERR_END_MARKER, debug_or_verbose, get_domain_user_var, run_logged_cmd)
 from aedev.base import (                                                                                # type: ignore
     APP_PRJ, DJANGO_PRJ, PIP_CMD, PLAYGROUND_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, VERSION_PREFIX, VERSION_QUOTE)
 from aedev.commands import (                                                                            # type: ignore
@@ -508,7 +508,7 @@ def installed_packages(cae: ConsoleApp, project_path: str) -> list[str]:
     """
     installed: list[str] = []
     with in_prj_dir_venv(project_path=project_path):
-        sh_exit_if_exec_err(24, PIP_CMD, extra_args=("list", "--format=json"), output_lines=installed)
+        run_logged_cmd(24, PIP_CMD, "list", "--format=json", output_lines=installed)
     cae.vpo(f"    ! installed pip packages (in json format): {installed}")
     installed = [norm_pip_name(_['name']) for _ in json.loads(installed[0])]
     cae.dpo(f"   !! installed pip packages: {installed}")
@@ -719,8 +719,7 @@ def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packag
         return []
 
     out_lines: list[str] = []
-    sh_exit_if_exec_err(73, PIP_CMD, extra_args=("freeze", "-r", req_file_path),
-                        output_lines=out_lines, err_redirect=subprocess.PIPE)
+    run_logged_cmd(73, PIP_CMD, "freeze", "-r", req_file_path, output_lines=out_lines, stderr=subprocess.PIPE)
 
     errors: list[str] = []
     if out_lines and out_lines[-1] == STDERR_END_MARKER:

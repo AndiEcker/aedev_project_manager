@@ -9,14 +9,14 @@ from unittest.mock import patch
 import pytest
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT,
+    DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT, URI_SVC_SEP,
     os_path_basename, os_path_isfile, os_path_join, read_file, write_file)
 from ae.system import load_env_var_defaults
 from ae.core import DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE, main_app_instance
 from ae.console import ConsoleApp
 
 from aedev.base import DEF_MAIN_BRANCH, TEST_PROJECTS_REMOTE
-from aedev.commands import in_prj_dir_venv, sh_exit_if_git_err
+from aedev.commands import in_prj_dir_venv, run_git_traced
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, ProjectDevVars, increment_version)
 
@@ -47,7 +47,7 @@ load_env_var_defaults(".", tst_ext_env)  # use local machine pjm project user to
 tst_ctb_name = tst_ext_env.get('TEST_CONTRIBUTOR_NAME')
 tst_ctb_token = tst_ext_env.get('TEST_CONTRIBUTOR_TOKEN')
 # tst_ctb_email = tst_ext_env.get('TEST_CONTRIBUTOR_EMAIL')
-# tst_ctb_root_url = f"https://oauth2:{tst_ctb_token}@{TEST_PROJECTS_REMOTE}/{tst_ctb_name}"
+# tst_ctb_root_url = f"https{URI_SVC_SEP}oauth2:{tst_ctb_token}@{TEST_PROJECTS_REMOTE}/{tst_ctb_name}"
 
 tst_mtn_name = tst_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
 tst_mtn_token = tst_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if tst_mtn_name != tst_ctb_name else ""
@@ -154,12 +154,12 @@ def _init_repo(pkg_name: str):
         project_path = os_path_join(parent_path, pkg_name)
         write_file(os_path_join(project_path, ".gitignore"), read_file(".gitignore"), make_dirs=True)
         with in_prj_dir_venv(project_path):
-            # exit_on_err=False needed in all calls of sh_exit_if_exec_err() to prevent get_option call from _chk_if
-            sh_exit_if_git_err(963, "git init", exit_on_err=False)
-            sh_exit_if_git_err(963, "git config", extra_args=("user.email", "test@test.tst"), exit_on_err=False)
-            sh_exit_if_git_err(963, "git config", extra_args=("user.name", "TestUserName"), exit_on_err=False)
-            sh_exit_if_git_err(963, "git checkout", extra_args=("-b", DEF_MAIN_BRANCH))
-            sh_exit_if_git_err(963, "git commit", extra_args=("-v", "--allow-empty", "-m", "unit tst repo init"))
+            # exit_on_err=False needed in all calls of run_logged_cmd() to prevent get_option call from _chk_if
+            run_git_traced(963, "git", "init", exit_on_err=False)
+            run_git_traced(963, "git", "config", "user.email", "test@test.tst", exit_on_err=False)
+            run_git_traced(963, "git", "config", "user.name", "TestUserName", exit_on_err=False)
+            run_git_traced(963, "git", "checkout", "-b", DEF_MAIN_BRANCH)
+            run_git_traced(963, "git", "commit", "-v", "--allow-empty", "-m", "unit tst repo init")
         yield project_path
 
 
@@ -170,8 +170,8 @@ def changed_repo_path():
         with in_prj_dir_venv(project_path):
             write_file(os_path_join(project_path, 'deleteD.x'), "# will be deleted")
             write_file(os_path_join(project_path, 'ChangeD.y'), "# will be changed")
-            sh_exit_if_git_err(969, "git add", extra_args=["-A"], exit_on_err=False)
-            sh_exit_if_git_err(969, "git commit", extra_args=["-m", "git commit message"], exit_on_err=False)
+            run_git_traced(969, "git", "add", "-A", exit_on_err=False)
+            run_git_traced(969, "git", "commit", "-m", "git commit message", exit_on_err=False)
 
             write_file(os_path_join(project_path, 'addEd.ooo'), "# added/staged to repo")
             os.remove(os_path_join(project_path, 'deleteD.x'))
@@ -207,7 +207,7 @@ def gitlab_remote():
     """ provide a connected Gitlab remote repository api """
     assert tst_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {tst_mtn_token=}"
     remote_project = GitlabCom()
-    remote_project.connect(pdv_with_email(**{'REPO_HOST_PROTOCOL': "https://",
+    remote_project.connect(pdv_with_email(**{'REPO_HOST_PROTOCOL': "https" + URI_SVC_SEP,
                                              'repo_domain': TEST_PROJECTS_REMOTE,
                                              'repo_token': tst_mtn_token}))
 

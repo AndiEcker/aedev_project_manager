@@ -1,29 +1,27 @@
-aedev_project_tpls==0.3.102
+aedev_project_tpls==0.3.103
 aedev_aedev==0.3.34
 ## The following requirements were added by pip freeze:
-ae_app_log==0.3.3
-ae_base==0.3.94
-ae_console==0.3.97
-ae_core==0.3.88
+ae_app_log==0.3.4
+ae_base==0.3.97
+ae_console==0.3.98
+ae_core==0.3.89
 ae_db_core==0.3.17
-ae_db_pg==0.3.9
 ae_dynamicod==0.3.16
 ae_files==0.3.31
-ae_i18n==0.3.37
 ae_literal==0.3.36
 ae_lockname==0.3.11
 ae_managed_files==0.3.9
-ae_paths==0.3.46
+ae_paths==0.3.47
 ae_pythonanywhere==0.3.9
-ae_shell==0.3.17
+ae_shell==0.3.18
 ae_sys_core==0.3.27
-ae_system==0.3.19
+ae_system==0.3.20
 ae_updater==0.3.20
 aedev_app_tpls==0.3.22
-aedev_base==0.3.11
-aedev_commands==0.3.18
+aedev_base==0.3.11  # -e git+https://gitlab.com/aedev-group/aedev_base.git@d63ea8bcc79c420c04bd0f5e663889cc3b09c997#egg=aedev_base
+aedev_commands==0.3.18  # -e git+https://gitlab.com/aedev-group/aedev_commands.git@1326a1f01bd9dd5928f415d7ffe8968c3c898433#egg=aedev_commands
 aedev_namespace_root_tpls==0.3.33
-aedev_project_vars==0.3.24
+aedev_project_vars==0.3.24  # -e git+https://gitlab.com/aedev-group/aedev_project_vars.git@944dd86ff5ad8408f52f3b2b848ba9ee00ba1ab8#egg=aedev_project_vars
 alabaster==1.0.0
 anybadge==1.16.0
 argcomplete==3.6.3
@@ -34,7 +32,7 @@ certifi==2026.6.17
 cffi==2.0.0
 charset-normalizer==3.4.7
 click==8.4.1
-coverage==7.15.4
+coverage==7.16.1
 cryptography==49.0.0
 dill==0.4.1
 docutils==0.22.4
@@ -53,7 +51,7 @@ mypy_extensions==1.1.0
 packaging==26.3
 pathspec==1.1.1
 pillow==12.3.0
-pipx==1.16.7
+pipx==1.17.6
 platformdirs==4.10.0
 pluggy==1.6.0
 psycopg2-binary==2.9.12
@@ -89,7 +87,7 @@ sphinxcontrib-qthelp==2.0.0
 sphinxcontrib-serializinghtml==2.0.0
 tomlkit==0.15.0
 types-Pillow==10.2.0.20240822
-types-requests==2.33.0.20260712
+types-requests==2.33.0.20260906
 types-setuptools==84.0.0.20260812
 typing==3.7.4.3
 typing_extensions==4.16.0
