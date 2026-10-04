@@ -10,11 +10,13 @@ to run integration tests (~40 minutes), implemented in this test module:
 * put the credentials of your GitLab maintainer account (tst_mtn_token) into your .env file(s)
 * put the credentials of your GitLab contributor account (tst_ctb_token) into your .env file(s)
 """
+import json
 import os
 import shutil
 import time
 
 from dataclasses import dataclass
+from unittest.mock import patch
 from typing import Any
 
 import pytest
@@ -22,8 +24,9 @@ import pytest
 from packaging.version import Version
 
 from ae.base import (
+    TESTS_FOLDER,
     extend_file, norm_name, norm_path, now_str, on_ci_host,
-    os_path_basename, os_path_isdir, os_path_isfile, os_path_join,
+    os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     read_file, write_file)
 from ae.core import main_app_instance, temp_context_cleanup
 from ae.console import ConsoleApp
@@ -49,13 +52,15 @@ from aedev.project_manager.utils import guess_next_action, refresh_pdv
 from aedev.project_manager.__main__ import (
     REGISTERED_ACTIONS, REGISTERED_HOSTS_CLASS_NAMES, TPL_IMPORT_NAMES,
     _renew_project, _show_status,
-    clone_project, commit_project, init_main, prepare_commit, update_mirror)
+    check_missing, clone_project, commit_project, init_main,
+    prepare_commit, refresh_children, renew_venv, update_mirror)
 
 from tests.conftest import logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
 
 from tests.constants_and_fixtures import (
-    gitlab_remote, mocked_app_options, pdv_with_email, remote_connect,
+    app_pjm, app_pjm_debug, changed_repo_path, empty_repo_path, gitlab_remote, mocked_app_options, module_repo_path,
+    pdv_with_email, remote_connect,
     tst_ctb_name, tst_ctb_token, tst_mtn_name, tst_mtn_token,
     tst_namespaces_roots, tst_pkg_version, tst_tpls_register,
     uncommitted_guess_prefix)
@@ -428,6 +433,60 @@ class TestEnvPreparation:
         assert Version(latest_remote_version(pdv, increment_part=0)) == prj_version
 
         assert not pdv['pip_name'] or Version(get_pypi_versions(pdv['pip_name'], pypi_test=True)[-1]) == prj_version
+
+
+@skip_gitlab_ci
+class TestActions:
+    def test_check_missing(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
+        check_missing(pdv_with_email(project_path=changed_repo_path))
+
+        output = capsys.readouterr().out
+        assert " === checked missing file or folders for " in output
+
+        check_missing(pdv_with_email(project_path=empty_repo_path))
+
+        output = capsys.readouterr().out
+        assert " === checked missing file or folders for " in output
+
+    def test_refresh_children(self, module_repo_path):
+        par_pdv = pdv_with_email(projecT_path=os_path_dirname(module_repo_path))
+        chi_pdv = pdv_with_email(project_path=module_repo_path)
+        tests_dir = os_path_join(module_repo_path, TESTS_FOLDER)
+        assert not os_path_isdir(tests_dir)
+
+        refresh_children(par_pdv, chi_pdv)
+
+        assert os_path_isdir(tests_dir)
+
+    def test_renew_venv_integration(self, app_pjm_debug, capsys, empty_repo_path):
+        def _pip_list_json_mock(*_args, output_lines: list[str], **_kwargs):
+            output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.3.4"},
+                                            {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "7.8.9"},
+                                            ]))
+
+        pip_install_return = {'tst-pkg3': {'version': '3.3.3', 'requested': False}}     # aedev.commands.pip_install()
+
+        with (patch('aedev.project_manager.__main__.run_logged_cmd', new=_pip_list_json_mock),
+              patch('aedev.project_manager.__main__.pip_install', return_value=pip_install_return)):
+            renew_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['tst_pkg3==3.3.3']))
+
+        output = capsys.readouterr().out
+        assert output
+        assert "tst_pkg1==1.2.3" in output
+        assert "tst_pkg2==3.6.9" in output
+        assert "tst_pkg3==3.3.3" in output
+        assert "tst-pkg3==3.3.3" in output  # w/ normalized pip name
+        assert "--- installed 1 indirectly required, outdated and cooled-down project" in output
+        assert "=== installed 1 outdated projects in venv=" in output
+
+    def test_show_status_pjm(self):
+        pdv = pdv_with_email()
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            msg = _show_status(pdv)
+
+        assert mock_cae.po.call_count >= 1
+        assert "displayed project status" in msg
 
 
 @skip_gitlab_ci  # skip on gitlab because of a missing remote repository user account token

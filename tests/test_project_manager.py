@@ -21,13 +21,14 @@ from ae.shell import debug_or_verbose, in_os_env
 from ae.pythonanywhere import PythonanywhereApi
 from ae.managed_files import (
     PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER)
+from ae.updater import MOVES_SRC_FOLDER_NAME
 from aedev.base import (
     COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ, PLAYGROUND_PRJ, ROOT_PRJ,
     PIP_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
     code_file_version)
 from aedev.commands import (
-    GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
+    EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_add, git_checkout, git_current_branch, git_remotes, git_uncommitted)
 from aedev.project_vars import (
     PDV_REQ_FILE_NAME, PDV_NULL_VERSION,
@@ -51,14 +52,19 @@ from aedev.project_manager.__main__ import (
     GitlabCom,
     _action, _act_callable, _act_force_opt, _act_name, _act_spec, _available_actions, _check_code_arg_options,
     _init_act_args_check, _init_act_exec_args, _init_children_pdv_args, _init_children_presets, _init_pdv,
-    _print_pdv, _refresh_project, _renew_project, _show_editable_and_outdated_and_not_required, _show_status, _wait,
-    add_children_file, check_children_integrity, check_files, check_integrity, check_resources, check_venv,
+    _print_pdv, _refresh_project, _renew_project, _show_editable_and_outdated_and_not_required, _show_status,
+    _update_project, _wait,
+    add_children_file, build_gui_app,
+    check_children_integrity, check_flake8, check_integrity, check_pylint, check_mypy, check_missing,
+    check_managed_files, check_pytest, check_requirements, check_resources, check_venv,
     clone_children, clone_project, commit_children, commit_project,
-    delete_children_file, install_children_editable, install_editable,
+    delete_children_file, delete_file, init_main, install_children_editable, install_editable, main,
     new_app, new_children, new_django, new_module, new_namespace_root, new_package, new_playground,
-    prepare_children_commit, prepare_commit, refresh_children, rename_children_file,
+    prepare_and_run_main, prepare_children_commit, prepare_commit, refresh_children, refresh_project,
+    rename_children_file, rename_file,
     renew_children, renew_project, renew_venv,
-    run_children_command, show_actions, show_children_versions, show_expression_value, update_mirror, web_app_version)
+    run_children_command, show_actions, show_children_versions, show_expression_value, show_versions,
+    update_mirror, upgrade_requirements, web_app_version)
 
 
 def setup_module():
@@ -99,10 +105,24 @@ skip_if_no_integration_tests = pytest.mark.skipif('not bool(tst_ctb_token) or no
 
 
 def test_setup_of_test_constants_and_projects(changed_repo_path, empty_repo_path, module_repo_path):
-    assert REGISTERED_ACTIONS
-    assert REGISTERED_HOSTS_CLASS_NAMES
-    assert TPL_IMPORT_NAMES
-    assert CACHED_TPL_PROJECTS
+    assert len(REGISTERED_ACTIONS) == 64
+    assert REGISTERED_HOSTS_CLASS_NAMES == {'github.com': 'GithubCom',
+                                            'gitlab.com': 'GitlabCom',
+                                            'pythonanywhere.com': 'PythonanywhereCom'}
+    assert TPL_IMPORT_NAMES == ['aedev.app_tpls',
+                                'aedev.django_tpls',
+                                'aedev.module_tpls',
+                                'aedev.package_tpls',
+                                'aedev.playground_tpls',
+                                'aedev.namespace_root_tpls',
+                                'aedev.project_tpls']
+    assert len(CACHED_TPL_PROJECTS) == 7
+    assert all(PROJECT_VERSION_SEP in _req for _req in CACHED_TPL_PROJECTS.keys())
+    assert all(_tpl['import_name'] in TPL_IMPORT_NAMES for _tpl in CACHED_TPL_PROJECTS.values())
+    assert all(bool(_tpl['tpl_path']) is not _req.endswith(PROJECT_VERSION_SEP)
+               for _req, _tpl in CACHED_TPL_PROJECTS.items())
+    assert all(bool(_tpl['version']) is not _req.endswith(PROJECT_VERSION_SEP)
+               for _req, _tpl in CACHED_TPL_PROJECTS.items())
 
     parent_without_git_folder = os_path_dirname(empty_repo_path)
     for prj_path in (parent_without_git_folder, changed_repo_path, empty_repo_path, module_repo_path):
@@ -270,7 +290,7 @@ class TestActionsGitLab:
             assert ("-- git status:" in output) is verbose, f"with {project_path=}"
 
 
-class TestActionsLocal:
+class TestActions:
     def test_add_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
         mocked_app_options['more_verbose'] = True
@@ -324,6 +344,60 @@ class TestActionsLocal:
         # noinspection PyTypeChecker
         assert REFRESHABLE_TEMPLATE_MARKER in read_file(tpl_dst_path)
 
+    def test_build_gui_app(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path), main_app_options={'more_verbose': True})
+        new_apk_path = os_path_join(tmp_path, 'bin', 'tst_new_apk_ver' + '.apk')
+        write_file(new_apk_path, "new apk content", make_dirs=True)
+        log_lines = ['% Loading', '- Download ',
+                     "# APK " + 'tst_new_apk_ver' + '.apk' + " " + 'available in the bin directory']
+
+        with (patch('aedev.project_manager.__main__.run_logged_cmd',
+                    side_effect=lambda *_a, **_k: _k.get('output_lines', []).extend(log_lines)) as mock_run,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            build_gui_app(pdv, LIBS=False, EMBED=False)
+
+        assert mock_run.call_count == 1
+
+        assert os_path_isfile(new_apk_path)
+        assert os_path_isfile(os_path_join(tmp_path, 'build_log.txt'))
+        log_content = read_file(os_path_join(tmp_path, 'build_log.txt'))
+        assert '% Loading' not in log_content
+        assert '- Download ' not in log_content
+
+        assert len(mock_cae.po.call_args_list) == 3
+        assert 'successfully' + " built;" in mock_cae.method_calls[-1][1][0]
+
+    def test_build_gui_app_cov(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path), main_app_options={'more_verbose': True})
+        build_dir = os_path_join(tmp_path, '.buildozer')
+        os.makedirs(build_dir)
+        old_apk = os_path_join(tmp_path, MOVES_SRC_FOLDER_NAME, 'tst_old_apk_ver' + '.{apk_ext}')
+        write_file(old_apk, "old tst cont", make_dirs=True)
+        bin_dir = os_path_join(tmp_path, 'bin')
+        write_file(os_path_join(bin_dir, 'tst_new_apk_ver' + '_slim.apk'), "PrevBuild", make_dirs=True)  # old _slim.apk
+        write_file(os_path_join(bin_dir, 'tst_new_apk_ver' + '.apk'), "new apk content")
+        log_lines = ['% Loading', '- Download ',
+                     "# APK " + 'tst_new_apk_ver' + '.apk' + " " + 'available in the bin directory']
+
+        with (patch('aedev.project_manager.__main__.run_logged_cmd',
+                    side_effect=lambda *_a, **_k: _k.get('output_lines', []).extend(log_lines)) as mock_run,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            build_gui_app(pdv, LIBS=True, EMBED=True)
+
+        assert mock_run.call_count == 2
+
+        assert not os_path_isdir(build_dir)
+        assert not os_path_isfile(old_apk)
+        assert os_path_isfile(os_path_join(tmp_path, MOVES_SRC_FOLDER_NAME, 'tst_new_apk_ver' + '.{apk_ext}'))
+        assert os_path_isfile(os_path_join(bin_dir, 'tst_new_apk_ver' + '_slim.apk'))
+        assert os_path_isfile(os_path_join(tmp_path, 'build_log.txt'))
+        log_content = read_file(os_path_join(tmp_path, 'build_log.txt'))
+        assert '% Loading' not in log_content
+        assert '- Download ' not in log_content
+
+        assert len(mock_cae.po.call_args_list) == 7
+        assert 'successfully' + " built;" in mock_cae.method_calls[-1][1][0]
+
     def test_check_children_integrity(self, capsys, app_pjm, changed_repo_path, empty_repo_path,
                                       mocked_app_options, module_repo_path):
         mocked_app_options['force'] = 12
@@ -342,16 +416,24 @@ class TestActionsLocal:
 
         assert " ==== " in capsys.readouterr().out
 
-    def test_check_files(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
-        check_files(pdv_with_email(project_path=changed_repo_path))
+    def test_check_flake8(self):
+        pdv = pdv_with_email()
 
-        output = capsys.readouterr().out
-        assert " ==== run project files/folders completeness for " in output
+        with (patch('aedev.project_manager.__main__._check_code_flake8') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_flake8(pdv)
 
-        check_files(pdv_with_email(project_path=empty_repo_path))
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `flake8`" in mock_cae.method_calls[-1][1][0]
 
-        output = capsys.readouterr().out
-        assert " ==== run project files/folders completeness for " in output
+        with (patch('aedev.project_manager.__main__._check_code_flake8') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_flake8(pdv, 'tst_extra_path_arg')
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `flake8 " + 'tst_extra_path_arg' + "`" in mock_cae.method_calls[-1][1][0]
 
     def test_check_integrity(self, app_pjm, capsys, changed_repo_path, empty_repo_path, module_repo_path,
                              mocked_app_options):
@@ -393,6 +475,34 @@ class TestActionsLocal:
 
         output = capsys.readouterr().out
         assert " ==== run integrity checks for " in output
+
+    def test_check_integrity_cov(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.check_folders_files_completeness') as mock_com,
+              patch('aedev.project_manager.__main__.on_ci_host', return_value=False),
+              patch('aedev.project_manager.__main__.check_requirements') as mock_req,
+              patch('aedev.project_manager.__main__.check_venv') as mock_ven,
+              patch('aedev.project_manager.__main__.check_templates') as mock_tpl,
+              patch('aedev.project_manager.__main__._check_resources') as mock_res,
+              patch('aedev.project_manager.__main__._check_code_flake8') as mock_fla,
+              patch('aedev.project_manager.__main__._check_code_mypy') as mock_myp,
+              patch('aedev.project_manager.__main__._check_code_pylint') as mock_pyl,
+              patch('aedev.project_manager.__main__._check_code_pytest') as mock_pyt,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_integrity(pdv, 'tst_extra_path_arg')
+
+        assert mock_com.call_count == 1
+        assert mock_req.call_count == 1
+        assert mock_ven.call_count == 1
+        assert mock_tpl.call_count == 1
+        assert mock_res.call_count == 1
+        assert mock_fla.call_count == 1
+        assert mock_myp.call_count == 1
+        assert mock_pyl.call_count == 1
+        assert mock_pyt.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run integrity checks" in mock_cae.method_calls[-1][1][0]
 
     def test_check_integrity_debug_and_verbose(self, app_pjm_debug, capsys, changed_repo_path,
                                                mocked_app_options, patched_shutdown_wrapper):
@@ -460,6 +570,99 @@ class TestActionsLocal:
         assert "  === mypy typing checks done" in output
         assert "  === pylint checks done" in output
         assert "tests/test_test.py::test_failing" not in output  # unit tests module got deleted
+
+    def test_check_managed_files(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.check_templates') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_managed_files(pdv)
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "checked managed files/templates" in mock_cae.method_calls[-1][1][0]
+
+    def test_check_missing(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.check_folders_files_completeness') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_missing(pdv)
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "checked missing file or folders" in mock_cae.method_calls[-1][1][0]
+
+    def test_check_mypy(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__._check_code_mypy') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_mypy(pdv)
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `mypy`" in mock_cae.method_calls[-1][1][0]
+
+        with (patch('aedev.project_manager.__main__._check_code_mypy') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_mypy(pdv, 'tst_extra_path_arg')
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `mypy " + 'tst_extra_path_arg' + "`" in mock_cae.method_calls[-1][1][0]
+
+    def test_check_pylint(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__._check_code_pylint') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_pylint(pdv)
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `pylint`" in mock_cae.method_calls[-1][1][0]
+
+        with (patch('aedev.project_manager.__main__._check_code_pylint') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_pylint(pdv, 'tst_extra_path_arg')
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `pylint " + 'tst_extra_path_arg' + "`" in mock_cae.method_calls[-1][1][0]
+
+    def test_check_pytest(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__._check_code_pytest') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_pytest(pdv)
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `pytest`" in mock_cae.method_calls[-1][1][0]
+
+        with (patch('aedev.project_manager.__main__._check_code_pytest') as mock_check,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_pytest(pdv, 'tst_extra_path_arg')
+
+        assert mock_check.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 1
+        assert "run `pytest " + 'tst_extra_path_arg' + "`" in mock_cae.method_calls[-1][1][0]
+
+    def test_check_requirements(self):
+        pdv = pdv_with_email()
+        reqs_ret = (['miss_req'], ['uninstalled_req'], {'ignored_req'})
+        imp_ret = (['miss_imp'], {'ignored_imp'})
+        with (patch('aedev.project_manager.__main__.missing_requirements', return_value=reqs_ret) as mock_miss_reqs,
+              patch('aedev.project_manager.__main__.missing_imports', return_value=imp_ret) as mock_miss_imp,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            check_requirements(pdv)
+
+        assert mock_miss_reqs.call_count == 1
+        assert mock_miss_imp.call_count == 1
+        assert len(mock_cae.po.call_args_list) == 6
+        assert "run code-check of required, imported and installed PyPI projects" in mock_cae.method_calls[-1][1][0]
 
     def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
         check_resources(pdv_with_email(project_path=changed_repo_path))
@@ -654,6 +857,55 @@ class TestActionsLocal:
         assert os_path_isfile(del_file)
         assert not delete_children_file(root_pdv, del_file, mod_pdv)
         assert not os_path_isfile(del_file)
+
+    def test_delete_file(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+        file_path = os_path_join(pdv['project_path'], 'tst_file')
+        write_file(file_path, "any content")
+        assert os_path_isfile(file_path)
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert delete_file(pdv, 'tst_file')
+
+        assert not os_path_isfile(file_path)
+        assert len(mock_cae.method_calls) == 1
+        assert 'tst_file' in mock_cae.method_calls[-1][1][0]
+        assert " ==== deleted file " + file_path in mock_cae.method_calls[-1][1][0]
+
+        dir_path = os_path_join(pdv['project_path'], 'tst_dir')
+        os.makedirs(dir_path)
+        assert os_path_isdir(dir_path)
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert delete_file(pdv, 'tst_dir')
+
+        assert not os_path_isdir(dir_path)
+        assert len(mock_cae.method_calls) == 1
+        assert 'tst_dir' in mock_cae.method_calls[-1][1][0]
+        assert " ==== deleted folder " + dir_path in mock_cae.method_calls[-1][1][0]
+
+    def test_delete_file_not_existent_err(self):
+        pdv = pdv_with_email()
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert not delete_file(pdv, 'tst_not_existing_')
+
+        assert len(mock_cae.method_calls) == 1
+        assert "does not exist" in mock_cae.method_calls[-1][1][0]
+
+    def test_delete_file_err(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        dir_path = os_path_join(pdv['project_path'], 'tst_dir')
+        write_file(os_path_join(dir_path, 'tst_fil'), "any content", make_dirs=True)
+
+        with (patch('aedev.project_manager.__main__.os.rmdir') as mock_dir_del,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            assert not delete_file(pdv, dir_path)
+
+        mock_dir_del.assert_called_once_with(dir_path)
+        assert len(mock_cae.method_calls) == 1
+        assert "error deleting" in mock_cae.method_calls[-1][1][0]
 
     def test_install_children_editable(self, module_repo_path):
         call_mock = MagicMock()
@@ -851,38 +1103,38 @@ class TestActionsLocal:
             assert uncommitted_files == git_uncommitted(prj_path)
             assert title in read_file(os_path_join(prj_path, pdv['COMMIT_MSG_FILE_NAME'])).splitlines()[0]
 
-    @skip_gitlab_ci
-    def test_renew_venv(self, app_pjm_debug, capsys, empty_repo_path):
-        def _pip_list_json_mock(*_args, output_lines: list[str], **_kwargs):
-            output_lines.append(json.dumps([{"name": "tst_pkg1", "version": "1.2.3", "latest_version": "2.3.4"},
-                                            {"name": "tst_pkg2", "version": "3.6.9", "latest_version": "7.8.9"},
-                                            ]))
+    def test_refresh_children(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+        pdv_chi = pdv_with_email(project_path=os_path_join(str(tmp_path), 'tst_chi_path'))
 
-        pip_install_return = {'tst-pkg3': {'version': '3.3.3', 'requested': False}}     # aedev.commands.pip_install()
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.refresh_project') as mock_refresh):
+            refresh_children(pdv, pdv_chi)
 
-        with (patch('aedev.project_manager.__main__.run_logged_cmd', new=_pip_list_json_mock),
-              patch('aedev.project_manager.__main__.pip_install', return_value=pip_install_return)):
-            renew_venv(ProjectDevVars(project_path=empty_repo_path, install_requires=['tst_pkg3==3.3.3']))
+        mock_refresh.assert_called_once_with(pdv_chi)
+        assert len(mock_cae.method_calls) == 2
+        assert " ==== refreshed " in mock_cae.method_calls[-1][1][0]
 
-        output = capsys.readouterr().out
-        assert output
-        assert "tst_pkg1==1.2.3" in output
-        assert "tst_pkg2==3.6.9" in output
-        assert "tst_pkg3==3.3.3" in output
-        assert "tst-pkg3==3.3.3" in output  # w/ normalized pip name
-        assert "--- installed 1 indirectly required, outdated and cooled-down project" in output
-        assert "=== installed 1 outdated projects in venv=" in output
+    def test_refresh_project(self):
+        pdv = pdv_with_email()
 
-    @skip_gitlab_ci
-    def test_refresh_children(self, module_repo_path):
-        par_pdv = pdv_with_email(projecT_path=os_path_dirname(module_repo_path))
-        chi_pdv = pdv_with_email(project_path=module_repo_path)
-        tests_dir = os_path_join(module_repo_path, TESTS_FOLDER)
-        assert not os_path_isdir(tests_dir)
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__._refresh_project', return_value=['tst_file']) as mock_refresh):
+            refresh_project(pdv)
 
-        refresh_children(par_pdv, chi_pdv)
+        mock_refresh.assert_called_once_with(pdv)
+        assert len(mock_cae.method_calls) == 1
+        assert 'tst_file' in mock_cae.method_calls[-1][1][0]
+        assert " ==== refreshed" in mock_cae.method_calls[-1][1][0]
 
-        assert os_path_isdir(tests_dir)
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__._refresh_project', return_value=[]) as mock_refresh):
+            refresh_project(pdv)
+
+        mock_refresh.assert_called_once_with(pdv)
+        assert len(mock_cae.method_calls) == 1
+        assert "could not detect project type" in mock_cae.method_calls[-1][1][0]
+        assert " ==== refreshed" in mock_cae.method_calls[-1][1][0]
 
     def test_rename_children_file(self, app_pjm, empty_repo_path, mocked_app_options, module_repo_path):
         mocked_app_options['project_path'] = module_repo_path
@@ -911,6 +1163,53 @@ class TestActionsLocal:
         assert not rename_children_file(root_pdv, src_file, dst_file, mod_pdv, mod_pdv)  # no src in root / 2*mod rename
         assert not os_path_isfile(os_path_join(module_repo_path, src_file))
         assert os_path_isfile(os_path_join(module_repo_path, dst_file))
+
+    def test_rename_file(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+        old_path = os_path_join(pdv['project_path'], 'tst_old_file')
+        new_path = os_path_join(pdv['project_path'], 'tst_new_file')
+        write_file(old_path, "any content")
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert rename_file(pdv, 'tst_old_file', 'tst_new_file')
+
+        assert not os_path_isfile(old_path)
+        assert os_path_isfile(new_path)
+        assert len(mock_cae.method_calls) == 1
+        assert " ==== renamed file " in mock_cae.method_calls[-1][1][0]
+
+    def test_rename_file_source_not_exists_err(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert not rename_file(pdv, 'tst_old_file', 'tst_new_file')
+
+        assert len(mock_cae.method_calls) == 1
+
+    def test_rename_file_destination_exists_err(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        write_file(os_path_join(pdv['project_path'], 'tst_new_file'), "any content")
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert not rename_file(pdv, 'tst_old_file', 'tst_new_file')
+
+        assert len(mock_cae.method_calls) == 1
+
+    def test_rename_file_rename_err(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+        old_path = os_path_join(pdv['project_path'], 'tst_old_file')
+        new_path = os_path_join(pdv['project_path'], 'tst_new_file')
+        write_file(old_path, "any content")
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.os.rename') as mock_ren):
+            assert not rename_file(pdv, 'tst_old_file', 'tst_new_file')
+
+        mock_ren.assert_called_once_with(old_path, new_path)
+        assert os_path_isfile(old_path)
+        assert not os_path_isfile(new_path)
+        assert len(mock_cae.method_calls) == 1
 
     def test_renew_children(self, empty_repo_path, module_repo_path):
         par_pdv = pdv_with_email(**{'project_path': os_path_dirname(empty_repo_path)})
@@ -944,14 +1243,64 @@ class TestActionsLocal:
 
         assert code_file_version(version_file_path) == PDV_NULL_VERSION     # disabled via main_app_options
 
+    def test_renew_venv(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.debug_or_verbose', return_value=False),
+              patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.pip_install') as mock_pip):
+            renew_venv(pdv)
+
+        assert len(mock_pip.call_args_list) == 2
+
+        assert mock_pip.call_args_list[0].args[0] == pdv['project_path']
+        assert mock_pip.call_args_list[0].kwargs['cooldown_period'] == pdv['PYPI_COOLDOWN_PERIOD']
+        assert mock_pip.call_args_list[0].kwargs['dry_run'] is False
+
+        assert mock_pip.call_args_list[1].args[0] == pdv['project_path']
+        assert 'cooldown_period' not in mock_pip.call_args_list[1].kwargs
+        assert mock_pip.call_args_list[1].kwargs == {'dry_run': False}
+
+        assert len(mock_cae.method_calls) >= 3
+        assert "  === " + 'installed' in mock_cae.method_calls[-1][1][0]
+
+    def test_renew_venv_verbose(self):
+        pdv = pdv_with_email(main_app_options={'force': 3})
+
+        with (patch('aedev.project_manager.__main__.debug_or_verbose', return_value=False),
+              patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.debug_or_verbose', return_value=True),
+              patch('aedev.project_manager.__main__.pip_install') as mock_pip):
+            renew_venv(pdv)
+
+        assert len(mock_pip.call_args_list) == 2
+
+        assert mock_pip.call_args_list[0].args[0] == pdv['project_path']
+        assert mock_pip.call_args_list[0].kwargs['cooldown_period'] == pdv['PYPI_COOLDOWN_PERIOD']
+        assert mock_pip.call_args_list[0].kwargs['dry_run'] is False
+        assert mock_pip.call_args_list[0].kwargs['force_reinstall'] is True
+        assert mock_pip.call_args_list[0].kwargs['return_implicits'] is True
+
+        assert mock_pip.call_args_list[1].args[0] == pdv['project_path']
+        assert 'cooldown_period' not in mock_pip.call_args_list[1].kwargs
+        assert mock_pip.call_args_list[1].kwargs['dry_run'] is False
+        assert mock_pip.call_args_list[1].kwargs['force_reinstall'] is True
+        assert mock_pip.call_args_list[1].kwargs['return_implicits'] is True
+
+        assert len(mock_cae.method_calls) >= 3
+        assert "  === " + 'installed' in mock_cae.method_calls[-1][1][0]
+
     def test_run_children_command(self, capsys, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['delay'] = 0
         par_pdv = pdv_with_email(project_path=os_path_dirname(empty_repo_path))
-        chi_pdv = pdv_with_email(project_path=empty_repo_path)
+        chi_pdv1 = pdv_with_email(project_path=empty_repo_path)
+        chi_pdv2 = pdv_with_email(project_path=empty_repo_path, project_type='tst_other_prj_type')
         echo_word = "tst_run_chi_cmd"
 
-        run_children_command(par_pdv, f"echo {echo_word}", chi_pdv, chi_pdv)
+        with patch('aedev.project_manager.__main__._wait') as mock_wait:
+            run_children_command(par_pdv, f"echo {echo_word}", chi_pdv1, chi_pdv2)
 
+        mock_wait.assert_called_once_with(par_pdv)
         output = capsys.readouterr().out
         assert output.count(echo_word) == 3  # one for each child and a final one on action complete
 
@@ -996,7 +1345,7 @@ class TestActionsLocal:
                 "        []," + sep +
                 "    ]") in output
 
-    def test_show_actions(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
+    def test_show_actions_with_cae(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
         pdv = pdv_with_email(**{'host_api': GitlabCom()})
         mocked_app_options['more_verbose'] = False
 
@@ -1011,6 +1360,27 @@ class TestActionsLocal:
 
         output = capsys.readouterr().out
         assert 'check_integrity' in output
+
+    def test_show_actions_without_cae_compact(self):
+        pdv = pdv_with_email(web_domain='tst_web_domain')
+
+        with (patch('aedev.project_manager.__main__.debug_or_verbose', return_value=False),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            show_actions(pdv)
+
+        assert len(mock_cae.method_calls) >= 2
+        assert all(_method_call[0] == 'po' for _method_call in mock_cae.method_calls)
+        assert " ==== registered/available project manager actions" in mock_cae.method_calls[-1][1][0]
+
+    def test_show_actions_without_cae_verbose(self):
+        pdv = pdv_with_email(web_domain='tst_web_domain')
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            show_actions(pdv)
+
+        assert len(mock_cae.method_calls) >= 2
+        assert all(_method_call[0] == 'po' for _method_call in mock_cae.method_calls)
+        assert " ==== registered/available project manager actions" in mock_cae.method_calls[-1][1][0]
 
     def test_show_children_versions(self, capsys, app_pjm):
         chi_grp = 'ae-group'
@@ -1027,6 +1397,174 @@ class TestActionsLocal:
             assert chi_grp in output
             assert chi_prj in output
             assert f"local:{chi_ver}" in output
+
+    def test_show_versions_basics(self):
+        pdv = pdv_with_email()
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            show_versions(pdv)
+
+        assert mock_cae.method_calls[0][0] == 'po'
+        mock_cae.po.assert_called_once()
+        assert f"local:{pdv['project_version']: <9}" in mock_cae.method_calls[0][1][0]
+        assert 'origin:' in mock_cae.method_calls[0][1][0]
+        assert 'pypi:' in mock_cae.method_calls[0][1][0]
+
+    def test_show_versions_git_tag_list_err(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.git_tag_list', return_value=[EXEC_GIT_ERR_PREFIX, 'tst_err_msg']),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            show_versions(pdv)
+
+        assert mock_cae.method_calls[0][0] == 'po'
+        mock_cae.po.assert_called_once()
+        assert f"local:{pdv['project_version']: <9}" in mock_cae.method_calls[0][1][0]
+        assert 'origin:' in mock_cae.method_calls[0][1][0]
+        assert 'pypi:' in mock_cae.method_calls[0][1][0]
+        assert 'tst_err_msg' in mock_cae.method_calls[0][1][0]
+
+    def test_show_versions_local_version_ahead(self):
+        pdv = pdv_with_email()
+        tst_ver = GIT_VERSION_TAG_PREFIX + PDV_NULL_VERSION
+
+        with (patch('aedev.project_manager.__main__.git_tag_list', return_value=[tst_ver]),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            show_versions(pdv)
+
+        assert mock_cae.method_calls[0][0] == 'po'
+        mock_cae.po.assert_called_once()
+        assert f"local:{pdv['project_version']: <9}" in mock_cae.method_calls[0][1][0]
+        assert 'origin:' in mock_cae.method_calls[0][1][0]
+        assert 'pypi:' in mock_cae.method_calls[0][1][0]
+        assert f" !=local-tag!:{PDV_NULL_VERSION: <9}" in mock_cae.method_calls[0][1][0]
+
+    def test_show_versions_web_deployed_django(self):
+        pdv = pdv_with_email(project_type=DJANGO_PRJ, web_domain='tst.pythonanywhere.com', web_user='tst_usr')
+
+        with (patch('aedev.project_manager.__main__.git_tag_list', return_value=[]),
+              patch('aedev.project_manager.__main__.get_host_user_token'),
+              patch('aedev.project_manager.__main__.PythonanywhereApi'),
+              patch('aedev.project_manager.__main__.web_app_version', return_value=PDV_NULL_VERSION),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            show_versions(pdv)
+
+        assert mock_cae.method_calls[0][0] == 'po'
+        mock_cae.po.assert_called_once()
+        assert f"local:{pdv['project_version']: <9}" in mock_cae.method_calls[0][1][0]
+        assert "origin:" in mock_cae.method_calls[0][1][0]
+        assert "pypi:" in mock_cae.method_calls[0][1][0]
+        assert f"web:{PDV_NULL_VERSION: <9}" in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_basic(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.git_push', return_value=[]) as mock_push,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            update_mirror(pdv, 'svc://tst_usr:tst_pwd@tst_domain')
+
+        mock_push.assert_called_once()
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[0][0] == 'po'
+        assert 'svc://tst_usr:tst_pwd@tst_domain' in mock_cae.method_calls[0][1][0]
+        assert "  === successfully updated mirror at remote " in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_missing_remote_url_err(self):
+        pdv = pdv_with_email(remote_urls={})
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            update_mirror(pdv, "")
+
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[0][0] == 'po'
+        assert " **** invalid mirror remote name/url" in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_git_push_err(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.git_push', return_value=[EXEC_GIT_ERR_PREFIX]) as mock_push,
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            update_mirror(pdv, 'svc://tst_usr:tst_pwd@tst_domain')
+
+        mock_push.assert_called_once()
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[0][0] == 'po'
+        assert "  *** update mirror error:" in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_git_remote_url_hostname_err(self):
+        pdv = pdv_with_email(remote_urls={'tst_git_remote_name': ""})
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            update_mirror(pdv, 'tst_git_remote_name')
+
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[0][0] == 'po'
+        assert " **** hostname/domain is missing in mirror url" in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_git_remote_url_token_err(self):
+        pdv = pdv_with_email(remote_urls={'tst_git_remote_nam': "//tst_host_name"})
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            update_mirror(pdv, 'tst_git_remote_nam')
+
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[0][0] == 'po'
+        assert " **** token missing in mirror url" in mock_cae.method_calls[0][1][0]
+
+    def test_update_mirror_codeberg(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.owner_project_from_url', return_value='tst_grp' + "/" + 'tst_prj'),
+              patch('aedev.project_manager.__main__.ensure_repo', return_value="") as mock_ensure_repo,
+              patch('aedev.project_manager.__main__.set_main_branch', return_value="") as mock_set_main_branch,
+              patch('aedev.project_manager.__main__.git_push', return_value=[]),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            update_mirror(pdv, "//" + 'tst_usr' + ":" + 'tst_token' + "@" + 'codeberg.org')
+
+        mock_ensure_repo.assert_called_once_with('tst_grp', 'tst_prj', 'tst_token', desc=pdv['project_desc'])
+        mock_set_main_branch.assert_called_once_with('tst_grp', 'tst_prj', 'tst_token', pdv['MAIN_BRANCH'])
+        mock_cae.po.assert_called_once()
+        assert mock_cae.method_calls[2][0] == 'po'
+        assert "  === successfully updated mirror at remote " in mock_cae.method_calls[2][1][0]
+
+    def test_update_mirror_codeberg_err(self):
+        pdv = pdv_with_email()
+
+        with (patch('aedev.project_manager.__main__.owner_project_from_url', return_value='tst_grp' + "/" + 'tst_prj'),
+              patch('aedev.project_manager.__main__.ensure_repo', return_value="") as mock_ensure_repo,
+              patch('aedev.project_manager.__main__.set_main_branch', return_value="tst err") as mock_set_main_branch,
+              patch('aedev.project_manager.__main__.git_push', return_value=[]),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            update_mirror(pdv, "//" + 'tst_usr' + ":" + 'tst_token' + "@" + 'codeberg.org')
+
+        mock_ensure_repo.assert_called_once_with('tst_grp', 'tst_prj', 'tst_token', desc=pdv['project_desc'])
+        mock_set_main_branch.assert_called_once_with('tst_grp', 'tst_prj', 'tst_token', pdv['MAIN_BRANCH'])
+        assert mock_cae.chk.call_count == 2
+        assert mock_cae.method_calls[0][0] == 'chk'
+        assert mock_cae.method_calls[1][0] == 'chk'     # no cae.po printouts on forced-ignored cae.chk() calls
+
+    def test_update_mirror(self):
+        pdv = pdv_with_email()
+        grp_prj = 'tst_grp' + "/" + 'tst_prj'
+
+        with (patch('aedev.project_manager.__main__.owner_project_from_url', return_value=grp_prj),
+              patch('aedev.project_manager.__main__.GithubCom') as mock_github,
+              patch('aedev.project_manager.__main__.git_push', return_value=[]),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            mock_github = mock_github.return_value
+            mock_github.repo_obj = MagicMock(return_value=None)
+            mock_github.init_new_repo = MagicMock(return_value="")
+            update_mirror(pdv, "//" + 'tst_usr' + ":" + 'tst_token' + "@" + 'github.com')
+
+        mock_github.repo_obj.assert_called_once_with(0, "", grp_prj)
+        mock_github.init_new_repo.assert_called_once_with(grp_prj, pdv['project_desc'], pdv['MAIN_BRANCH'])
+        assert mock_cae.chk.call_count == 3
+        assert mock_cae.method_calls[0][0] == 'chk'
+        assert mock_cae.method_calls[1][0] == 'chk'
+        assert mock_cae.method_calls[2][0] == 'chk'
+        assert mock_cae.method_calls[3][0] == 'po'
+        mock_cae.po.assert_called_once()
+        assert "  === successfully updated mirror at remote " in mock_cae.method_calls[3][1][0]
 
     @skip_if_not_maintainer
     def test_update_mirror_pjm_onto_github_org(self, capsys, app_pjm):
@@ -1107,6 +1645,20 @@ class TestActionsLocal:
         assert tst_mtn_token not in output
         assert "  === " in output
 
+    def test_upgrade_requirements(self, capsys, app_pjm, changed_repo_path, mocked_app_options):
+        pdv = pdv_with_email(project_path=changed_repo_path, install_requires=[os_path_basename(changed_repo_path)])
+        mocked_app_options['force'] = 3
+
+        upgrade_requirements(pdv, MASKS=[], EDITABLE=False)
+
+        output = capsys.readouterr().out
+        assert " ==== upgraded 1 packages" in output
+
+        upgrade_requirements(pdv, MASKS=[], EDITABLE=True)
+
+        output = capsys.readouterr().out
+        assert " ==== upgraded 1 packages" in output
+
 
 class TestHelpersLocal:
     """ test private helper functions that don't need any authentication against git remote hosts. """
@@ -1139,11 +1691,11 @@ class TestHelpersLocal:
         assert callable(_act_callable(GitlabCom(), 'fork_project'))
 
     def test_act_force_opt(self):
-        import aedev.project_manager.__main__ as main
-        curr_val = main.action_forces
+        import aedev.project_manager.__main__ as main_module
+        curr_val = main_module.action_forces
         with patch('aedev.project_manager.__main__.get_app_option', return_value=True):
             _act_force_opt(cast(ProjectDevVars, cast(object, None)))
-        assert main.action_forces == curr_val + 1
+        assert main_module.action_forces == curr_val + 1
 
     def test_act_name(self):
         assert _act_name("check-integrity", UNSET, []) == "check_integrity"
@@ -1584,6 +2136,124 @@ class TestHelpersLocal:
         assert output.count('ae_fake') == 4
         assert output.count('tst_pkg') == 4
 
+    @pytest.mark.parametrize(('next_action_msg', 'verbose'), (('¡' + 'err_act', False), ('nxt_act', True)))
+    def test_show_status(self, next_action_msg, verbose):
+        nsn = 'tst_nsn'
+        pdv = pdv_with_email(project_type=ROOT_PRJ, namespace_name=nsn, MAIN_BRANCH='tst_main_branch')
+
+        with (patch('aedev.project_manager.__main__.guess_next_action', return_value=next_action_msg),
+              patch('aedev.project_manager.__main__.debug_or_verbose', return_value=verbose),
+              patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.run_cmd',
+                    side_effect=lambda *_a, **_k: _k['output_lines'].append('tst_output')),
+              patch('aedev.project_manager.__main__._init_children_presets',
+                    return_value={'tst_preset': {nsn + '_' + 'tst_package'}}),
+              patch('aedev.project_manager.__main__.git_diff', return_value=['tst_diff']),
+              patch('aedev.project_manager.__main__.git_uncommitted', return_value=['tst_uncommitted']),
+              patch('aedev.project_manager.__main__.git_any', return_value=['tst_git_any']),
+              patch('aedev.project_manager.__main__.git_tag_remotes', return_value=['tst_tag_remotes']),
+              patch('aedev.project_manager.__main__.git_branch_remotes', return_value=['tst_branch_remotes'])):
+            msg = _show_status(pdv)
+
+        assert mock_cae.po.call_count >= 1
+        assert sum('tst_output' in _call.args[0] for _call in mock_cae.po.call_args_list) == (4 if verbose else 0)
+        assert sum('tst_preset' in _call.args[0] for _call in mock_cae.po.call_args_list) == (1 if verbose else 0)
+        assert sum('tst_package' in _call.args[0] for _call in mock_cae.po.call_args_list) == (1 if verbose else 0)
+        assert sum('tst_main_branch' in _call.args[0] for _call in mock_cae.po.call_args_list) == (3 if verbose else 2)
+        assert sum('tst_diff' in _call.args[0] for _call in mock_cae.po.call_args_list) == 3
+        assert sum("-- git status:" in _call.args[0] for _call in mock_cae.po.call_args_list) == (1 if verbose else 0)
+        assert sum("-- branches:" in _call.args[0] for _call in mock_cae.po.call_args_list) == (1 if verbose else 0)
+        assert sum("-- remotes:" in _call.args[0] for _call in mock_cae.po.call_args_list) == (1 if verbose else 0)
+        assert sum('tst_uncommitted' in _call.args[0] for _call in mock_cae.po.call_args_list) == 1
+        assert sum('tst_git_any' in _call.args[0] for _call in mock_cae.po.call_args_list) == (2 if verbose else 1)
+        assert sum('tst_tag_remotes' in _call.args[0] for _call in mock_cae.po.call_args_list) == 1
+        assert sum('tst_branch_remotes' in _call.args[0] for _call in mock_cae.po.call_args_list) == 2
+
+        assert ('err_act' if next_action_msg.startswith('¡') else 'nxt_act') in mock_cae.po.call_args_list[-1].args[0]
+        assert "displayed project status" in msg
+
+    def test_update_project_checkout_errors(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.git_fetch', return_value=[]),
+              patch('aedev.project_manager.__main__.git_any'),
+              patch('aedev.project_manager.__main__.git_checkout', return_value='tst checkout err'),
+              patch('aedev.project_manager.__main__.git_merge'),
+              patch('aedev.project_manager.__main__.git_push')):
+            errors = _update_project(pdv, remote_names=['tst_remote_name'], hard_reset=True)
+
+        assert mock_cae.po.call_count >= 1
+        assert len(errors) == 2
+        assert 'tst checkout err' in errors[0]
+        assert 'tst checkout err' in errors[1]
+
+    def test_update_project_forked(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.git_fetch', return_value=[]),
+              patch('aedev.project_manager.__main__.git_any'),
+              patch('aedev.project_manager.__main__.git_checkout', return_value=""),
+              patch('aedev.project_manager.__main__.git_merge'),
+              patch('aedev.project_manager.__main__.git_push')):
+            assert not _update_project(pdv, remote_names={pdv['REMOTE_UPSTREAM']: "tst_remote_url"})
+
+        assert mock_cae.po.call_count >= 1
+        assert "successfully fetched the forked project" in mock_cae.po.call_args_list[1].args[0]
+
+    def test_update_project_ignored_err_missing_remotes(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path), remote_urls={})
+
+        with patch('aedev.project_manager.__main__.cae') as mock_cae:
+            assert not _update_project(pdv)
+
+        assert mock_cae.po.call_count == 1
+
+    def test_update_project_ignored_err_fetch_tags(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.git_fetch', return_value=[EXEC_GIT_ERR_PREFIX + 'tst_tags_err'])):
+            assert not _update_project(pdv, remote_names={"tst_remote_name": "tst_remote_url"})
+
+        assert mock_cae.po.call_count == 1
+        assert 'tst_tags_err' in mock_cae.po.call_args_list[0].args[0]
+        assert pdv['REMOTE_ORIGIN'] in mock_cae.po.call_args_list[0].args[0]
+
+    def test_update_project_ignored_err_fetch_forked(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+        fork_remote = pdv['REMOTE_UPSTREAM']
+        pdv.pdv_val('remote_urls')[fork_remote] = 'tst_remote_url'   # forked
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.git_fetch',
+                    side_effect=lambda *_a: [EXEC_GIT_ERR_PREFIX + 'tst_err'] if _a[-1] == fork_remote else []),
+              patch('aedev.project_manager.__main__.git_any'),
+              patch('aedev.project_manager.__main__.git_checkout'),
+              patch('aedev.project_manager.__main__.git_merge'),
+              patch('aedev.project_manager.__main__.git_push')):
+            assert _update_project(pdv)
+
+        assert mock_cae.po.call_count >= 1
+        assert 'tst_err' in mock_cae.po.call_args_list[1].args[0]
+        assert fork_remote in mock_cae.po.call_args_list[1].args[0]
+
+    def test_update_project_ignored_err_hard_reset(self, tmp_path):
+        pdv = pdv_with_email(project_path=str(tmp_path))
+
+        with (patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.git_fetch', return_value=[]),
+              patch('aedev.project_manager.__main__.git_any') as mock_git_reset,
+              patch('aedev.project_manager.__main__.git_checkout'),
+              patch('aedev.project_manager.__main__.git_merge'),
+              patch('aedev.project_manager.__main__.git_push')):
+            assert _update_project(pdv, remote_names={"tst_remote_name": "tst_remote_url"}, hard_reset=True)
+
+        assert mock_cae.po.call_count >= 1
+        assert len(mock_git_reset.call_args_list) == 2
+        assert mock_git_reset.call_args_list[-1].args[1:3] == ("reset", "--hard")
+
     def test_wait(self, app_pjm):
         mock_sleep = MagicMock()
         with patch('aedev.project_manager.__main__.time.sleep', new=mock_sleep):
@@ -1742,6 +2412,79 @@ class TestHelpersRemote:
         connection = MockedPythonanywhereApi()    # migrated web_app_version() from ae.pythonanywhere.deployed_version()
 
         assert web_app_version(cast(PythonanywhereApi, cast(object, connection))) == '3.6.9'
+
+
+class TestMainInit:
+    def test_main(self):
+        with (patch('aedev.project_manager.__main__.init_main') as mock_ini,
+              patch('aedev.project_manager.__main__.cae') as mock_cae,
+              patch('aedev.project_manager.__main__.prepare_and_run_main') as mock_pre):
+            main()
+
+        mock_ini.assert_called_once()
+        mock_cae.run_app.assert_called_once()
+        mock_pre.assert_called_once()
+
+    def test_main_exception(self):
+        with (patch('aedev.project_manager.__main__.init_main', side_effect=Exception('tst exception msg')),
+              patch('aedev.project_manager.__main__.cae') as mock_cae):
+            main()
+
+        mock_cae.shutdown.assert_called_once()
+        calls = mock_cae.shutdown.call_args_list
+        assert len(calls) == 1
+        assert calls[0][0] == (99, )        # err_/exit_code
+        assert "unexpected exception" in calls[0][1]['error_message']
+        assert 'tst exception msg' in calls[0][1]['error_message']
+
+    def test_prepare_and_run_main_action_execution(self, capsys, restore_app_env):
+        with (patch('aedev.project_manager.__main__._init_pdv') as mock_pdv,
+              patch('aedev.project_manager.__main__._init_act_exec_args',
+                    return_value=('tst_nam', 'tst_args', {'tst': 'kwargs'})) as mock_init_args,
+              patch('aedev.project_manager.__main__._act_callable') as mock_callable,
+              patch('aedev.project_manager.__main__.action_forces', 969696)):
+            init_main()
+            with patch('aedev.project_manager.__main__.cae.get_option'):
+                prepare_and_run_main()
+
+        mock_init_args.assert_called_once()
+        assert mock_init_args.call_args[0][0] == mock_pdv.return_value
+        mock_callable.assert_called_once()
+        assert mock_callable.call_args[0][1] == 'tst_nam'
+        out, err = capsys.readouterr()
+        assert " unused --force options (while using 969696 action forces)" in out
+
+    def test_prepare_and_run_main_action_help(self, capsys, restore_app_env):
+        """ test showing help for action """
+        with (patch('aedev.project_manager.__main__._init_pdv'),
+              patch('aedev.project_manager.__main__.get_app_option', return_value=True),
+              patch('aedev.project_manager.__main__._act_name', return_value='tst_act_name'),
+              patch('aedev.project_manager.__main__._act_specs', return_value={'tst_spec_key': 'tst_spec_val'}),
+              patch('aedev.project_manager.__main__._act_help_print') as mock_spec_print):
+            init_main()
+            with (patch('aedev.project_manager.__main__.cae.get_argument'),
+                  patch('aedev.project_manager.__main__.cae.get_option')):
+                prepare_and_run_main()
+
+        mock_spec_print.assert_called_once_with('tst_spec_key', indent=2)
+        out, err = capsys.readouterr()
+        assert "\nusage: pjm" in out
+        assert "\naction details:" in out
+
+    def test_prepare_and_run_main_action_help_not_found(self, capsys, restore_app_env):
+        """ test showing error message if action is not given/misspelled. """
+        with (patch('aedev.project_manager.__main__._init_pdv'),
+              patch('aedev.project_manager.__main__.get_app_option', return_value=True),
+              patch('aedev.project_manager.__main__._act_name', return_value="")):
+            init_main()
+            with (patch('aedev.project_manager.__main__.cae.get_argument'),
+                  patch('aedev.project_manager.__main__.cae.get_option')):
+                prepare_and_run_main()
+
+        out, err = capsys.readouterr()
+        assert "\nusage: pjm" in out
+        assert "***** invalid action_argument=" in out
+        assert "run `pjm show_actions` to display all supported actions" in out
 
 
 def test_teardown_cleanup_check_hook():

@@ -1,32 +1,30 @@
-aedev_project_tpls==0.3.103
+aedev_project_tpls==0.3.104
 aedev_aedev==0.3.34
 ## The following requirements were added by pip freeze:
 ae_app_log==0.3.4
 ae_base==0.3.97
 ae_console==0.3.98
 ae_core==0.3.89
-ae_db_core==0.3.17
 ae_dynamicod==0.3.16
 ae_files==0.3.31
 ae_literal==0.3.36
-ae_lockname==0.3.11
 ae_managed_files==0.3.9
 ae_paths==0.3.47
-ae_pythonanywhere==0.3.9
-ae_shell==0.3.18
+ae_pythonanywhere==0.3.10
+ae_shell==0.3.19
 ae_sys_core==0.3.27
 ae_system==0.3.20
 ae_updater==0.3.20
 aedev_app_tpls==0.3.22
-aedev_base==0.3.11  # -e git+https://gitlab.com/aedev-group/aedev_base.git@d63ea8bcc79c420c04bd0f5e663889cc3b09c997#egg=aedev_base
-aedev_commands==0.3.18  # -e git+https://gitlab.com/aedev-group/aedev_commands.git@1326a1f01bd9dd5928f415d7ffe8968c3c898433#egg=aedev_commands
+aedev_base==0.3.12
+aedev_commands==0.3.19
 aedev_namespace_root_tpls==0.3.33
-aedev_project_vars==0.3.24  # -e git+https://gitlab.com/aedev-group/aedev_project_vars.git@944dd86ff5ad8408f52f3b2b848ba9ee00ba1ab8#egg=aedev_project_vars
+aedev_project_vars==0.3.25
 alabaster==1.0.0
 anybadge==1.16.0
 argcomplete==3.6.3
 ast_serialize==0.6.0
-astroid==4.0.4
+astroid==4.3.3
 babel==2.18.0
 certifi==2026.6.17
 cffi==2.0.0
@@ -37,7 +35,7 @@ cryptography==49.0.0
 dill==0.4.1
 docutils==0.22.4
 filelock==3.30.0
-flake8==7.3.0
+flake8==7.4.1
 idna==3.18
 imagesize==2.0.0
 iniconfig==2.3.0
@@ -54,17 +52,17 @@ pillow==12.3.0
 pipx==1.17.6
 platformdirs==4.10.0
 pluggy==1.6.0
-psycopg2-binary==2.9.12
+psycopg2-binary==2.9.13
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
-pycodestyle==2.14.0
+pycodestyle==2.15.0
 pycparser==3.0
-pyflakes==3.4.0
-PyGithub==2.9.1
+pyflakes==4.0.1
+PyGithub==2.10.0
 Pygments==2.20.0
 pyjnius==1.7.0
 PyJWT==2.13.0
-pylint==4.0.8
+pylint==4.1.2
 PyNaCl==1.6.2
 pytest==9.1.1
 pytest-cov==7.1.0
@@ -75,7 +73,7 @@ roman-numerals==4.1.0
 setuptools==84.0.0
 snowballstemmer==3.1.1
 Sphinx==9.1.0
-sphinx-autodoc-typehints==3.13.5
+sphinx-autodoc-typehints==3.13.8
 sphinx-paramlinks==0.6.0
 sphinx_rtd_theme==3.1.0
 sphinxcontrib-applehelp==2.0.0

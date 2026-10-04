@@ -1,13 +1,13 @@
 # aedev-project-manager requirements
 anybadge==1.16.0
 coverage==7.16.1
-flake8==7.3.0
+flake8==7.4.1
 mypy==2.3.1
 packaging==26.3
 pillow==12.3.0
 types-Pillow==10.2.0.20240822
-PyGithub==2.9.1
-pylint==4.0.8
+PyGithub==2.10.0
+pylint==4.1.2
 pytest==9.1.1
 pytest-cov==7.1.0
 python-gitlab==8.5.0
@@ -20,9 +20,9 @@ ae_literal==0.3.36
 ae_updater==0.3.20
 ae_core==0.3.89
 ae_console==0.3.98
-ae_shell==0.3.18
+ae_shell==0.3.19
 ae_managed_files==0.3.9
-ae_pythonanywhere==0.3.9
-aedev_base==0.3.11  # -e git+https://gitlab.com/aedev-group/aedev_base.git@d63ea8bcc79c420c04bd0f5e663889cc3b09c997#egg=aedev_base
-aedev_commands==0.3.18  # -e git+https://gitlab.com/aedev-group/aedev_commands.git@1326a1f01bd9dd5928f415d7ffe8968c3c898433#egg=aedev_commands
-aedev_project_vars==0.3.24  # -e git+https://gitlab.com/aedev-group/aedev_project_vars.git@944dd86ff5ad8408f52f3b2b848ba9ee00ba1ab8#egg=aedev_project_vars
+ae_pythonanywhere==0.3.10
+aedev_base==0.3.12
+aedev_commands==0.3.19
+aedev_project_vars==0.3.25
