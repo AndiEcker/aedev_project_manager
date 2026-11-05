@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.105
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.109
 anybadge
 flake8
 mypy

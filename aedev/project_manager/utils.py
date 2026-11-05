@@ -1,4 +1,4 @@
-""" util/helper functions needed by __main__.py and templates.py. """
+""" util/helper functions. """
 import ast
 import json
 import os
@@ -15,19 +15,19 @@ from gitlab.v4.objects import Project
 from packaging.version import Version, InvalidVersion
 
 from ae.base import (                                                                                   # type: ignore
-    PY_EXT, PY_INIT,
     in_wd, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, read_file, write_file)
 from ae.base import write_file as patchable_write_file                     # pylint: disable=reimported # type: ignore
-from ae.system import (                                                                                 # type: ignore
-    PYPI_PACKAGE_NAMES, load_env_var_defaults, norm_pip_name, project_main_file, PyMo)
+from ae.system import load_env_var_defaults, norm_pip_name                                              # type: ignore
 from ae.paths import path_files                                                                         # type: ignore
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER                                                # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
-from ae.shell import (                                                                                  # type: ignore
-    STDERR_BEG_MARKER, STDERR_END_MARKER, debug_or_verbose, get_domain_user_var, run_logged_cmd)
+from ae.shell import debug_or_verbose, get_domain_user_var, run_logged_cmd                              # type: ignore
 from aedev.base import (                                                                                # type: ignore
-    APP_PRJ, DJANGO_PRJ, PIP_CMD, PLAYGROUND_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, VERSION_PREFIX, VERSION_QUOTE)
+    APP_PRJ, DJANGO_PRJ, PIP_CMD, PLAYGROUND_PRJ, PROJECT_VERSION_SEP, PYPI_PACKAGE_NAMES, ROOT_PRJ,
+    VERSION_PREFIX, VERSION_QUOTE,
+    project_main_file,
+    PyMo)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_FOLDER_NAME, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX, GitRemotesType,
     git_add, git_any, git_branch_remotes, git_current_branch, git_init_if_needed, git_status, git_tag_remotes,
@@ -94,7 +94,7 @@ def check_folders_files_completeness(cae: ConsoleApp, pdv: ProjectDevVars):
             for change in changes:
                 cae.po(f"    - {change[0] == 'md' and 'folder' or 'file  '} {os_path_relpath(change[1], project_path)}")
     elif debug_or_verbose(cae):
-        cae.po("    = project folders and files are complete")
+        cae.po("  === project folders and files are complete")
 
 
 def children_desc(pdv: ProjectDevVars, children_pdv: Collection[ProjectDevVars] = ()) -> str:
@@ -451,7 +451,7 @@ def import_dependencies(cae: ConsoleApp, project_path: str, project_type: str, i
     :param project_type:        project type.
     :param import_name:         project import name.
     :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
-                                value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
+                                value of this parameter) will include all Python files with the '.py'
                                 extension found underneath the specified :paramref:`.project_path`.
                                 specifying e.g. the tuple `(DOCS_FOLDER + "/", )` would exclude the import dependencies
                                 of all the code files underneath the docs folder (like for example `conf.py`).
@@ -574,8 +574,8 @@ def missing_requirements(project_path: str, import_deps: set[str], venv_packages
     def _in_packages(_packages: list[str], _current_imp_names: list[str], _current_pip_name: str) -> bool:
         return any(
             norm_pip_name(_n) in _packages
-            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + PY_EXT))
-            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), PY_INIT))
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/") + '.py'))
+            or os_path_isfile(os_path_join(project_path, _n.replace('.', "/"), '__init__' + '.py'))
             or norm_pip_names.get(_n, _current_pip_name) in _packages
             for _n in _current_imp_names)
 
@@ -602,12 +602,12 @@ def package_code_files(project_path: str, exclude_prefixes: tuple[str, ...] = ()
 
     :param project_path:        project root path.
     :param exclude_prefixes:    relative code file paths prefixes to exclude. specifying an empty tuple (the default
-                                value of this parameter) will include all Python files with a :data:`~ae.base.PY_EXT`
+                                value of this parameter) will include all Python files with the '.py'
                                 extension found underneath the specified :paramref:`.project_path`.
     :return:                    set of package code files present in the specified project root path.
     """
     with in_wd(project_path):
-        code_files = path_files("**/*" + PY_EXT)
+        code_files = path_files("**/*" + '.py')
     return {_ for _ in code_files if not _.startswith(exclude_prefixes)}
 
 
@@ -694,7 +694,7 @@ def renew_project_dir(pdv: ProjectDevVars):     # pylint: disable=too-many-branc
         patchable_makedirs(sub_dir)
 
     if project_type == APP_PRJ:
-        file_name = os_path_join(project_path, pdv['APP_BUILD_CFG_FILENAME'])
+        file_name = os_path_join(project_path, 'buildozer.spec')
         if not os_path_isfile(file_name):
             patchable_write_file(file_name, f"# {REFRESHABLE_TEMPLATE_MARKER}{sep}[app]{sep}")
 
@@ -710,9 +710,9 @@ def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packag
 
     :param project_pip_name:    pip name of the project with this requirements file.
     :param req_file_path:       file path of the requirements file.
-    :param all_packages:        pass True to include also not explicitly requested packages (added by pip freeze).
-    :param integrate_pip_errors: pass True to integrate errors into the resulting frozen requirements file.
-    :return:                    an empty list (if :paramref:`update_rozen_req_file.integrate_pip_errors` is True)
+    :param all_packages:        pass `True` to include also not explicitly requested packages (added by pip freeze).
+    :param integrate_pip_errors: pass `True` to integrate errors into the resulting frozen requirements file.
+    :return:                    an empty list (if :paramref:`update_rozen_req_file.integrate_pip_errors` is `True`)
                                 or a list of pip error output lines.
     """
     if not (frozen_file_path := frozen_req_file_path(req_file_path, strict=True)):
@@ -722,9 +722,9 @@ def update_frozen_req_file(project_pip_name: str, req_file_path: str, all_packag
     run_logged_cmd(73, PIP_CMD, "freeze", "-r", req_file_path, output_lines=out_lines, stderr=subprocess.PIPE)
 
     errors: list[str] = []
-    if out_lines and out_lines[-1] == STDERR_END_MARKER:
+    if out_lines and out_lines[-1] == '^^^   STDERR   ^^^':
         line_no = len(out_lines) - 2
-        while out_lines[line_no] != STDERR_BEG_MARKER:
+        while out_lines[line_no] != 'vvv   STDERR   vvv':
             errors.insert(0, out_lines[line_no])
             line_no -= 1
     if errors:

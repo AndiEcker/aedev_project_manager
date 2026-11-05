@@ -1,9 +1,9 @@
 """
-templates for managed files of Python projects
-==============================================
+template processing helpers
+===========================
 
 this module extends the template processing engine of the :mod:`ae.managed_files` portion with
-code project management functionality.
+helper s to manage Python projects.
 
 """
 import os
@@ -12,19 +12,19 @@ from functools import partial
 from typing import Any, cast
 
 from ae.base import (                                                                                   # type: ignore
-    TEMPLATES_FOLDER, URI_SVC_SEP,
     in_wd, norm_name, norm_path, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, pep8_format)
-from ae.system import PyMo                                                                              # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
 from ae.managed_files import (                                                                          # type: ignore
     DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
     ContextVars, ManagedFile, OutdatedFilesPathsContents, TemplateMngr, TemplateFiles)
-from ae.paths import path_items, skip_py_cache_files                                                    # type: ignore
+from ae.paths import path_files, path_items, skip_py_cache_files                                        # type: ignore
 from ae.shell import debug_or_verbose                                                                   # type: ignore
 from aedev.base import (                                                                                # type: ignore
-    ANY_PRJ_TYPE, DJANGO_PRJ, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
+    ANY_PRJ_TYPE, DJANGO_PRJ, DOCS_FOLDER, NO_PRJ, PROJECT_VERSION_SEP, ROOT_PRJ, TEMPLATES_FOLDER,
+    TEST_PROJECTS_PARENT_FOLDER, TESTS_FOLDER,
     CachedTemplates, TemplateProjectsType,
-    get_pypi_versions, project_name_version)
+    get_pypi_versions, project_name_version,
+    PyMo)
 from aedev.commands import (                                                                            # type: ignore
     EXEC_GIT_ERR_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_clone, run_git_traced)
@@ -142,9 +142,15 @@ def _log_check_outdated(cae: ConsoleApp, outdated: OutdatedFilesPathsContents, v
 
 
 def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on_outdated: bool = False):
+    if cae.debug:
+        cae.po(f"   == template sync log of {len(man.managed_files)} {subject}")
+        for log_line in man.log_lines(verbose=cae.verbose):
+            cae.po(log_line)
+
     missing = man.missing_files
     outdated = man.outdated_files
     verbose = debug_or_verbose()
+
     if missing or outdated:
         if missing:
             cae.po(f"   -- {len(missing)} managed files missing: "
@@ -159,17 +165,11 @@ def _log_check_summary(cae: ConsoleApp, man: TemplateMngr, subject: str, fail_on
                                           f"; update managed files via the actions 'refresh' or 'renew'")
 
     elif checked := man.checked_files:
-        cae.po(f"  === {len(checked)} {subject} are up-to-date"
-               + (": " + (ppp(checked) if cae.verbose else " ".join(checked))
-                  if verbose else ""))
+        cae.po(f"   == {len(checked)} {subject} are up-to-date"
+               + (": " + (ppp(checked) if cae.verbose else " ".join(checked)) if verbose else ""))
 
     elif verbose:
         cae.po(f"   == all {len(man.managed_files)} {subject} skipped!")
-
-    if cae.debug:
-        cae.po(f"   == template sync log of {len(man.managed_files)} {subject}")
-        for log_line in man.log_lines(verbose=cae.verbose):
-            cae.po(log_line)
 
 
 def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool = False, refresh_pass: int = 0
@@ -180,13 +180,13 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
     :param pdv:                 project env/dev variables dict of the destination project to patch/refresh,
                                 providing values for (1) f-string template replacements, and (2) to control the template
                                 registering, patching, and deployment.
-    :param fail_on_outdated:    pass True to quit app if there are missing/outdated managed files (skip-able with -f).
+    :param fail_on_outdated:    pass `True` to quit app if there are missing/outdated managed files (skip-able with -f).
     :param refresh_pass:        pass 1 or 2 to reflect double-/multi-pass refresh of the managed files (used for
                                 refresh/renew actions to ensure proper updated of setup.py and requirements.txt files).
     :return:                    :class:`TemplateMngr` instance with the current state of the project files generated
                                 and synced from templates. e.g. to retrieve a set of the destination project file paths
                                 that would be created/updated use set(<this return value>.deploy_files.keys()).
-                                ``None`` will be returned if no project type gets specified via the argument
+                                `None` will be returned if no project type gets specified via the argument
                                 :paramref:`.pdv`.
 
     .. note:: ensure the CWD is on the destination project root folder (missing/outdated_files paths are relative).
@@ -212,6 +212,8 @@ def check_templates(cae: ConsoleApp, pdv: ProjectDevVars, fail_on_outdated: bool
             + (PPF(prj_tpls) if cae.verbose else " ".join(_['import_name'] + " v" + _['version'] for _ in prj_tpls)))
     pass_msg = f" (pass {refresh_pass} of 2)" if refresh_pass else ""
     _log_check_summary(cae, man, f"managed files of {tpl_cnt} associated template projects{pass_msg}", fail_on_outdated)
+
+    cae.po("  === template checks done")
 
     return man
 
@@ -240,6 +242,20 @@ def clone_template_project(import_name: str, version_tag: str) -> str:
     return path
 
 
+def format_file_paths(*files_path_parts: str, path_prefix: str = "", sep: str = "\n    ") -> str:
+    """ determine files matching the paths parts and join their file paths to a string.
+
+    :param files_path_parts:    joinable path parts of the files path mask with wildcards.
+    :param path_prefix:         root path which will not be included in the return value.
+    :param sep:                 separator string between the file paths, defaulting to a newline character and 4 spaces.
+    :return:                    string of sorted file paths without the specified path prefix,
+                                or an empty string if the files path mask did not match any file.
+    """
+    files_mask = os_path_join(path_prefix, *files_path_parts)
+    files_paths = sorted(path_files(files_mask))
+    return sep.join(os_path_relpath(file_path, path_prefix) for file_path in files_paths)
+
+
 def get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     """ compile a mapping with the dev vars and callables used to generate project files from templates with f-strings.
 
@@ -248,8 +264,11 @@ def get_template_vars(pdv: ProjectDevVars) -> ContextVars:
     """
     tpl_vars = pdv.as_dict()
     tpl_vars['DJANGO_PRJ'] = DJANGO_PRJ
+    tpl_vars['DOCS_FOLDER'] = DOCS_FOLDER
     tpl_vars['TEST_PROJECTS_PARENT_FOLDER'] = TEST_PROJECTS_PARENT_FOLDER
-    tpl_vars['URI_SVC_SEP'] = URI_SVC_SEP
+    tpl_vars['TEMPLATES_FOLDER'] = TEMPLATES_FOLDER
+    tpl_vars['TESTS_FOLDER'] = TESTS_FOLDER
+    tpl_vars['format_file_paths'] = format_file_paths
     tpl_vars['frozen_req_file_path'] = frozen_req_file_path
     tpl_vars['setup_kwargs_literal'] = setup_kwargs_literal
     tpl_vars['_add_base_globals'] = ""    # e.g. norm_name() is needed by dev_requirements.txt templates
@@ -264,7 +283,7 @@ def path_pfx_place_into_package_path(mf: ManagedFile):
     ctx_vars = mf.manager.context_vars
     pkg_path = os_path_relpath(ctx_vars['package_path'], ctx_vars['project_path'])
     if pkg_path != '.':
-        mf.extend_dst_file_path(cast(str, pkg_path))
+        mf.extend_dst_file_path(pkg_path)
 
 
 def path_pfx_skip_for_portions(mf: ManagedFile):

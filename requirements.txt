@@ -17,7 +17,6 @@ ae_system
 ae_paths
 ae_dynamicod
 ae_literal
-ae_updater
 ae_core
 ae_console
 ae_shell

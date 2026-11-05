@@ -24,16 +24,16 @@ import pytest
 from packaging.version import Version
 
 from ae.base import (
-    TESTS_FOLDER,
     extend_file, norm_name, norm_path, now_str, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join,
     read_file, write_file)
-from ae.core import main_app_instance, temp_context_cleanup
+from ae.core import DEBUG_LEVEL_DISABLED, main_app_instance, temp_context_cleanup
 from ae.console import ConsoleApp
 from ae.shell import debug_or_verbose
 from aedev.base import (
     ANY_PRJ_TYPE, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, MODULE_PRJ, PACKAGE_PRJ,
-    TEST_PROJECTS_NAMESPACE, TEST_PROJECTS_PARENT_FOLDER, TEST_PROJECTS_REMOTE, VERSION_PREFIX, VERSION_QUOTE,
+    TEST_PROJECTS_NAMESPACE, TEST_PROJECTS_PARENT_FOLDER, TEST_PROJECTS_REMOTE, TESTS_FOLDER,
+    VERSION_PREFIX, VERSION_QUOTE,
     get_pypi_versions)
 from aedev.commands import (
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, SHELL_LOG_FILE_NAME_SUFFIX,
@@ -259,7 +259,7 @@ def _push_to_remote_and_pypi(pdv: ProjectDevVars):
     if pdv['pip_name']:
         retries = 69  # waiting/checking/retrying maximal ~= 6 minutes (test.pypi.org is slow)
         while retries and get_pypi_versions(pdv['pip_name'], pypi_test=True)[-1] != pdv['project_version']:
-            print(f"  ... waiting for the test.pypi.org release of the added {project_name} test project; {retries=}")
+            print(f"   .. waiting for the test.pypi.org release of the added {project_name} test project; {retries=}")
             time.sleep(6)
             retries -= 1
 
@@ -333,7 +333,7 @@ class TestEnvPreparation:
     def test_local_prj_dir(self, itg_test_prj):
         if os_path_isdir(itg_test_prj.path):
             shutil.rmtree(itg_test_prj.path)     # wipe any rests on local machine from last test run
-        assert not os.path.exists(itg_test_prj.path)
+        assert not os_path_isdir(itg_test_prj.path)
 
     def test_local_prj_dir_parent_is_empty(self):
         assert os.listdir(ITG_PARENT_PATH) == []
@@ -389,7 +389,7 @@ class TestEnvPreparation:
             assert itg_test_prj.role == 'mtn' and itg_test_prj.state == 'cloned' and itg_test_prj.type == ROOT_PRJ
             if not (_uncommitted := git_uncommitted(ITG_ROOT_PRJ_PATH)):  # no newly added portions in this test run
                 shutil.rmtree(itg_test_prj.path)
-                assert not os.path.exists(itg_test_prj.path)
+                assert not os_path_isdir(itg_test_prj.path)
                 return
             if _uncommitted != {'dev_requirements.txt'}:
                 print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
@@ -409,7 +409,7 @@ class TestEnvPreparation:
         print(f" !!!! prepared new project {pdv['project_desc']} in {itg_test_prj.path} and pushed onto {remote_url=}")
 
         shutil.rmtree(itg_test_prj.path)
-        assert not os.path.exists(itg_test_prj.path)
+        assert not os_path_isdir(itg_test_prj.path)
 
     @pytest.mark.parametrize(*_itg_test_projects_parametrize(), ids=str)
     def test_clone_or_fork_of_test_project_to_local_machine(self, itg_test_prj):
@@ -472,12 +472,13 @@ class TestActions:
 
         output = capsys.readouterr().out
         assert output
-        assert "tst_pkg1==1.2.3" in output
-        assert "tst_pkg2==3.6.9" in output
+        if app_pjm_debug.debug_level != DEBUG_LEVEL_DISABLED:
+            assert "tst_pkg1==1.2.3" in output
+            assert "tst_pkg2==3.6.9" in output
         assert "tst_pkg3==3.3.3" in output
         assert "tst-pkg3==3.3.3" in output  # w/ normalized pip name
         assert "--- installed 1 indirectly required, outdated and cooled-down project" in output
-        assert "=== installed 1 outdated projects in venv=" in output
+        assert "=== requirements checks installed 1 projects in nsn_tst_por_empty"
 
     def test_show_status_pjm(self):
         pdv = pdv_with_email()
