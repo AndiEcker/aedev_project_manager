@@ -11,22 +11,20 @@ import pytest
 from conftest import delete_files, logging_unpatched_shutdown_setup, logging_unpatched_shutdown_teardown, skip_gitlab_ci
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER, UNSET,
+    UNSET,
     in_wd, norm_name, norm_path, on_ci_host,
     os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, read_file, write_file)
-from ae.system import APP_BUILD_CFG_FILENAME, project_main_file
 from ae.paths import path_items
-from ae.core import main_app_instance, temp_context_cleanup
+from ae.core import DEBUG_LEVEL_DISABLED, main_app_instance, temp_context_cleanup
 from ae.shell import debug_or_verbose, in_os_env
 from ae.pythonanywhere import PythonanywhereApi
 from ae.managed_files import (
     PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER)
-from ae.updater import MOVES_SRC_FOLDER_NAME
 from aedev.base import (
-    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH,
     ANY_PRJ_TYPE, APP_PRJ, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PACKAGE_PRJ, PARENT_PRJ, PLAYGROUND_PRJ, ROOT_PRJ,
-    PIP_CMD, PROJECT_VERSION_SEP, VERSION_PREFIX, VERSION_QUOTE,
-    code_file_version)
+    COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, DEF_PROJECT_PARENT_FOLDER,
+    DOCS_FOLDER, PIP_CMD, PROJECT_VERSION_SEP, TEMPLATES_FOLDER, TESTS_FOLDER, VERSION_PREFIX, VERSION_QUOTE,
+    code_file_version, project_main_file)
 from aedev.commands import (
     EXEC_GIT_ERR_PREFIX, GIT_CLONE_CACHE_CONTEXT, GIT_RELEASE_REF_PREFIX, GIT_VERSION_TAG_PREFIX,
     git_add, git_checkout, git_current_branch, git_remotes, git_uncommitted)
@@ -216,7 +214,7 @@ class TestActionsGitLab:
             elif project_path == module_repo_path:
                 assert "*** next action discrepancy:" in output, f"with {project_path=}"
                 assert ("detected main_branch='develop' with added/changed/uncommitted files: ?? .gitignore, ?? " +
-                        tst_ns_name + "/" + tst_ns_por_pfx + 'module' + PY_EXT) in output, f"with {project_path=}"
+                        tst_ns_name + "/" + tst_ns_por_pfx + 'module' + '.py') in output, f"with {project_path=}"
             else:
                 assert "-- next action guess: renew_project" in output, f"with {project_path=}"
 
@@ -240,7 +238,7 @@ class TestActionsGitLab:
                 assert err_prefix + "?? .gitignore" in output, f"with {project_path=}"
             elif project_path == module_repo_path:
                 assert "*** next action discrepancy:" in output, f"with {project_path=}"
-                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + PY_EXT in output
+                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + '.py' in output
             else:  # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
@@ -266,7 +264,7 @@ class TestActionsGitLab:
                 assert err_prefix + "?? .gitignore" in output, f"with {project_path=}"
             elif project_path == module_repo_path:
                 assert "*** next action discrepancy:" in output, f"with {project_path=}"
-                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + PY_EXT in output
+                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + '.py' in output
             else:
                 assert False, "itg test projects does not make sense here"
 
@@ -371,7 +369,7 @@ class TestActions:
         pdv = pdv_with_email(project_path=str(tmp_path), main_app_options={'more_verbose': True})
         build_dir = os_path_join(tmp_path, '.buildozer')
         os.makedirs(build_dir)
-        old_apk = os_path_join(tmp_path, MOVES_SRC_FOLDER_NAME, 'tst_old_apk_ver' + '.{apk_ext}')
+        old_apk = os_path_join(tmp_path, 'ae_updater_moves', 'tst_old_apk_ver' + '.{apk_ext}')
         write_file(old_apk, "old tst cont", make_dirs=True)
         bin_dir = os_path_join(tmp_path, 'bin')
         write_file(os_path_join(bin_dir, 'tst_new_apk_ver' + '_slim.apk'), "PrevBuild", make_dirs=True)  # old _slim.apk
@@ -388,7 +386,7 @@ class TestActions:
 
         assert not os_path_isdir(build_dir)
         assert not os_path_isfile(old_apk)
-        assert os_path_isfile(os_path_join(tmp_path, MOVES_SRC_FOLDER_NAME, 'tst_new_apk_ver' + '.{apk_ext}'))
+        assert os_path_isfile(os_path_join(tmp_path, 'ae_updater_moves', 'tst_new_apk_ver' + '.{apk_ext}'))
         assert os_path_isfile(os_path_join(bin_dir, 'tst_new_apk_ver' + '_slim.apk'))
         assert os_path_isfile(os_path_join(tmp_path, 'build_log.txt'))
         log_content = read_file(os_path_join(tmp_path, 'build_log.txt'))
@@ -533,7 +531,7 @@ class TestActions:
         if not on_ci_host():
             mocked_app_options['force'] = 1  # skip the only locally running template-chk-len(missing)=11 error (44, )
         tst_dir = os_path_join(module_repo_path, TESTS_FOLDER)
-        tst_fil = os_path_join(tst_dir, 'test_test' + PY_EXT)
+        tst_fil = os_path_join(tst_dir, 'test_test' + '.py')
         write_file(os_path_join(tst_dir, PDV_REQ_FILE_NAME), "# flag file to run integrity checks", make_dirs=True)
         write_file(tst_fil, "def test_failing():\n    assert False\n")
 
@@ -661,7 +659,7 @@ class TestActions:
 
         assert mock_miss_reqs.call_count == 1
         assert mock_miss_imp.call_count == 1
-        assert len(mock_cae.po.call_args_list) == 6
+        assert len(mock_cae.po.call_args_list) == 3
         assert "run code-check of required, imported and installed PyPI projects" in mock_cae.method_calls[-1][1][0]
 
     def test_check_resources(self, app_pjm, capsys, changed_repo_path, empty_repo_path):
@@ -701,9 +699,10 @@ class TestActions:
         assert " (cooled-down=1 hot=1)" in out or app_pjm_debug.debug
         assert "      ae_hot_mock" in out
         assert "      cooled-pkg1" in out
-        assert "--- found 2 currently installed project" in out
-        assert "tst_pkg1==1.2.3" in out
-        assert "tst_pkg2==3.6.9" in out
+        if app_pjm_debug.debug_level != DEBUG_LEVEL_DISABLED:
+            assert "--- found 2 currently installed project" in out
+            assert "tst_pkg1==1.2.3" in out
+            assert "tst_pkg2==3.6.9" in out
         assert "--- found 0 outdated and cooled-down project" in out
         assert "--- found 1 indirectly required, outdated and cooled-down projects" in out
         assert "cooled-pkg1==1.1.1" in out
@@ -711,7 +710,7 @@ class TestActions:
         assert "--- found 1 indirectly required, outdated and hot (excluded from cool-down) projects" in out
         assert "ae_hot_mock==1.1.1" in out
         assert "--- found 0 outdated and hot (excluded from cool-down) project" in out
-        assert "=== found 2 outdated projects in venv=" in out
+        assert "=== requirements checks found 2 projects" in out
 
         mocked_app_options['more_verbose'] = False
 
@@ -725,7 +724,7 @@ class TestActions:
         assert "cool==9.9.9" in out
         assert "--- found 1 outdated and hot (excluded from cool-down) project" in out
         assert "ae-fake==3.4.5" in out
-        assert "=== found 2 outdated projects in venv=" in out
+        assert "=== requirements checks found 2 projects" in out
 
     def test_clone_children_of_ae_namespace(self, app_pjm):
         project_versions = (f"ae-group/ae_base{PROJECT_VERSION_SEP}0.3.60", f"ae_paths{PROJECT_VERSION_SEP}0.3.42")
@@ -853,7 +852,7 @@ class TestActions:
         assert not os_path_isdir(os_path_join(empty_repo_path, del_dir))
         assert not os_path_isdir(os_path_join(module_repo_path, del_dir))
 
-        del_file = os_path_join(module_repo_path, tst_ns_name, tst_ns_por_pfx + 'module' + PY_EXT)
+        del_file = os_path_join(module_repo_path, tst_ns_name, tst_ns_por_pfx + 'module' + '.py')
         assert os_path_isfile(del_file)
         assert not delete_children_file(root_pdv, del_file, mod_pdv)
         assert not os_path_isfile(del_file)
@@ -1014,9 +1013,9 @@ class TestActions:
 
         assert new_pdv['project_type'] == ROOT_PRJ
         assert os_path_isdir(project_path)
-        ver_file_path = main_file_path(cast(str, project_path), ROOT_PRJ, namespace_name=tst_ns_name)
+        ver_file_path = main_file_path(project_path, ROOT_PRJ, namespace_name=tst_ns_name)
         assert os_path_isfile(ver_file_path)
-        assert os_path_basename(ver_file_path) == PY_INIT
+        assert os_path_basename(ver_file_path) == '__init__' + '.py'
         assert code_file_version(ver_file_path) == "0.3.1"
 
     def test_new_package(self, app_pjm, temp_parent_path):
@@ -1052,7 +1051,7 @@ class TestActions:
     def test_prepare_children_commit(self, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options,
                                      module_repo_path):
         title = "prepare children commit msg title - also adding unstaged files - V {project_version}"
-        added = "unstaged_file_to_be_added_by_prepare_action.py"
+        added = "unstaged_file_to_be_added_by_prepare_action" + '.py'
         test_projects = (changed_repo_path, empty_repo_path, module_repo_path)
 
         chi_pdvs = []
@@ -1156,8 +1155,8 @@ class TestActions:
         assert not os_path_isfile(os_path_join(module_repo_path, src_file))
         assert os_path_isfile(os_path_join(module_repo_path, dst_file))
 
-        src_file = os_path_join(tst_ns_name, tst_ns_por_pfx + 'module' + PY_EXT)      # rel path move within prj
-        dst_file = tst_ns_por_pfx + 'module' + PY_EXT
+        src_file = os_path_join(tst_ns_name, tst_ns_por_pfx + 'module' + '.py')         # rel path move within prj
+        dst_file = tst_ns_por_pfx + 'module' + '.py'
         assert os_path_isfile(os_path_join(module_repo_path, src_file))
         assert not os_path_isfile(os_path_join(module_repo_path, dst_file))
         assert not rename_children_file(root_pdv, src_file, dst_file, mod_pdv, mod_pdv)  # no src in root / 2*mod rename
@@ -1262,7 +1261,7 @@ class TestActions:
         assert mock_pip.call_args_list[1].kwargs == {'dry_run': False}
 
         assert len(mock_cae.method_calls) >= 3
-        assert "  === " + 'installed' in mock_cae.method_calls[-1][1][0]
+        assert "=== requirements checks installed 0 projects" in mock_cae.method_calls[-1][1][0]
 
     def test_renew_venv_verbose(self):
         pdv = pdv_with_email(main_app_options={'force': 3})
@@ -1288,7 +1287,7 @@ class TestActions:
         assert mock_pip.call_args_list[1].kwargs['return_implicits'] is True
 
         assert len(mock_cae.method_calls) >= 3
-        assert "  === " + 'installed' in mock_cae.method_calls[-1][1][0]
+        assert "=== requirements checks installed 0 projects" in mock_cae.method_calls[-1][1][0]
 
     def test_run_children_command(self, capsys, app_pjm, empty_repo_path, mocked_app_options):
         mocked_app_options['delay'] = 0
@@ -1316,34 +1315,26 @@ class TestActions:
         show_expression_value(pdv, "os_path_relpath(version_file, project_path)")
         assert os_path_basename(empty_repo_path) in capsys.readouterr().out
 
+        show_expression_value(pdv, 'norm_name')
+        assert 'function norm_name at' in capsys.readouterr().out
+
         show_expression_value(pdv, 'invalid_expression')
         output = capsys.readouterr().out
         assert 'invalid_expression' in output
         assert 'is not defined' in output
 
     def test_show_expression_value_recursive_data(self, app_pjm, capsys, empty_repo_path):
-        from ae.dynamicod import base_globals   # base_globals kann von :func:`ae.dynamicod.try_eval()` verwendet werden
+        from ae.dynamicod import base_globals
         pdv = pdv_with_email(project_path=empty_repo_path)
-
-        show_expression_value(pdv, 'base_globals')
-        output = capsys.readouterr().out
-        assert 'base_globals' in output
-        assert "'base_globals': {...}" in output    # recursion detected by Python repr
-
         rec_a = [[]]
         rec_b = [rec_a]
         rec_a[0] = rec_b
-        base_globals['recursive__hook__'] = rec_a
-        show_expression_value(pdv, 'base_globals')
+        base_globals['tst_recursive__hook'] = rec_a
+
+        show_expression_value(pdv, 'tst_recursive__hook')
+
         output = capsys.readouterr().out
-
-        assert "'base_globals': {" + os.linesep in output   # 1st occurrence shows the value of base_globals
-        assert "'base_globals': {...}" in output    # Python repr recursion guard replaced base_globals value with "..."
-
-        sep = os.linesep
-        assert ("    'recursive__hook__': [" + sep +
-                "        []," + sep +
-                "    ]") in output
+        assert 'value literal of "tst_recursive__hook"' in output
 
     def test_show_actions_with_cae(self, capsys, app_pjm, changed_repo_path, empty_repo_path, mocked_app_options):
         pdv = pdv_with_email(**{'host_api': GitlabCom()})
@@ -2069,8 +2060,8 @@ class TestHelpersLocal:
             assert app_pdv['project_type'] == APP_PRJ
 
             assert os_path_isdir(project_path)
-            assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-            assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
+            assert os_path_isfile(os_path_join(project_path, 'main' + '.py'))
+            assert os_path_isfile(os_path_join(project_path, 'buildozer.spec'))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
@@ -2090,8 +2081,8 @@ class TestHelpersLocal:
             assert app_pdv['project_type'] == APP_PRJ
             assert app_pdv['project_path'] == project_path
             assert os_path_isdir(project_path)
-            assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-            assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
+            assert os_path_isfile(os_path_join(project_path, 'main' + '.py'))
+            assert os_path_isfile(os_path_join(project_path, 'buildozer.spec'))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
@@ -2113,8 +2104,8 @@ class TestHelpersLocal:
 
             assert norm_path(pkg_name) == project_path
             assert os_path_isdir(project_path)
-            assert os_path_isfile(os_path_join(project_path, pkg_name, PY_INIT))
-            assert not os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
+            assert os_path_isfile(os_path_join(project_path, pkg_name, '__init__' + '.py'))
+            assert not os_path_isfile(os_path_join(project_path, 'buildozer.spec'))
             assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
             assert not os_path_isdir(os_path_join(project_path, TEMPLATES_FOLDER))
             assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
@@ -2132,9 +2123,9 @@ class TestHelpersLocal:
             _show_editable_and_outdated_and_not_required(ProjectDevVars(project_path=empty_repo_path))
 
         output = capsys.readouterr().out
-        assert output.count("  --- found ") == 5
-        assert output.count('ae_fake') == 4
-        assert output.count('tst_pkg') == 4
+        assert output.count("  --- found ") == 4
+        assert output.count('ae_fake') == 3
+        assert output.count('tst_pkg') == 3
 
     @pytest.mark.parametrize(('next_action_msg', 'verbose'), (('¡' + 'err_act', False), ('nxt_act', True)))
     def test_show_status(self, next_action_msg, verbose):
@@ -2337,7 +2328,7 @@ class TestHelpersRemote:
                 assert err_prefix + "?? .gitignore" in output, f"with {project_path=}"
             elif project_path == module_repo_path:
                 assert "*** next action discrepancy:" in output, f"with {project_path=}"
-                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + PY_EXT in output
+                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + '.py' in output
             else:       # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
@@ -2380,7 +2371,7 @@ class TestHelpersRemote:
                 assert "-- next action guess: prepare_commit" in output, f"with {project_path=}"
             elif project_path == module_repo_path:
                 assert "*** next action discrepancy:" in output, f"with {project_path=}"
-                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + PY_EXT in output
+                assert err_prefix + "?? .gitignore, ?? nsn/" + tst_ns_por_pfx + 'module' + '.py' in output
             else:  # itg tst projects
                 assert "-- next action guess: renew_project" in output
 
@@ -2444,6 +2435,7 @@ class TestMainInit:
               patch('aedev.project_manager.__main__._act_callable') as mock_callable,
               patch('aedev.project_manager.__main__.action_forces', 969696)):
             init_main()
+            # noinspection unresolved-references
             with patch('aedev.project_manager.__main__.cae.get_option'):
                 prepare_and_run_main()
 
@@ -2462,6 +2454,7 @@ class TestMainInit:
               patch('aedev.project_manager.__main__._act_specs', return_value={'tst_spec_key': 'tst_spec_val'}),
               patch('aedev.project_manager.__main__._act_help_print') as mock_spec_print):
             init_main()
+            # noinspection unresolved-references
             with (patch('aedev.project_manager.__main__.cae.get_argument'),
                   patch('aedev.project_manager.__main__.cae.get_option')):
                 prepare_and_run_main()
@@ -2477,6 +2470,7 @@ class TestMainInit:
               patch('aedev.project_manager.__main__.get_app_option', return_value=True),
               patch('aedev.project_manager.__main__._act_name', return_value="")):
             init_main()
+            # noinspection unresolved-references
             with (patch('aedev.project_manager.__main__.cae.get_argument'),
                   patch('aedev.project_manager.__main__.cae.get_option')):
                 prepare_and_run_main()

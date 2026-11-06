@@ -9,7 +9,6 @@ import pytest
 from tests.conftest import skip_gitlab_ci
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER,
     in_wd, norm_name, norm_path, os_path_basename, os_path_isdir, os_path_isfile, os_path_join,
     read_file, write_file)
 from ae.core import main_app_instance, temp_context_cleanup, temp_context_folders
@@ -19,7 +18,8 @@ from ae.managed_files import (
     TEMPLATE_PLACEHOLDER_ARGS_SUFFIX, TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID,
     deploy_template, patch_string)
 from aedev.base import (
-    PROJECT_VERSION_SEP, MODULE_PRJ, PACKAGE_PRJ, PARENT_PRJ, ROOT_PRJ, TEST_PROJECTS_PARENT_FOLDER,
+    DEF_PROJECT_PARENT_FOLDER, PROJECT_VERSION_SEP, MODULE_PRJ, PACKAGE_PRJ, PARENT_PRJ, ROOT_PRJ, 
+    TEMPLATES_FOLDER, TEST_PROJECTS_PARENT_FOLDER, VERSION_PREFIX, VERSION_QUOTE,
     project_name_version)
 from aedev.commands import GIT_CLONE_CACHE_CONTEXT, GIT_VERSION_TAG_PREFIX
 from aedev.project_vars import PDV_REQ_DEV_FILE_NAME, ProjectDevVars, frozen_req_file_path
@@ -33,7 +33,7 @@ from constants_and_fixtures import (
 from aedev.project_manager.templates import (
     CACHED_TPL_PROJECTS, PATH_PREFIXES_PARSERS, SKIP_FOR_PORTIONS_PATH_PFX, SKIP_PRJ_TYPE_PATH_PFX,
     TPL_IMPORT_NAME_PREFIX, TPL_IMPORT_NAME_SUFFIX, TPL_PATH_OPTION_SUFFIX, TPL_VERSION_OPTION_SUFFIX,
-    check_templates, clone_template_project, get_template_vars, _log_check_outdated,
+    check_templates, clone_template_project, format_file_paths, get_template_vars, _log_check_outdated,
     path_pfx_place_into_package_path, path_pfx_skip_for_portions, path_pfx_skip_if_project_type,
     project_templates, register_template, setup_kwargs_literal, template_path_option, template_version_option)
 
@@ -75,7 +75,7 @@ class TestHelpers:
         parent_dir = os_path_join(str(tmp_path), DEF_PROJECT_PARENT_FOLDER)
         portion_name = 'tst_ns_mod'
         project_path = os_path_join(parent_dir, nsn + '_' + portion_name)
-        module_path = os_path_join(project_path, nsn, portion_name + PY_EXT)
+        module_path = os_path_join(project_path, nsn, portion_name + '.py')
         app_options = {'repo_group': "tst_grp",
                        template_version_option(nsn + '.' + nsn): ""}
 
@@ -110,7 +110,7 @@ class TestHelpers:
         app_options = {'repo_group': "tst_grp",
                        template_version_option(nsn + '.' + nsn): ""}
 
-        write_file(os_path_join(package_path, PY_INIT),
+        write_file(os_path_join(package_path, '__init__' + '.py'),
                    f"pkg_ini_content = ''{os.linesep}__version__ = '6.3.6'{os.linesep}",
                    make_dirs=True)
 
@@ -122,7 +122,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(project_path)
         assert pdv['project_type'] == PACKAGE_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(package_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(package_path, '__init__' + '.py'))
 
         app_options['namespace_name'] = nsn
 
@@ -134,7 +134,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(project_path)
         assert pdv['project_type'] == PACKAGE_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(package_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(package_path, '__init__' + '.py'))
 
         app_options['namespace_name'] = ""
 
@@ -156,7 +156,7 @@ class TestHelpers:
         app_options = {'repo_group': "tst_grp",
                        template_version_option(nsn + '.' + nsn): ""}
 
-        write_file(os_path_join(package_path, PY_INIT),
+        write_file(os_path_join(package_path, '__init__' + '.py'),
                    f"root_content = ''{os.linesep}__version__ = '9.9.3'{os.linesep}",
                    make_dirs=True)
 
@@ -168,7 +168,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(project_path)
         assert pdv['project_type'] == ROOT_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(package_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(package_path, '__init__' + '.py'))
         assert not pdv.pdv_val('children_project_vars')
         assert not pdv.pdv_val('portions_import_names')
 
@@ -182,7 +182,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(project_path)
         assert pdv['project_type'] == ROOT_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(package_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(package_path, '__init__' + '.py'))
         assert not pdv.pdv_val('children_project_vars')
         assert not pdv.pdv_val('portions_import_names')
 
@@ -215,18 +215,18 @@ class TestHelpers:
         app_options = {'repo_group': "tst_grp",
                        template_version_option(nsn + '.' + nsn): ""}
 
-        write_file(os_path_join(root_pkg_path, PY_INIT),
+        write_file(os_path_join(root_pkg_path, '__init__' + '.py'),
                    f"root_content = ''{os.linesep}__version__ = '111.33.63'{os.linesep}",
                    make_dirs=True)
         write_file(os_path_join(root_prj_path, PDV_REQ_DEV_FILE_NAME),
                    nsn + '_' + project_name + os.linesep + nsn + '_' + module_name)
 
-        write_file(os_path_join(package_pkg_path, PY_INIT),
+        write_file(os_path_join(package_pkg_path, '__init__' + '.py'),
                    f"pkg_content = ''{os.linesep}__version__ = '999.333.636'{os.linesep}",
                    make_dirs=True)
-        write_file(os_path_join(package_pkg_path, package_extra_module_name + PY_EXT), "extra_content = ''")
+        write_file(os_path_join(package_pkg_path, package_extra_module_name + '.py'), "extra_content = ''")
 
-        write_file(os_path_join(module_prj_path, nsn, module_name + PY_EXT),
+        write_file(os_path_join(module_prj_path, nsn, module_name + '.py'),
                    f"mod_content = ''{os.linesep}__version__ = '6.9.699'{os.linesep}", make_dirs=True)
 
         pdv = pdv_with_email(project_path=root_prj_path, **app_options)
@@ -237,7 +237,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(root_prj_path)
         assert pdv['project_type'] == ROOT_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(root_pkg_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(root_pkg_path, '__init__' + '.py'))
 
         assert f"{nsn}_{project_name}" in pdv.pdv_val('children_project_vars')
         assert f"{nsn}_{project_name}.{package_extra_module_name}" not in pdv.pdv_val('children_project_vars')
@@ -257,7 +257,7 @@ class TestHelpers:
         assert pdv['project_path'] == norm_path(root_prj_path)
         assert pdv['project_type'] == ROOT_PRJ
         assert pdv['repo_group'] == app_options['repo_group']
-        assert pdv['version_file'] == norm_path(os_path_join(root_pkg_path, PY_INIT))
+        assert pdv['version_file'] == norm_path(os_path_join(root_pkg_path, '__init__' + '.py'))
 
         assert f"{nsn}_{project_name}" in pdv.pdv_val('children_project_vars')
         assert f"{nsn}_{project_name}.{package_extra_module_name}" not in pdv.pdv_val('children_project_vars')
@@ -361,7 +361,8 @@ class TestHelpers:
         mocked_app_options[template_version_option(tpl_imp_name)] = version
         mocked_app_options['namespace_name'] = namespace_name    # or ""
 
-        write_file(os_path_join(package_path, portion_name + PY_EXT), "__version__ = '9.6.3'", make_dirs=True)
+        write_file(os_path_join(package_path, portion_name + '.py'), f"{VERSION_PREFIX}9.6.3{VERSION_QUOTE}",
+                   make_dirs=True)
         write_file(os_path_join(project_path, PDV_REQ_DEV_FILE_NAME), norm_name(tpl_imp_name))
 
         tpl = "{TEMPLATE_PLACEHOLDER_ID_PREFIX}{TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID}"
@@ -476,8 +477,8 @@ class TestHelpers:
         pdv = pdv_with_email(project_path=module_repo_path)
         # uncomment next line to test w/ full coverage using the new path-prefix-ids local:
         # pdv['main_app_options'] = {'project_tpls_project_path': "~/src/aedev_project_tpls"}
-        write_file(os.path.join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
-        # write_file(os.path.join(pdv['project_path'], '.gitignore'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
+        write_file(os_path_join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
+        # write_file(os_path_join(pdv['project_path'], '.gitignore'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
         write_file(os_path_join(pdv['project_path'], pdv['TESTS_FOLDER'], pdv['REQ_FILE_NAME']),
                    "# flag file to run integrity checks - put before first check_templates-run to get same version of"
                    "# .gitlab-CI.yml file (with pip command with extra -r tests/requirements.txt", make_dirs=True)
@@ -501,7 +502,7 @@ class TestHelpers:
     @patch('aedev.project_manager.templates.debug_or_verbose', return_value=False)
     def test_check_templates_log_debug_disabled(self, _, app_pjm, capsys, cleanup_caches, module_repo_path):
         pdv = pdv_with_email(project_path=module_repo_path)
-        write_file(os.path.join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
+        write_file(os_path_join(pdv['project_path'], 'CONTRIBUTING.rst'), f"{REFRESHABLE_TEMPLATE_MARKER} - outdated")
         por_name = pdv['portion_name']
 
         with in_wd(module_repo_path):
@@ -620,6 +621,28 @@ class TestHelpers:
         assert os_path_isfile(dst_file)
         assert norm_path(dst_file) == norm_path(dst_file_path)
         assert read_file(dst_file) == content
+
+    def test_format_file_paths(self):
+        assert format_file_paths("not", "existing", "**", "files", "path") == ""
+
+        assert format_file_paths("*.py") == "setup.py"
+
+        assert format_file_paths("*.py", path_prefix=os_path_join('aedev', 'project_manager')) == (
+            "__init__.py\n    __main__.py\n    codeberg.py\n    templates.py\n    utils.py")
+
+        assert format_file_paths("**", "*.py", path_prefix='aedev', sep="\n") == textwrap.dedent("""
+            project_manager/__init__.py
+            project_manager/__main__.py
+            project_manager/codeberg.py
+            project_manager/templates.py
+            project_manager/utils.py""")[1:]
+
+        assert format_file_paths('aedev', "**", "*.py", sep=' tst_sep') == textwrap.dedent("""
+            aedev/project_manager/__init__.py tst_sep
+            aedev/project_manager/__main__.py tst_sep
+            aedev/project_manager/codeberg.py tst_sep
+            aedev/project_manager/templates.py tst_sep
+            aedev/project_manager/utils.py""").replace("\n", "")
 
     def test_get_template_vars(self):
         tpl_vars = get_template_vars(pdv_with_email())
@@ -915,7 +938,7 @@ class TestHelpers:
         assert tpl_imp_name in reg_tpls[tpl_id]['register_message']
 
     def test_register_template_with_version_from_dev_requirements(self, cleanup_caches):
-        nsn = "aedev"
+        nsn = 'aedev'
         tpl_imp_name = nsn + "." + nsn
         version = "0.1.2.3"
         tpl_id = f"{tpl_imp_name}{PROJECT_VERSION_SEP}{version}"

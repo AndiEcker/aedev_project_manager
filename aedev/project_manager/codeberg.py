@@ -26,11 +26,11 @@ from typing import TypedDict
 
 import requests
 
-from ae.base import URI_SVC_SEP, now_str                                                            # type: ignore
+from ae.base import now_str                                                                         # type: ignore
 from ae.shell import mask_token                                                                     # type: ignore
 
 
-API_URL_PREFIX = f"https{URI_SVC_SEP}codeberg.org/api/v1/"
+API_URL_PREFIX = "https://codeberg.org/api/v1/"
 
 
 class _RequestsKwargs(TypedDict, total=False):
@@ -57,7 +57,7 @@ def ensure_repo(user_or_group_name: str, repo_name: str, token: str, desc: str =
     :param repo_name:           name of the repository/project.
     :param token:               personell access token of the pushing user.
     :param desc:                optional repo description.
-    :param private:             pass True to make the repository private.
+    :param private:             pass `True` to make the repository private.
     :return:                    error message if repo is not accessible or could not be created, else empty string.
     """
     api_url = API_URL_PREFIX + f"orgs/{user_or_group_name}/repos"

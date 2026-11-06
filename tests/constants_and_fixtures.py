@@ -9,13 +9,12 @@ from unittest.mock import patch
 import pytest
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, PY_INIT, PY_EXT, URI_SVC_SEP,
     os_path_basename, os_path_isfile, os_path_join, read_file, write_file)
 from ae.system import load_env_var_defaults
 from ae.core import DEBUG_LEVEL_DISABLED, DEBUG_LEVEL_ENABLED, DEBUG_LEVEL_VERBOSE, main_app_instance
 from ae.console import ConsoleApp
 
-from aedev.base import DEF_MAIN_BRANCH, TEST_PROJECTS_REMOTE
+from aedev.base import DEF_MAIN_BRANCH, DEF_PROJECT_PARENT_FOLDER, TEST_PROJECTS_REMOTE, VERSION_PREFIX, VERSION_QUOTE
 from aedev.commands import in_prj_dir_venv, run_git_traced
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_NULL_VERSION, ProjectDevVars, increment_version)
@@ -47,7 +46,7 @@ load_env_var_defaults(".", tst_ext_env)  # use local machine pjm project user to
 tst_ctb_name = tst_ext_env.get('TEST_CONTRIBUTOR_NAME')
 tst_ctb_token = tst_ext_env.get('TEST_CONTRIBUTOR_TOKEN')
 # tst_ctb_email = tst_ext_env.get('TEST_CONTRIBUTOR_EMAIL')
-# tst_ctb_root_url = f"https{URI_SVC_SEP}oauth2:{tst_ctb_token}@{TEST_PROJECTS_REMOTE}/{tst_ctb_name}"
+# tst_ctb_root_url = f"https://oauth2:{tst_ctb_token}@{TEST_PROJECTS_REMOTE}/{tst_ctb_name}"
 
 tst_mtn_name = tst_ext_env.get(ENV_VAR_NAME_PREFIX + 'AUTHOR')
 tst_mtn_token = tst_ext_env.get('AE_OPTIONS_REPO_TOKEN_AT_GITLAB_COM') if tst_mtn_name != tst_ctb_name else ""
@@ -68,6 +67,11 @@ def app_pjm(restore_app_env):
 
 @pytest.fixture(params=debug_levels, ids=[f"debug_level=={_}" for _ in debug_levels])
 def app_pjm_debug(request, app_pjm):
+    """
+    :param request:             unit test request.
+    :param app_pjm:             console/main app instance.
+    :return:                    app instance prepared parametrized for each debug level (DISABLED, DEBUG, VERBOSE).
+    """
     print(f"\n>>> app_pjm_debug called with param={request.param}")
     app_pjm.parse_arguments = lambda *_args: None
     app_pjm.set_option('debug_level', request.param, save_to_config=False)
@@ -128,6 +132,7 @@ def mocked_app_options():
 
 @contextlib.contextmanager
 def init_parent():
+    """ provide temporary project parent directory """
     with tempfile.TemporaryDirectory() as temp_path:
         path = os_path_join(temp_path, DEF_PROJECT_PARENT_FOLDER)
         os.makedirs(path)
@@ -144,6 +149,7 @@ def pdv_with_email(**pdv_kwargs) -> ProjectDevVars:
 
 @pytest.fixture
 def temp_parent_path():
+    """ project parent path fixture """
     with init_parent() as path:
         yield path
 
@@ -188,15 +194,20 @@ def empty_repo_path():
 
 
 def ensure_tst_ns_portion_version_file(project_path: str) -> str:
+    """ check if version file exists and create it if not
+
+    :param project_path:        project root path.
+    :return:                    path to version file or empty string on error.
+    """
     project_name = os_path_basename(project_path)
     if project_name.startswith(tst_ns_name + "_"):
         portion_suffix = project_name.rsplit('_', maxsplit=1)[-1]
-        version_file_sub_path = os_path_join(tst_ns_name, tst_ns_por_pfx + portion_suffix + PY_EXT)
+        version_file_sub_path = os_path_join(tst_ns_name, tst_ns_por_pfx + portion_suffix + '.py')
         version_file_path = os_path_join(project_path, version_file_sub_path)
         if not os_path_isfile(version_file_path):
             write_file(version_file_path,
                        f"\"\"\" {tst_ns_name} namespace {portion_suffix} tst portion \"\"\"{os.linesep}{os.linesep}"
-                       f"__version__ = '{tst_pkg_version}'{os.linesep}",
+                       f"{VERSION_PREFIX}{tst_pkg_version}{VERSION_QUOTE}{os.linesep}",
                        make_dirs=True)
         return version_file_sub_path
     return ""
@@ -207,7 +218,7 @@ def gitlab_remote():
     """ provide a connected Gitlab remote repository api """
     assert tst_mtn_token, f"missing/empty GitLab maintainer user account token in module variable {tst_mtn_token=}"
     remote_project = GitlabCom()
-    remote_project.connect(pdv_with_email(**{'REPO_HOST_PROTOCOL': "https" + URI_SVC_SEP,
+    remote_project.connect(pdv_with_email(**{'REPO_HOST_PROTOCOL': "https://",
                                              'repo_domain': TEST_PROJECTS_REMOTE,
                                              'repo_token': tst_mtn_token}))
 
@@ -223,6 +234,7 @@ def module_repo_path():
 
 
 def remote_connect(pdv: ProjectDevVars, action: str) -> GithubCom | GitlabCom:
+    """ create connected git repo host api test instance """
     host_api: GithubCom | GitlabCom = globals()[REGISTERED_HOSTS_CLASS_NAMES[TEST_PROJECTS_REMOTE]]()
     pdv['host_api'] = host_api  # pdv['host_api'] is needed by _check_action()
     assert host_api.connect(pdv), f" **** could not connect to remote host {TEST_PROJECTS_REMOTE} to {action} tst repo"
@@ -234,9 +246,9 @@ def root_repo_path():
     """ minimal/empty test namespace root project. """
     with _init_repo(tst_root_prj_name) as project_path:
         with in_prj_dir_venv(project_path):
-            write_file(os_path_join(tst_ns_name, tst_ns_name, PY_INIT),
-                       f"\"\"\" {tst_ns_name} namespace root docstr \"\"\"{os.linesep}{os.linesep}"
-                       f"__version__ = '333.69.96'{os.linesep}",
+            write_file(os_path_join(tst_ns_name, tst_ns_name, '__init__' + '.py'),
+                       f"\"\"\" {tst_ns_name} namespace root docstring \"\"\"{os.linesep}{os.linesep}"
+                       f"{VERSION_PREFIX}333.69.96{VERSION_QUOTE}{os.linesep}",
                        make_dirs=True)
         yield project_path
 

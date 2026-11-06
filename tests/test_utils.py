@@ -9,16 +9,13 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from ae.base import (
-    DEF_PROJECT_PARENT_FOLDER, DOCS_FOLDER, PY_EXT, PY_INIT, TEMPLATES_FOLDER, TESTS_FOLDER, URI_SVC_SEP,
     extend_file, in_wd, norm_name, norm_path, now_str,
     os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_splitext,
     read_file, write_file)
-from ae.system import APP_BUILD_CFG_FILENAME
-from ae.shell import STDERR_BEG_MARKER, STDERR_END_MARKER
 from ae.managed_files import REFRESHABLE_TEMPLATE_MARKER
 from aedev.base import (
-    APP_PRJ, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, DJANGO_PRJ, MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD,
-    PROJECT_VERSION_SEP, ROOT_PRJ)
+    APP_PRJ, COMMIT_MSG_FILE_NAME, DEF_MAIN_BRANCH, DEF_PROJECT_PARENT_FOLDER, DJANGO_PRJ, DOCS_FOLDER,
+    MODULE_PRJ, NO_PRJ, PARENT_PRJ, PIP_CMD, PROJECT_VERSION_SEP, ROOT_PRJ, TEMPLATES_FOLDER, TESTS_FOLDER)
 from aedev.commands import GIT_REMOTE_ORIGIN, GIT_REMOTE_UPSTREAM, git_add, git_checkout, git_commit, git_current_branch
 from aedev.project_vars import (
     ENV_VAR_NAME_PREFIX, PDV_REPO_GROUP_SUFFIX, PDV_REPO_HOST_PROTOCOL, PDV_REQ_FILE_NAME,
@@ -50,7 +47,7 @@ PRJ_ROOT_PATH = f"/{PRJ_NAME}"
 PRJ_VERSION = "1.2.3"
 PRJ_VERSION_V2 = "2.0.0"
 
-EDITABLE_LINE = f"-e git+https{URI_SVC_SEP}github.com/org/{PRJ_NAME}.git@abc123#egg={PRJ_NAME}"
+EDITABLE_LINE = f"-e git+https://github.com/org/{PRJ_NAME}.git@abc123#egg={PRJ_NAME}"
 FROZEN_FILE_PATH = f"{PRJ_ROOT_PATH}/requirements.frozen.txt"
 
 REQ_FILE_PACKAGES = ["any_package==3.2.1", "other_pkg==6.9", "addPkg==2024.1.0"]
@@ -470,9 +467,9 @@ class TestUpdateFrozenReqFile:
         """ patch run_logged_cmd to produce output that contains STDERR markers and at least one error message. """
         def _side_effect(*_args, output_lines, **_kwargs):
             output_lines.extend([REQ_FILE_PACKAGES[0],
-                                 STDERR_BEG_MARKER,
+                                 'vvv   STDERR   vvv',
                                  TestUpdateFrozenReqFile.PIP_WARNING,
-                                 STDERR_END_MARKER])
+                                 '^^^   STDERR   ^^^'])
 
         with patch('aedev.project_manager.utils.run_logged_cmd', side_effect=_side_effect) as mock:
             yield mock
@@ -482,8 +479,8 @@ class TestUpdateFrozenReqFile:
         """ patch run_logged_cmd() to produce output with no error messages between the markers. """
         lines = [
             REQ_FILE_PACKAGES[0],
-            STDERR_BEG_MARKER,
-            STDERR_END_MARKER,
+            'vvv   STDERR   vvv',
+            '^^^   STDERR   ^^^',
         ]
 
         with patch('aedev.project_manager.utils.run_logged_cmd',
@@ -549,7 +546,7 @@ class TestUpdateFrozenReqFile:
 
         with (patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=True),
-              patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
+              patch("aedev.project_manager.utils.os_path_join", return_value=os_path_join("..", PRJ_NAME))):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
@@ -565,7 +562,7 @@ class TestUpdateFrozenReqFile:
 
         with (patch("aedev.project_manager.utils.run_logged_cmd", side_effect=_side_effect),
               patch("aedev.project_manager.utils.os_path_isdir", return_value=False),
-              patch("aedev.project_manager.utils.os_path_join", return_value=os.path.join("..", PRJ_NAME))):
+              patch("aedev.project_manager.utils.os_path_join", return_value=os_path_join("..", PRJ_NAME))):
             errors = update_frozen_req_file("aedev-project-manager", REQ_FILE_PATH, all_packages=False)
 
         assert errors == []
@@ -616,26 +613,21 @@ class TestUpdateFrozenReqFile:
 
     def test_stderr_errors_present_returns_error_list_without_writing_file(
             self, mock_frozen_path_valid, mock_sh_exit_with_stderr_errors, mock_write_file):
-        with (patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER),
-              patch("aedev.project_manager.utils.STDERR_BEG_MARKER", STDERR_BEG_MARKER)):
-            errors = update_frozen_req_file("", REQ_FILE_PATH)
+        errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == [TestUpdateFrozenReqFile.PIP_WARNING]
         mock_write_file.assert_not_called()
 
     def test_stderr_markers_present_no_error_messages_continues_normally(
             self, mock_frozen_path_valid, mock_sh_exit_with_stderr_no_error_messages, mock_read_file, mock_write_file):
-        with (patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER),
-              patch("aedev.project_manager.utils.STDERR_BEG_MARKER", STDERR_BEG_MARKER)):
-            errors = update_frozen_req_file("", REQ_FILE_PATH)
+        errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
         mock_write_file.assert_called_once()
 
     def test_stderr_no_markers_in_output_no_errors_returned(
             self, mock_frozen_path_valid, mock_run_cmd_no_errors, mock_read_file, mock_write_file):
-        with patch("aedev.project_manager.utils.STDERR_END_MARKER", STDERR_END_MARKER):
-            errors = update_frozen_req_file("", REQ_FILE_PATH)
+        errors = update_frozen_req_file("", REQ_FILE_PATH)
 
         assert errors == []
 
@@ -722,11 +714,11 @@ class TestOtherHelpers:
         assert isinstance(code_file_imports(""), str)
         assert isinstance(code_file_imports("Not:Existing:File"), str)
 
-        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest.py"))
+        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest" + '.py'))
         assert isinstance(imp_names, set)
         assert 'pytest' in imp_names
 
-        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest.py"), 'pytest', 'ae')
+        imp_names = code_file_imports(os_path_join(TESTS_FOLDER, "conftest" + '.py'), 'pytest', 'ae')
         assert isinstance(imp_names, set)
         assert 'pytest' not in imp_names
 
@@ -1106,7 +1098,7 @@ class TestOtherHelpers:
 
     def test_import_dependencies(self, app_pjm_debug, capsys, empty_repo_path):
         dbg = app_pjm_debug.debug
-        write_file(os_path_join(empty_repo_path, "code" + PY_EXT), "import imp.pkg\nfrom fake.sub import fake_x\n")
+        write_file(os_path_join(empty_repo_path, "code" + '.py'), "import imp.pkg\nfrom fake.sub import fake_x\n")
         with patch('aedev.project_manager.utils.venv_module_var_val', return_value=['dj.app'] if dbg else []):
             imp = import_dependencies(app_pjm_debug, empty_repo_path, DJANGO_PRJ, 'dj_tst_prj', exclude_prefixes=())
 
@@ -1117,7 +1109,7 @@ class TestOtherHelpers:
     def test_imported_modules(self):
         assert isinstance(imported_modules("Invalid:NotExisting:CodeFile"), str)
 
-        imp_mods = imported_modules(os_path_join(TESTS_FOLDER, "conftest.py"))
+        imp_mods = imported_modules(os_path_join(TESTS_FOLDER, "conftest" + '.py'))
         assert isinstance(imp_mods, set)
         assert 'pytest' in imp_mods
 
@@ -1150,12 +1142,12 @@ class TestOtherHelpers:
         assert ignored == {'fake_pkg'}
 
     def test_package_code_files(self):
-        assert "setup.py" in package_code_files("")
-        assert "setup.py" in package_code_files(".")
+        assert "setup" + '.py' in package_code_files("")
+        assert "setup" + '.py' in package_code_files(".")
 
-        assert os_path_join("aedev", "project_manager", PY_INIT) in package_code_files(".")
+        assert os_path_join('aedev', "project_manager", '__init__' + '.py') in package_code_files(".")
 
-        assert os_path_join(TESTS_FOLDER, "conftest.py") not in package_code_files(".", (TESTS_FOLDER + "/", ))
+        assert os_path_join(TESTS_FOLDER, "conftest" + '.py') not in package_code_files(".", (TESTS_FOLDER + "/", ))
 
     def test_ppp(self):
         assert ppp("") == ""
@@ -1219,11 +1211,11 @@ class TestOtherHelpers:
 
         assert os_path_isdir(os_path_join(project_path, DOCS_FOLDER))
         assert os_path_isdir(os_path_join(project_path, TESTS_FOLDER))
-        assert os_path_isfile(os_path_join(project_path, 'main' + PY_EXT))
-        assert os_path_isfile(os_path_join(project_path, APP_BUILD_CFG_FILENAME))
+        assert os_path_isfile(os_path_join(project_path, 'main' + '.py'))
+        assert os_path_isfile(os_path_join(project_path, 'buildozer.spec'))
 
-        assert not os.path.exists(app_name)  # check that cwd/project_path of this project did not get affected
-        assert not os.path.exists(APP_BUILD_CFG_FILENAME)
+        assert not os_path_isdir(app_name)  # check that cwd/project_path of this project did not get affected
+        assert not os_path_isfile('buildozer.spec')
 
     def test_update_frozen_req_files_frozen_dev_req(self, empty_repo_path, recwarn):
         pdv = ProjectDevVars(project_path=empty_repo_path)

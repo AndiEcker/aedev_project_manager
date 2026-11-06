@@ -79,21 +79,19 @@ from PIL import Image
 
 
 from ae.base import (                                                       # type: ignore # pylint: disable=reimported
-    PY_INIT, UNSET, URI_SVC_SEP, UnsetType,
+    UNSET, UnsetType,
     camel_to_snake, duplicates, norm_name, norm_path, now_str, on_ci_host,
-    os_path_basename, os_path_dirname, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath, os_path_splitext,
-    pep8_format, read_bin_file, read_file, url_failure, write_file)
+    os_path_basename, os_path_dirname, os_path_getmtime, os_path_isdir, os_path_isfile, os_path_join, os_path_relpath,
+    os_path_splitext, pep8_format, read_bin_file, read_file, url_failure, write_file)
 from ae.system import full_stack_trace, module_attr, os_env_venv, stack_var                             # type: ignore
 from ae.paths import (                                                                                  # type: ignore
-    FilesRegister,
-    copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files)
+    copy_file, move_file, paths_match, relative_file_paths, skip_py_cache_files,
+    FilesRegister)
 from ae.dynamicod import try_call, try_eval                                                             # type: ignore
 from ae.literal import Literal                                                                          # type: ignore
-from ae.updater import MOVES_SRC_FOLDER_NAME, UPDATER_ARGS_SEP, UPDATER_ARG_OS_PLATFORM                 # type: ignore
 from ae.core import DEBUG_LEVEL_DISABLED, temp_context_cleanup                                          # type: ignore
 from ae.console import ConsoleApp                                                                       # type: ignore
-from ae.shell import (                                                                                  # type: ignore
-    STDERR_BEG_MARKER, debug_or_verbose, hint, in_os_env, mask_token, run_cmd, run_logged_cmd)
+from ae.shell import debug_or_verbose, hint, in_os_env, mask_token, run_cmd, run_logged_cmd             # type: ignore
 from ae.managed_files import deploy_template, TemplateMngr                                              # type: ignore
 from ae.pythonanywhere import PythonanywhereApi                                                         # type: ignore
 from aedev.base import (                                                                                # type: ignore
@@ -197,8 +195,8 @@ def _act_name(act_name: str, project_type: UnsetType | str, act_args: list[str])
     """ check and possibly correct act_name and act_args.
 
     :param act_name:            initial action name.
-    :param project_type:        project type to check only actions available for that project type
-                                or pass UNSET to check in all registered/implemented actions (in help mode).
+    :param project_type:        project type to check only actions available for that project type or pass
+                                :data:`~ae.base.UNSET` to check in all registered/implemented actions (in help mode).
     :param act_args:            initial action arguments (will get changed if act_name gets extended/corrected).
     :return:                    final action name or empty string on invalid/unregistered action name.
     """
@@ -283,8 +281,9 @@ def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:
 
 def _check_children_not_exist(parent_or_root_pdv: ProjectDevVars, *project_versions: str):
     prj_path = parent_or_root_pdv['project_path']
-    parent_path: str = prj_path if parent_or_root_pdv['project_type'] == PARENT_PRJ else os_path_dirname(prj_path)
+    parent_path = prj_path if parent_or_root_pdv['project_type'] == PARENT_PRJ else os_path_dirname(prj_path)
     for pkg_and_ver in project_versions:
+        # noinspection bad-argument-type
         project_path = os_path_join(parent_path, pkg_and_ver.split(PROJECT_VERSION_SEP)[0])
         cae.chk(12, not os_path_isdir(project_path), f"project path {project_path} does already exist")
 
@@ -395,8 +394,8 @@ def _check_code_pylint(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 
         matcher = re.search(r"Your code has been rated at ([-\d.]*)", os.linesep.join(out))
         cae.chk(62, bool(matcher), f"pylint and score search failed in string:{ppp(out)}")
-        if STDERR_BEG_MARKER in out:
-            out = out[:out.index(STDERR_BEG_MARKER)]
+        if 'vvv   STDERR   vvv' in out:
+            out = out[:out.index('vvv   STDERR   vvv')]
         write_file(os_path_join(".pylint", "pylint.log"), os.linesep.join(out))
         score = matcher.group(1) if matcher else "<undetermined>"
 
@@ -432,19 +431,19 @@ def _check_code_pytest(pdv: ProjectDevVars, path_args: tuple[str, ...]):
 
         try:
             totals = json.loads(read_file(".pytest_cache/coverage.json"))['totals']
-            perc = totals['percent_covered_display']
-            msg = f"{perc}%" + (f" - lines covered={totals['covered_lines']}/excluded={totals['excluded_lines']}"
-                                if debug_or_verbose(cae) else "")
+            per = totals['percent_covered_display']
+            msg = f"{per}%" + (f" - lines covered={totals['covered_lines']}/excluded={totals['excluded_lines']}"
+                               if debug_or_verbose(cae) else "")
         except (FileNotFoundError, KeyError, ValueError, Exception) as ex:      # pylint: disable=broad-exception-caught
-            perc = "?"
+            per = "?"
             msg = f"undetermined {ex=}"
-        badge = Badge("coverage", perc, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
+        badge = Badge("coverage", per, value_suffix="%", thresholds={60: 'orange', 100: 'green'}, default_color='red')
         badge.write_badge(".pytest_cache/coverage.svg", overwrite=True)
         # alternative to Badge: use img.shields.io to generate badge/SVG via (from urllib.request import urlopen):
         # cov_badge_url = f"https://img.shields.io/badge/coverage-{cov_percentage}%25-{cov_badge_color}"
         # write_bin_file(".pytest_cache/coverage.svg", urlopen(cov_badge_url).read())
 
-    cae.po(f"  === pytest coverage {msg} - see report in file{URI_SVC_SEP}/{project_path}/htmlcov/index.html")
+    cae.po(f"  === pytest coverage {msg} - see report in file:///{project_path}/htmlcov/index.html")
 
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -486,7 +485,7 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
     cae.chk(22, bool(venv), "no valid Python VENV configured/set in the OS environment variables")
     cae.dpo(f"  --- using Python {venv=}")
 
-    if verbose:
+    if cae.debug:
         installed: list[str] = []   # prevent merge pip warnings
         with in_prj_dir_venv(project_path=project_path):
             run_logged_cmd(22, PIP_CMD, "list", "--format=json", output_lines=installed, stderr=_err_redirect_arg())
@@ -519,12 +518,12 @@ def _check_or_install_outdated_reqs(pdv: ProjectDevVars, check_only: bool):
         ins = [_nam + PROJECT_VERSION_SEP + str(_val["version"]) for _nam, _val in hot_in.items()]
         cae.po(f"  --- {act} {len(hot_in)} {msg}:{ppp(sorted(ins))}")
 
-    cae.po(f"  === {act} {len(cool_in) + len(hot_in)} outdated projects in {venv=} for {pdv['project_title']}")
+    cae.po(f"  === requirements checks {act} {len(cool_in) + len(hot_in)} projects in {pdv['project_title']} / {venv=}")
 
 
 def _check_resources_img(pdv: ProjectDevVars) -> list[str]:
     """ check images, message texts and sounds of the specified project. """
-    local_images = FilesRegister(os_path_join(pdv['project_path'], "img", "**"))
+    local_images = FilesRegister(os_path_join(pdv['project_path'], 'img', "**"))
     for name, files in local_images.items():
         dup_files = duplicates(norm_path(str(file)) for file in files)
         cae.chk(69, not dup_files, f"duplicate image file paths for '{name}': {dup_files}")
@@ -545,7 +544,7 @@ def _check_resources_img(pdv: ProjectDevVars) -> list[str]:
             except Exception as ex:                                 # pylint: disable=broad-exception-caught
                 cae.chk(69, False, f"Pillow/PIL detected corrupt image {file_name=} {ex=}")
 
-    if debug_or_verbose(cae):
+    if local_images and debug_or_verbose(cae):
         cae.po(f"    = passed checks of {len(local_images)} image resources ({len(file_names)} files: {file_names})")
 
     return list(local_images.values())
@@ -583,8 +582,8 @@ def _check_resources_i18n_po(file_name: str, content: str):
     mo_file_name = os_path_splitext(file_name)[0] + '.mo'
     cae.chk(69, os_path_isfile(mo_file_name), f"missing compiled message file {mo_file_name}")
     if not on_ci_host():    # skip this check on CI host because the unpacked/installed mo/po file dates are not correct
-        po_date = datetime.datetime.fromtimestamp(os.path.getmtime(file_name))
-        mo_date = datetime.datetime.fromtimestamp(os.path.getmtime(mo_file_name))
+        po_date = datetime.datetime.fromtimestamp(os_path_getmtime(file_name))
+        mo_date = datetime.datetime.fromtimestamp(os_path_getmtime(mo_file_name))
         cae.chk(69, native or po_date <= mo_date, f"{file_name} ({po_date}) not compiled into .mo ({mo_date})")
 
     id_marker = "msgid"
@@ -638,17 +637,17 @@ def _check_resources_i18n_texts(pdv: ProjectDevVars) -> list[str]:
         dup_files = duplicates(file_names)
         cae.chk(69, not dup_files, f"file paths duplicates of {stem_mask} translations: {dup_files}")
 
-        if debug_or_verbose(cae):
+        if regs and debug_or_verbose(cae):
             cae.po(f"    = passed checks of {len(regs)} {stem_mask} (with {len(file_names)} files: {file_names})")
 
         return list(regs.values())
 
-    return (_chk_files(_check_resources_i18n_ae, "loc", "**", "**Msg.txt") +
+    return (_chk_files(_check_resources_i18n_ae, 'loc', "**", "*" + 'Msg.txt') +
             _chk_files(_check_resources_i18n_po, "**", "locale", "**", "django.po"))
 
 
 def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:
-    local_sounds = FilesRegister(os_path_join(pdv['project_path'], "snd", "**"))
+    local_sounds = FilesRegister(os_path_join(pdv['project_path'], 'snd', "**"))
 
     for name, files in local_sounds.items():
         dup_files = duplicates(norm_path(str(file)) for file in files)
@@ -664,7 +663,7 @@ def _check_resources_snd(pdv: ProjectDevVars) -> list[str]:
         for file_name in (norm_path(str(file)) for file in files):
             cae.chk(69, bool(read_bin_file(file_name)), f"empty sound resource in {file_name}")
 
-    if debug_or_verbose(cae):
+    if local_sounds and debug_or_verbose(cae):
         cae.po(f"    = passed checks of {len(local_sounds)} sound resources ({len(file_names)} files: {file_names})")
 
     return list(local_sounds.values())
@@ -688,7 +687,7 @@ def _check_version(version_number: str, prefix_to_check: str = "") -> str:
         version_number = version_number[prefix_len:]
 
     if version_number.count('.') != 2:
-        cae.shutdown(76, error_message=f"{version_number=} doas not contain exactly two dot characters")
+        cae.shutdown(76, error_message=f"{version_number=} does not contain exactly two dot characters")
 
     try:
         Version(version_number)
@@ -770,7 +769,8 @@ def _init_act_args_check(ini_pdv: ProjectDevVars, act_spec: Any, act_name: str, 
 def _init_act_args_shortcut(project_type: UnsetType | str, shortcut: str) -> str:
     """ check if action shortcut exists for all project types or the specified one.
 
-    :param project_type:        specify type of the project to check action shortcut for or UNSET for all actions.
+    :param project_type:        specify type of the project to check action shortcut for
+                                or :data:`~ae.base.UNSET` for all actions.
     :param shortcut:            initial normalized action shortcut name.
     :return:                    normalized full action name or an empty string if the action is either
                                 not implemented or not registered for the specified project type.
@@ -823,9 +823,10 @@ def _init_act_exec_args(ini_pdv: ProjectDevVars) -> tuple[str, tuple, dict[str, 
         extra_msg += f" :: {children_desc(ini_pdv, children_pdv=act_args[arg_count:])}"
 
     pre_action = act_spec.get('pre_action')
-    if pre_action:
+    if pre_action is not None:
         if debug_or_verbose(cae):
             cae.po(f" ---- executing pre-action {pre_action.__name__}")
+        # noinspection calling-non-callable
         pre_action(ini_pdv, *act_args)
 
     if debug_or_verbose(cae):
@@ -864,6 +865,7 @@ def _init_children_pdv_args(ini_pdv: ProjectDevVars, act_args: ActionArgs) -> li
         chi_path_dirname = os_path_dirname(chi_path_dirname)
     chi_args = []
     for p_name in pkg_names:
+        # noinspection bad-argument-type
         chi_args.append(chi_vars[p_name] if p_name in chi_vars
                         else _get_pdv(project_path=os_path_join(chi_path_dirname, p_name)))
     return chi_args
@@ -1066,6 +1068,7 @@ def _renew_local_root_req_file(pdv: ProjectDevVars):
     root_imp_name = namespace_name + '.' + namespace_name
     root_pkg_name = norm_name(root_imp_name)
 
+    # noinspection bad-argument-type
     root_prj_path = os_path_join(os_path_dirname(pdv['project_path']), root_pkg_name)
     if not os_path_isdir(root_prj_path):
         cae.po(f"  ### {namespace_name} namespace root project not found locally in {root_prj_path}")
@@ -1076,7 +1079,7 @@ def _renew_local_root_req_file(pdv: ProjectDevVars):
     if os_path_isfile(root_req):
         req_content = read_file(root_req)
     else:
-        cae.dpo(f"    # {root_req} not found in {root_imp_name} namespace root project path: creating ...")
+        cae.dpo(f"    # {root_req} not found in {root_imp_name} namespace root project path: creating")
         req_content = ""
 
     sep = os.linesep
@@ -1133,7 +1136,7 @@ def _show_editable_and_outdated_and_not_required(pdv: ProjectDevVars):
                 cae.po(f"  --- found {max(0, len(found) - 2)} outdated cooled-down projects:")
                 _print_lines(found)
 
-        if debug_or_verbose(cae):
+        if cae.debug:
             output = []
             run_cmd(PIP_CMD, "list", "--not-required", output_lines=output, app_obj=cae)
             cae.po(f"  --- found {max(0, len(output) - 2)} not required projects:")
@@ -1281,7 +1284,7 @@ def _update_project(ini_pdv: ProjectDevVars, remote_names: Container[str] = (), 
 
     :param ini_pdv:             project dev vars.
     :param remote_names:        names of the existing remotes.
-    :param hard_reset:          pass True to reset the local repository, while deleting all local changes.
+    :param hard_reset:          pass `True` to reset the local repository, while deleting all local changes.
     :return:                    list of errors. some errors get ignored and only printed out (not returned).
     """
     remote_names = remote_names or ini_pdv.pdv_val('remote_urls')
@@ -1428,12 +1431,16 @@ class RemoteHost:               # pragma: no cover
         msg = f"updated local {main_branch} branch"
         if ini_pdv['pip_name']:  # create release*ver branch only for projects available in PyPi via pip
             release_branch = ini_pdv['GIT_RELEASE_REF_PREFIX'] + pkg_version
-            cae.chk(85, not git_ref_in_branch(project_path, release_branch, branch=remote_branch),
-                    f"release branch {release_branch} already exists in the {remote_branch=}")
-            cae.dpo(f"   -- creating branch '{release_branch}' for tag '{version_tag}' at {remote_branch=}")
-            prj_id = f"{get_host_group(ini_pdv, get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
-            self.create_branch(prj_id, release_branch, version_tag)
-            msg += f" and released {pkg_version} onto new protected release branch {release_branch}"
+            remote_release_ref = f"{ini_pdv['REMOTE_ORIGIN']}/{release_branch}"
+            ref_exists = git_ref_in_branch(project_path, remote_release_ref, branch=remote_branch)
+            cae.chk(85, not ref_exists, f"release branch {remote_release_ref} already exists in the {remote_branch=}")
+            if ref_exists:  # user forced to ignore chk
+                msg += f" (skipped creation of remote release branch {remote_release_ref}, because exists already)"
+            else:
+                cae.dpo(f"   -- creating branch '{remote_release_ref}' for tag '{version_tag}' at {remote_branch=}")
+                prj_id = f"{get_host_group(ini_pdv, get_host_domain(ini_pdv))}/{ini_pdv['project_name']}"
+                self.create_branch(prj_id, release_branch, version_tag)
+                msg += f" and released {pkg_version} onto new protected release branch {remote_release_ref}"
 
         return f" ==== {msg} of {ini_pdv['project_title']}"
 
@@ -1446,7 +1453,7 @@ class GithubCom(RemoteHost):    # pragma: no cover
         """ connect to gitHub.com remote host.
 
         :param ini_pdv:         project dev vars (only using the value of the 'repo_token' variable).
-        :return:                boolean True on successful authentication else False.
+        :return:                boolean `True` on successful authentication else `False`.
         """
         try:
             self.connection = Github(auth=Auth.Token(ini_pdv['repo_token']))
@@ -1560,7 +1567,7 @@ class GithubCom(RemoteHost):    # pragma: no cover
             # https://docs.github.com/de/repositories/configuring-branches-and-merges-in-your-repository/...
             # ...managing-protected-branches/managing-a-branch-protection-rule
             # example: https://github.com/txqueuelen/reposettings/blob/master/reposettings.py
-            # .. done with powerscript: https://medium.com/objectsharp/...
+            # .. done with Powerscript: https://medium.com/objectsharp/...
             # ...adding-branch-protection-to-your-repo-with-the-github-rest-api-and-powershell-67ee19425e40
             branch_obj = project_repo.get_branch(branch_mask)
             cae.vpo(f"    - protecting branch {branch_mask}")
@@ -1695,7 +1702,7 @@ class GitlabCom(RemoteHost):    # pragma: no cover
         """ connect to gitlab.com remote host.
 
         :param ini_pdv:         project dev vars (REPO_HOST_PROTOCOL, host_domain, host_token).
-        :return:                boolean True on successful authentication else False.
+        :return:                boolean `True` on successful authentication else `False`.
         """
         token = ini_pdv['repo_token']
         try:
@@ -2277,7 +2284,7 @@ def web_app_version(connection: PythonanywhereApi) -> str:          # pragma: no
     :return:                version string of the package deployed to the web host/server
                             or empty string if package version file or version-in-file not found.
     """
-    init_file_content = connection.deployed_file_content(os_path_join(connection.project_name, PY_INIT))
+    init_file_content = connection.deployed_file_content(os_path_join(connection.project_name, '__init__' + '.py'))
     return "" if init_file_content is None else code_version(init_file_content)
 
 
@@ -2290,7 +2297,7 @@ class PythonanywhereCom(RemoteHost):        # pragma: no cover
         """ connect to www. and eu.pythonanywhere.com web host.
 
         :param ini_pdv:         parent/root project dev vars.
-        :return:                boolean True on successful authentication else False.
+        :return:                boolean `True` on successful authentication else `False`.
         """
         self.connection = PythonanywhereApi(ini_pdv['web_domain'],
                                             ini_pdv['web_user'],
@@ -2509,7 +2516,7 @@ def add_children_file(ini_pdv: ProjectDevVars, file_name: str, rel_path: str, *c
     :param file_name:           source (template) file name (optional with a path).
     :param rel_path:            destination path relative to the project root.
     :param children_pdv:        project dev vars of the children to process.
-    :return:                    boolean True if the file got added to the parent/root and to all children, else False.
+    :return:                    boolean `True` if the file got added to the parent/root and all children, else `False`.
     """
     added = []
     is_root = ini_pdv['project_type'] == ROOT_PRJ
@@ -2534,7 +2541,7 @@ def add_file(ini_pdv: ProjectDevVars, file_name: str, rel_path: str = ".") -> bo
                                 processed (with the project dev vars as template vars).
     :param rel_path:            optional relative folder/dir path in the destination project working tree, defaults
                                 to the project root folder.
-    :return:                    boolean True if the file got added to the specified project, else False.
+    :return:                    boolean `True` if the file got added to the specified project, else `False`.
     """
     project_path = ini_pdv['project_path']
     file_name = os_path_join(project_path, file_name)
@@ -2574,13 +2581,13 @@ def build_gui_app(ini_pdv: ProjectDevVars, **build_flags):  # pylint: disable=to
             cae.po("  --- removing local .buildozer folder")
             shutil.rmtree('.buildozer', ignore_errors=True)
 
-        for old_apk in reversed(glob.glob(os_path_join(MOVES_SRC_FOLDER_NAME + "*", "*" + apk_ext))):
+        for old_apk in reversed(glob.glob(os_path_join('ae_updater_moves' + "*", "*" + apk_ext))):
             cae.po(f"   -- removing {old_apk=} from the previous build")
             os.remove(old_apk)
             apk_dir = os_path_dirname(old_apk)
             break
         else:
-            apk_dir = MOVES_SRC_FOLDER_NAME + UPDATER_ARGS_SEP + UPDATER_ARG_OS_PLATFORM + 'android'
+            apk_dir = 'ae_updater_moves' + '___' + 'OnOS__' + 'android'
 
         run_logged_cmd(120, "buildozer", *extra_args, output_lines=output, exit_on_err=False, stderr=subprocess.STDOUT)
 
@@ -2657,7 +2664,8 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
     _check_resources(ini_pdv)
 
     if (os_path_isfile(os_path_join(project_path, ini_pdv['TESTS_FOLDER'], ini_pdv['REQ_FILE_NAME'])) or
-            any(os.path.exists(os_path_join(project_path, file_or_dir)) for file_or_dir in path_args)):
+            any(os_path_isfile(_path := os_path_join(project_path, file_or_dir)) or os_path_isdir(_path)
+                for file_or_dir in path_args)):
         _check_code_flake8(ini_pdv, path_args)
         _check_code_mypy(ini_pdv, path_args)
         _check_code_pylint(ini_pdv, path_args)
@@ -2668,7 +2676,7 @@ def check_integrity(ini_pdv: ProjectDevVars, *path_args: str):
 
 @_action(*ANY_PRJ_TYPE, shortcut="managed")
 def check_managed_files(ini_pdv: ProjectDevVars):
-    """ check if all managed files (generated from templates) of a project are uptodate. """
+    """ check if all managed files (generated from templates) of a project are up-to-date. """
     with in_prj_dir_venv(ini_pdv['project_path']):
         check_templates(cae, ini_pdv)
     cae.po(f"  === checked managed files/templates for {ini_pdv['project_title']}")
@@ -2709,8 +2717,11 @@ def check_pytest(ini_pdv: ProjectDevVars, *path_args: str):
 def check_requirements(ini_pdv: ProjectDevVars):
     """ check project distribution/run-time requirements by parsing the source code. """
     project_path = ini_pdv['project_path']
-    import_deps = import_dependencies(cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'],
-                                      exclude_prefixes=(ini_pdv['DOCS_FOLDER'] + "/", ini_pdv['TESTS_FOLDER'] + "/"))
+    import_deps = import_dependencies(
+        cae, project_path, ini_pdv['project_type'], ini_pdv['import_name'], exclude_prefixes=(
+            ini_pdv['DOCS_FOLDER'] + "/",
+            ini_pdv['TESTS_FOLDER'] + "/",
+            os_path_join(os_path_relpath(ini_pdv['package_path'], project_path), ini_pdv['TEMPLATES_FOLDER']) + "/"))
     venv_packages = installed_packages(cae, project_path)
     project_reqs = [stripped_pip_name(_req) for _req in ini_pdv.pdv_val('install_requires')]
     cae.vpo(f"    ! install requires: {project_reqs}")
@@ -2720,16 +2731,13 @@ def check_requirements(ini_pdv: ProjectDevVars):
     cae.vpo(f"    ! ignoring imports: {ignoring_imports}")
     missing_reqs, uninstalled_packages, ignored_imports = missing_requirements(
         project_path, import_deps, venv_packages, project_reqs, ignoring_imports)
-    if missing_reqs:
-        cae.po(f"    # used/imported packages that are not required (missing in requirements.txt): {missing_reqs}")
-    if uninstalled_packages:
-        cae.po(f"    # used/imported packages that are missing in pip VENV: {uninstalled_packages}")
+    cae.chk(63, not missing_reqs, f"used/imported packages are missing in requirements.txt: {missing_reqs}")
+    cae.chk(63, not uninstalled_packages, f"used/imported packages are missing in pip VENV: {uninstalled_packages}")
     if ignored_imports and debug_or_verbose(cae):
         cae.po(f"    . ignored not required imports: {ignored_imports}")
 
     missed_imports, ignored_reqs = missing_imports(cae, import_deps, project_reqs, ini_pdv.pdv_val('IGNORE_EXTRA_REQS'))
-    if missed_imports:
-        cae.po(f"    # required projects/packages that are not imported: {missed_imports}")
+    cae.chk(63, not missed_imports, f"required projects/packages are not imported: {missed_imports}")
     if ignored_reqs and debug_or_verbose(cae):
         cae.po(f"    . ignored not imported requirements: {ignored_reqs}")
     cae.po(f"  === run code-check of required, imported and installed PyPI projects for {ini_pdv['project_title']}")
@@ -2760,11 +2768,11 @@ def clone_children(parent_or_root_pdv: ProjectDevVars, *owner_name_versions: str
     :param owner_name_versions: the projects/packages/portions to be cloned, identified by their repository owner
                                 user|group, the project/portion name and an optional version::
 
-                                    group-name/project_name1==v3.6.9 project_name2 ...
+                                    group-name/project_name1==v3.6.9 project_name2
 
                                 running in namespace root/sister project allows to only specify the portion names::
 
-                                    portion_name1 portion_name2 ...
+                                    portion_name1 portion_name2
 
                                 the user|group name is only obligatory when this action got started from a parent folder
                                 (else it defaults to owner of the namespace root|sister project).
@@ -2796,7 +2804,7 @@ def clone_project(ini_pdv: ProjectDevVars, owner_name_version: str) -> str:
     :param ini_pdv:             project vars, for path, owner and namespace defaults, either manually prepared for the
                                 project to clone or use the local parent or namespace root/sister project.
     :param owner_name_version:  name of the project to clone, optionally prefixed with the owner name (and a slash)
-                                and suffixed with (the :data:`PROJECT_VERSION_SEP` seperator and) a version number.
+                                and suffixed with (the :data:`PROJECT_VERSION_SEP` separator and) a version number.
     :return:                    project path of the cloned project or an empty string if an error occurred.
                                 needed/used by :func:`clone_children` and unit tests.
     """
@@ -2808,6 +2816,7 @@ def clone_project(ini_pdv: ProjectDevVars, owner_name_version: str) -> str:
     branch_or_version = ini_pdv['GIT_VERSION_TAG_PREFIX'] + project_version if project_version else req_branch
     repo_root = f"{ini_pdv['REPO_HOST_PROTOCOL']}{get_host_domain(ini_pdv)}/{project_owner}"
 
+    # noinspection bad-argument-type
     project_path = git_clone(repo_root, project_name, branch_or_tag=branch_or_version, parent_path=parent_path,
                              enable_log=bool(get_app_option(ini_pdv, 'git_log')))
 
@@ -2852,7 +2861,7 @@ def delete_children_file(ini_pdv: ProjectDevVars, file_name: str, *children_pdv:
     :param ini_pdv:             parent/root project dev vars.
     :param file_name:           file/folder name to delete (optional with a path, relative to the project root).
     :param children_pdv:        tuple of children project dev vars.
-    :return:                    boolean True if the file got found and deleted from the parent and all the children
+    :return:                    boolean `True` if the file got found and deleted from the parent and all the children
                                 projects, else False.
     """
     c_del = []
@@ -2874,7 +2883,7 @@ def delete_file(ini_pdv: ProjectDevVars, file_or_dir: str) -> bool:
 
     :param ini_pdv:             project dev vars.
     :param file_or_dir:         file/folder name to delete (optional with a path, relative to the project root).
-    :return:                    boolean True if the file got found and deleted from the specified project, else False.
+    :return:                    boolean `True` if the file got found and deleted from the project, else `False`.
     """
     file_or_dir = os_path_join(ini_pdv['project_path'], file_or_dir)   # prj path ignored if file_or_dir is abs
     is_dir = os_path_isdir(file_or_dir)
@@ -3022,8 +3031,8 @@ def rename_children_file(ini_pdv: ProjectDevVars, old_file_name: str, new_file_n
     :param old_file_name:       file/folder name to rename (optional with a path, relative to the project root).
     :param new_file_name:       new name of file/folder (optional with a path, relative to the project root).
     :param children_pdv:        project dev vars tuple of the children to process.
-    :return:                    boolean True if the file got renamed in the parent and all the children projects,
-                                else False.
+    :return:                    boolean `True` if the file got renamed in the parent and all the children projects,
+                                else `False`.
     """
     ren = []
     if ini_pdv['project_type'] == ROOT_PRJ and rename_file(ini_pdv, old_file_name, new_file_name):
@@ -3044,7 +3053,7 @@ def rename_file(ini_pdv: ProjectDevVars, old_file_name: str, new_file_name: str)
     :param ini_pdv:             project dev vars.
     :param old_file_name:       source file/folder (optional with a path, absolute or relative to the project root).
     :param new_file_name:       destination file/folder (optional path, absolute or relative to the project root).
-    :return:                    boolean True if the file/folder got renamed, else False.
+    :return:                    boolean `True` if the file/folder got renamed, else `False`.
     """
     old_file_name = os_path_join(ini_pdv['project_path'], old_file_name)   # prj path ignored if absolute
     new_file_name = os_path_join(ini_pdv['project_path'], new_file_name)
@@ -3163,7 +3172,7 @@ def show_children_versions(ini_pdv: ProjectDevVars, *children_pdv: ProjectDevVar
 
 @_action(*ANY_PRJ_TYPE, arg_names=(('expression-or-project-dev-var-name', ), ), shortcut='show')
 def show_expression_value(ini_pdv: ProjectDevVars, expr: str):
-    """ show the value of the specified expression/template-variable (like e.g. project_version, "os.getcwd()" ...). """
+    """ show the value of the specified expression/template-variable (like e.g. project_version, "os.getcwd()"). """
     tpl_vars = TemplateMngr([], {}, get_template_vars(ini_pdv)).context_vars
     try:
         exp_val = try_eval(expr, glo_vars=tpl_vars)
@@ -3259,8 +3268,9 @@ def update_mirror(ini_pdv: ProjectDevVars, mirror_remote: str):
         group_project = owner_project_from_url(mirror_url)
         usr_or_org, repo_name = group_project.split("/", maxsplit=1)
         mirror_api = GithubCom()
+        # noinspection invalid-cast
         cae.chk(74, mirror_api.connect(cast(ProjectDevVars, {'repo_token': token})),
-                "connection to mirror host/server (github.com) failed (check os env variable $GITHUB_TOKEN).")
+                "connection to mirror host (github.com) failed (check OS env variables *GITHUB_COM/GITHUB_TOKEN)")
         if not mirror_api.repo_obj(0, "", group_project):
             cae.chk(74, bool(group_obj := mirror_api.group_obj(usr_or_org)), f"invalid user/org name {usr_or_org}")
             if group_obj:
@@ -3353,7 +3363,7 @@ def init_main() -> ConsoleApp:
     cae.add_option('repo_group', "upstream user|group name at the repository hosting service", None, short_opt='g')
     cae.add_option('repo_token', "user credential access token of the git hosting service", None, short_opt='t')
     cae.add_option('repo_user', "user account name at the repository hosting service", None, short_opt='u')
-    cae.add_option('versionIncrementPart', "project version part to increment (0=disable, 1...3=mayor...patch)", 3,
+    cae.add_option('versionIncrementPart', "project version part to increment: 0=disable, 1=mayor, 2=minor, 3=patch", 3,
                    short_opt='i', choices=range(4))
     cae.add_option('web_domain', "web app deployment platform (default=pythonanywhere.com)", None, short_opt=UNSET)
     cae.add_option('web_token', "user credential token at the used app deployment platform", None, short_opt=UNSET)

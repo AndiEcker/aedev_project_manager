@@ -1,6 +1,6 @@
 
 ..
-    THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.105
+    THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.109
 
 contributing
 ============
@@ -30,6 +30,77 @@ requesting new features
 1. on the git repository host server create new issue, providing a clear and detailed explanation of the feature
    you want and why it's important to add.
 2. if you are able to implement the feature yourself (refer to the `contribution steps`_ section below).
+
+
+design pattern and software principles
+--------------------------------------
+
+* `DRY - don't repeat yourself <http://en.wikipedia.org/wiki/Don%27t_repeat_yourself>`__
+* `KIS - keep it simple <http://en.wikipedia.org/wiki/Keep_it_simple_stupid>`__
+* open-source development
+* comprehensive type annotations (:pep:`526`)
+* complete documentation
+* 100% test coverage
+* thread safety
+
+
+code formatting
+^^^^^^^^^^^^^^^
+
+* use four spaces per indentation level.
+* enclose URL and file path string literals in double quotes (``"..."``).
+* enclose other string constants in single quotes (``'...'``) to make them
+  easier to identify and locate.
+* make numeric constants easy to identify and locate by assigning them to
+  descriptive names or using a base prefix (``0x``, ``0o``, or ``0b``) or
+  underscore separators (for example, ``1_2_3``), as appropriate.
+
+
+Sphinx section heading hierarchy
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+use the following heading styles consistently throughout the documentation,
+listed from the highest to the lowest level:
+
+* ``#`` with an overline and underline for parts
+* ``*`` with an overline and underline for chapters
+* ``=`` as an underline for sections
+* ``-`` as an underline for subsections
+* ``^`` as an underline for subsubsections
+* ``_`` as an underline for paragraph-level headings
+
+this project uses underscores instead of double quotation marks for
+paragraph-level headings to avoid conflicts with triple-double-quoted
+Python docstrings.
+
+for further guidance, see the
+`Python documentation markup guide <https://devguide.python.org/documentation/markup/#sections>`__
+and the Sphinx
+`section heading documentation <https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html#sections>`__.
+
+for additional configuration options, see the Sphinx
+`configuration reference <https://www.sphinx-doc.org/en/master/usage/configuration.html>`__.
+
+
+Read The Docs build configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Open the project's administration dashboard on Read The Docs:
+
+https://readthedocs.org/dashboard/aedev_project_manager/advanced
+
+configure the following settings where available:
+
+* Settings / Programming language: ``Python``
+* Advanced Settings / Global settings / Default branch: ``develop``
+* Advanced Settings / Default settings / Requirements file: ``docs/requirements.txt``
+* Advanced Settings / Default settings / Install project: ``enabled``
+* Advanced Settings / Default settings / Use system packages: ``enabled``
+
+.. note::
+
+   use ``.readthedocs.yaml`` to explicitly configure the build environment, including the Python version and the
+   installation of documentation dependencies such as Sphinx.
 
 
 contribution steps
