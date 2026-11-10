@@ -201,7 +201,7 @@ def _itg_download_test_project(itg_test_prj: ItgTstPrj, purpose: str = "") -> tu
 def _itg_pdv(project_name: str, branch: str = '', user_role: str = '') -> ProjectDevVars:
     role = user_role or itg_tst_projects[project_name].role
 
-    pdv_kwargs: dict[str, Any] = {'main_app_options': {'delay': 0.03, 'git_log': True, 'versionIncrementPart': 3},
+    pdv_kwargs: dict[str, Any] = {'main_app_options': {'delay': 0.03, 'git_log': True, 'versionIncrementPart': 0o3},
                                   'project_path': itg_tst_projects[project_name].path,
                                   'project_type': itg_tst_projects[project_name].type,
                                   'AUTHOR': tst_mtn_name if role == 'mtn' else tst_ctb_name,
@@ -395,7 +395,7 @@ class TestEnvPreparation:
                 print(f"    # ignoring {_uncommitted=} mismatch in extended namespace root itg test project")
             pdv = pdv_with_email(main_app_options={'branch': "pjm_itg_tst_portion_added_to_namespace_" + now_str(),
                                                    'delay': 3,  # needed by request_merge()/get_app_option()
-                                                   'versionIncrementPart': 3},  # .. by push/get_app_option()
+                                                   'versionIncrementPart': 0o3},  # .. by push/get_app_option()
                                  project_path=ITG_ROOT_PRJ_PATH, repo_token=tst_mtn_token)
             pdv = _renew_project(pdv, ROOT_PRJ)
         else:

@@ -1006,7 +1006,7 @@ class TestActions:
 
     def test_new_namespace_root(self, app_pjm, temp_parent_path):
         project_path = os_path_join(temp_parent_path, tst_root_prj_name)
-        pdv = pdv_with_email(main_app_options={'versionIncrementPart': 3},
+        pdv = pdv_with_email(main_app_options={'versionIncrementPart': 0o3},
                              namespace_name=tst_ns_name, project_path=project_path)
 
         new_pdv = new_namespace_root(pdv)
@@ -1223,14 +1223,14 @@ class TestActions:
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
         assert code_file_version(version_file_path) == tst_pkg_version
 
-        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 3}, project_path=module_repo_path))
+        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 0o3}, project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == tst_pkg_version   # not incrementing because no remote repo
 
     def test_renew_project_version_disabled_version_inc(self, app_pjm, mocked_app_options, module_repo_path):
         version_file_path = project_main_file(tst_imp_pfx + 'module', project_path=module_repo_path)
 
-        mocked_app_options['versionIncrementPart'] = 0
+        mocked_app_options['versionIncrementPart'] = 0o0
 
         renew_project(pdv_with_email(project_path=module_repo_path))
 
@@ -1238,7 +1238,7 @@ class TestActions:
 
         mocked_app_options.pop('versionIncrementPart')
 
-        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 0}, project_path=module_repo_path))
+        renew_project(pdv_with_email(main_app_options={'versionIncrementPart': 0o0}, project_path=module_repo_path))
 
         assert code_file_version(version_file_path) == PDV_NULL_VERSION     # disabled via main_app_options
 

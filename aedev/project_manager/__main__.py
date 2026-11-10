@@ -260,15 +260,13 @@ def _check_action(pdv: ProjectDevVars, *acceptable_actions: Callable):
 
 
 def _check_and_add_version_tag(pdv: ProjectDevVars) -> str:
-    # noinspection PyUnnecessaryCast
-    increment_part = cast(int, get_app_option(pdv, 'versionIncrementPart'))
     project_path = pdv['project_path']
     local_ver = pdv['project_version']
     cae.chk(75, bool(try_call(Version, local_ver, ignored_exceptions=(InvalidVersion, ))),
             f"local project version '{local_ver}' has invalid format not conform to PEP 440")
 
     if git_tag_list(project_path, tag_pattern=pdv['GIT_VERSION_TAG_PREFIX'] + "*"):  # not the 1st/init. project version
-        next_version = latest_remote_version(pdv, increment_part=increment_part)
+        next_version = latest_remote_version(pdv, increment_part=get_app_option(pdv, 'versionIncrementPart') or 0o0)
         version_match = _check_version(next_version) == _check_version(local_ver)
         cae.chk(77, version_match, f"version mismatch: local={local_ver} next-remote={next_version}")
 
@@ -1002,63 +1000,62 @@ def _refresh_project(pdv: ProjectDevVars) -> list[str]:
     return list(dst_files)
 
 
-def _renew_project(ini_pdv: ProjectDevVars, project_type: str) -> ProjectDevVars:
-    project_path = ini_pdv['project_path']
+def _renew_project(pdv: ProjectDevVars, project_type: str) -> ProjectDevVars:
+    project_path = pdv['project_path']
 
     if not os_path_isdir(project_path):
         os.makedirs(project_path)
         cae.po(f"    - created project root folder {project_path}")
 
-    remote_urls = ini_pdv.pdv_val('remote_urls')
+    remote_urls = pdv.pdv_val('remote_urls')
 
-    if project_type != ini_pdv['project_type']:
-        cae.vpo(f"    # overwriting default project type '{ini_pdv['project_type']} with the requested {project_type=}")
-        _refresh_pdv(ini_pdv, project_type=project_type, remote_urls=remote_urls)
+    if project_type != pdv['project_type']:
+        cae.vpo(f"    # overwriting default project type '{pdv['project_type']} with the requested {project_type=}")
+        _refresh_pdv(pdv, project_type=project_type, remote_urls=remote_urls)
 
     new_repo = git_init_if_needed(project_path)
     action = "created new" if new_repo else "renewed"
 
-    renew_branch = get_app_option(ini_pdv, 'branch')
-    main_branch = ini_pdv['MAIN_BRANCH']
+    renew_branch = get_app_option(pdv, 'branch')
+    main_branch = pdv['MAIN_BRANCH']
     if renew_branch or git_current_branch(project_path) == main_branch:
         if not renew_branch or renew_branch == main_branch:
-            renew_branch = f"{norm_name(action)}_{project_type}_{ini_pdv['project_name']}_{now_str()}"
+            renew_branch = f"{norm_name(action)}_{project_type}_{pdv['project_name']}_{now_str()}"
         co_args = ("--merge", "--track") \
-            if f"remotes/{ini_pdv['REMOTE_ORIGIN']}/{renew_branch}" in git_branches(project_path) else ()
-        git_checkout(project_path, *co_args, new_branch=renew_branch, force=_act_force_opt(ini_pdv),
+            if f"remotes/{pdv['REMOTE_ORIGIN']}/{renew_branch}" in git_branches(project_path) else ()
+        git_checkout(project_path, *co_args, new_branch=renew_branch, force=_act_force_opt(pdv),
                      remote_names=remote_urls)
 
     if not new_repo:
-        errors = _update_project(ini_pdv, remote_names=remote_urls)
+        errors = _update_project(pdv, remote_names=remote_urls)
         cae.chk(15, not bool(errors), f"update errors in {project_path=}:{ppp(errors)}")
 
-    renew_project_dir(ini_pdv)
-    _refresh_pdv(ini_pdv, remote_urls=remote_urls)
+    renew_project_dir(pdv)
+    _refresh_pdv(pdv, remote_urls=remote_urls)
 
-    inc_part = get_app_option(ini_pdv, 'versionIncrementPart') or 0
-    project_version = latest_remote_version(ini_pdv, increment_part=inc_part)
-    errors = replace_file_version(ini_pdv['version_file'], version=project_version, increment_part=0)
+    project_version = latest_remote_version(pdv, increment_part=get_app_option(pdv, 'versionIncrementPart') or 0o0)
+    errors = replace_file_version(pdv['version_file'], version=project_version, increment_part=0o0)
     cae.chk(15, not bool(errors), errors)
     # refresh ini_pdv (project_version and related project dev variables like project_title)
-    _refresh_pdv(ini_pdv, remote_urls=remote_urls)
+    _refresh_pdv(pdv, remote_urls=remote_urls)
 
-    dst_files = _refresh_project(ini_pdv)
+    dst_files = _refresh_project(pdv)
     if dst_files:
         _msg = (": " + " ".join(os_path_relpath(_, project_path) for _ in dst_files)) if debug_or_verbose(cae) else ""
         cae.po(f" ---- renewed {len(dst_files)} managed files{_msg}")
 
-    git_init_add(ini_pdv)
-    git_renew_remotes(project_path, git_push_url(ini_pdv, remote_urls=remote_urls), upstream_url=ini_pdv['repo_url'],
-                      origin_name=ini_pdv['REMOTE_ORIGIN'], upstream_name=ini_pdv['REMOTE_UPSTREAM'],
+    git_init_add(pdv)
+    git_renew_remotes(project_path, git_push_url(pdv, remote_urls=remote_urls), upstream_url=pdv['repo_url'],
+                      origin_name=pdv['REMOTE_ORIGIN'], upstream_name=pdv['REMOTE_UPSTREAM'],
                       remotes=remote_urls)
-    _refresh_pdv(ini_pdv)       # refresh 'remote_urls' from updated git remote urls
+    _refresh_pdv(pdv)       # refresh 'remote_urls' from updated git remote urls
 
-    if ini_pdv['namespace_name'] and project_type != ROOT_PRJ:     # is namespace portion
-        _renew_local_root_req_file(ini_pdv)
+    if pdv['namespace_name'] and project_type != ROOT_PRJ:     # is namespace portion
+        _renew_local_root_req_file(pdv)
 
-    cae.po(f" ==== {action} {ini_pdv['project_title']}")
+    cae.po(f" ==== {action} {pdv['project_title']}")
 
-    return ini_pdv
+    return pdv
 
 
 def _renew_local_root_req_file(pdv: ProjectDevVars):
@@ -2346,11 +2343,16 @@ class PythonanywhereCom(RemoteHost):        # pragma: no cover
             if version_tag == 'LATEST':
                 version_tag = prefix + latest_remote_version(ini_pdv, increment_part=0)
             else:
-                cae.chk(85, version_tag[0] == prefix and version_tag.count('.') == 2,
+                cae.chk(85, version_tag[:len(prefix)] == prefix and version_tag.count('.') == 2,
                         f"expected 'LATEST', 'WORKTREE' or a project version, e.g. {prefix}3.6.9, got '{version_tag}'")
-                cae.chk(85, not deployed_ver or version_tag[1:] in (deployed_ver, increment_version(deployed_ver)),
-                        f"too big increment between old|deployed ({deployed_ver}) and new version ({version_tag[1:]})"
-                        + hint('pjm', func, " with the correct version or add --force to skip this version check"))
+                if deployed_ver:
+                    inc_part = get_app_option(ini_pdv, 'versionIncrementPart')
+                    if inc_part is None:
+                        inc_part = 0o3  # if unit test is not explicitly setting the 'versionIncrementPart' option
+                    next_ver = increment_version(deployed_ver, increment_part=inc_part)
+                    cae.chk(85, version_tag[1:] in (deployed_ver, next_ver),
+                            f"{version_tag=} does not match deployed|next ({deployed_ver}|{next_ver}) project version"
+                            + hint('pjm', func, " with the correct version or add --force to skip this version check"))
             project_path = git_clone(ini_pdv['repo_root'], ini_pdv['project_name'], "--filter=blob:none",
                                      branch_or_tag=version_tag)
             cae.chk(85, bool(project_path), "git clone tmp cleanup error, to check run again with the -D 1 option")
@@ -3363,8 +3365,8 @@ def init_main() -> ConsoleApp:
     cae.add_option('repo_group', "upstream user|group name at the repository hosting service", None, short_opt='g')
     cae.add_option('repo_token', "user credential access token of the git hosting service", None, short_opt='t')
     cae.add_option('repo_user', "user account name at the repository hosting service", None, short_opt='u')
-    cae.add_option('versionIncrementPart', "project version part to increment: 0=disable, 1=mayor, 2=minor, 3=patch", 3,
-                   short_opt='i', choices=range(4))
+    cae.add_option('versionIncrementPart', "project version part to increment: 0=disable, 1=mayor, 2=minor, 3=patch",
+                   0o3, short_opt='i', choices=range(4))
     cae.add_option('web_domain', "web app deployment platform (default=pythonanywhere.com)", None, short_opt=UNSET)
     cae.add_option('web_token', "user credential token at the used app deployment platform", None, short_opt=UNSET)
     cae.add_option('web_user', "user name at the used web app deployment platform", None, short_opt=UNSET)
