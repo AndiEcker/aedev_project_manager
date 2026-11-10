@@ -385,10 +385,15 @@ def guess_next_action(pdv: ProjectDevVars) -> str:
     if not project_version or not try_call(Version, project_version, ignored_exceptions=(InvalidVersion, Exception)):
         return f"{prefix}empty or invalid project version '{project_version}'! check the {pdv['version_file']=}"
     prj_ver_obj = Version(project_version)
-    if prj_ver_obj < Version(remote_version := latest_remote_version(pdv, increment_part=0)):
+    remote_version = latest_remote_version(pdv, increment_part=0)
+    if prj_ver_obj < Version(remote_version):
         return (f"{prefix}project version discrepancy; local {project_version=} is less than the {remote_version=};"
                 f" run 'pjm renew' to renew/recalculate the next project version")
-    if prj_ver_obj > Version(next_remote_version := increment_version(remote_version)):
+    inc_part = get_app_option(pdv, 'versionIncrementPart')
+    if inc_part is None:
+        inc_part = 0o3  # fallback for unit tests that are not explicitly setting the 'versionIncrementPart' option
+    next_remote_version = increment_version(remote_version, increment_part=inc_part)
+    if prj_ver_obj > Version(next_remote_version):
         return (f"{prefix}project version discrepancy; local {project_version=} is greater than {next_remote_version=};"
                 f" run 'pjm renew' to renew/recalculate the next project version")
 

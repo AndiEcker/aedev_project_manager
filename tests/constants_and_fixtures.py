@@ -118,6 +118,7 @@ def mocked_app_options():
     with (patch('aedev.project_manager.utils.get_app_option', new=_app_option),
           patch('aedev.project_manager.__main__.get_app_option', new=_app_option),
           patch('aedev.project_manager.templates.get_app_option', new=_app_option),
+          patch('aedev.project_manager.utils.get_app_option', new=_app_option),
           patch('ae.core.main_app_instance', return_value=main_app),
           patch('aedev.project_manager.__main__.debug_or_verbose', new=_dbg_or_verbose),
           patch('ae.shell.debug_or_verbose', new=_dbg_or_verbose),
